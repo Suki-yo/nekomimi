@@ -1,0 +1,15 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Electron specific
+*.log
+
+# Development data
+dev-data/
+
+# OS files
+.DS_Store
+Thumbs.db
