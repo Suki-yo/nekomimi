@@ -4,6 +4,61 @@
 
 ---
 
+### 2025-02-18 (Session 3)
+
+#### What We Did
+
+1. **Completed backend services**
+   - `src/main/services/config.ts` - Load/save YAML configs (app config + game configs)
+   - Fixed database.ts to create directory before opening SQLite
+
+2. **Created IPC handlers**
+   - `src/main/ipc/config.handler.ts` - config:get, config:update
+   - `src/main/ipc/games.handler.ts` - game:list, game:get, game:add, game:update, game:delete
+   - `src/main/ipc/index.ts` - registers all handlers
+
+3. **Electron entry point**
+   - `src/main/index.ts` - main process, creates window, initializes services
+   - `src/preload/index.ts` - security bridge, exposes window.api to renderer
+
+4. **Frontend setup**
+   - React 19 + Vite + React Router
+   - Tailwind CSS 4 with @tailwindcss/vite plugin
+   - shadcn/ui components (button, card, dialog, input, label)
+
+5. **Implemented Library page**
+   - Game grid display with cards
+   - Add game dialog (name, directory, executable)
+   - Delete game with confirmation
+   - Connected to backend via IPC
+
+6. **Created shadcn components**
+   - Manually copied components (CLI didn't work with Electron)
+   - Components: Button, Card, Dialog, Input, Label
+   - Used Radix UI primitives + Tailwind CSS
+
+#### Key Concepts Learned
+- **shadcn/ui** = Not a package, just copy-pasteable components you own
+- **Vite @tailwindcss/vite** = Required for Tailwind v4 to work with Vite
+- **Radix UI** = Unstyled, accessible primitives for building components
+- **Dialog z-index** = Content must be above overlay (z-[51] vs z-50)
+- **e.stopPropagation()** = Prevent event bubbling when nested clickable elements
+
+#### Issues Fixed
+1. Database directory not created → Added `fs.mkdirSync(path.dirname(paths.library), { recursive: true })`
+2. Tailwind not applying → Installed `@tailwindcss/vite` plugin
+3. Dialog inputs not working → Removed animation classes, fixed z-index
+4. Dialog closing on validation error → Added `onPointerDownOutside` handler, `type="button"`
+5. Terminal output pasted into file → User accidentally pasted terminal output into main.tsx
+
+#### Next Steps
+- Game launcher service (game-launcher.ts) - Actually launch games with Wine/Proton
+- Lutris import (lutris-import.ts) - Import existing Lutris games
+- Game detail/edit page
+- Cover art support
+
+---
+
 ### 2025-02-17 (Session 2)
 
 #### What We Did
@@ -36,9 +91,7 @@
 - **SQLite + YAML split** = SQLite for searchable data, YAML for flexible config
 - **tsconfig.json** = Tells TypeScript how to compile (src/ → dist/)
 - **constants vs paths** = Static values work everywhere, path resolution needs Node.js
-
-#### Need to Review
-- `database.ts` - Don't fully understand how the database service works yet. Need to revisit.
+- **Prepared statements** = SQL compiled once, reused for performance + security
 
 #### Next Steps
 1. `src/main/services/config.ts` - Load/save YAML config

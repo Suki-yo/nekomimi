@@ -13,3 +13,7 @@ dev-data/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Project docs
+SESSION.md
+SPEC.md
