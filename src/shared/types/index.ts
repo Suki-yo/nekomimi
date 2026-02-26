@@ -12,6 +12,8 @@ export type {
   LaunchConfig,
   ModConfig,
   UpdateConfig,
+  DetectedGameInfo,
+  DetectedRunner,
 } from './game'
 
 // Runner types

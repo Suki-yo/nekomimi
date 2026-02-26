@@ -14,6 +14,3 @@ dev-data/
 .DS_Store
 Thumbs.db
 
-# Project docs
-SESSION.md
-SPEC.md

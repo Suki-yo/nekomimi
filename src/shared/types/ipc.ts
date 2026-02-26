@@ -2,7 +2,7 @@
 // Each channel has: request (what you send) and response (what you get back)
 
 import type { AppConfig } from './config'
-import type { Game } from './game'
+import type { Game, DetectedGameInfo, DetectedRunner } from './game'
 import type { Runner } from './runner'
 
 // All IPC channels - this is the contract between frontend and backend
@@ -17,6 +17,14 @@ export interface IPCChannels {
   'config:update': {
     request: Partial<AppConfig>
     response: AppConfig
+  }
+
+  // ─────────────────────────────────────────────
+  // Dialog
+  // ─────────────────────────────────────────────
+  'dialog:openFile': {
+    request: void
+    response: string | null
   }
 
   // ─────────────────────────────────────────────
@@ -46,6 +54,14 @@ export interface IPCChannels {
     request: { id: string }
     response: { success: boolean; pid?: number; error?: string }
   }
+  'game:detect': {
+    request: { exePath: string }
+    response: DetectedGameInfo
+  }
+  'game:running': {
+    request: void
+    response: { id: string; startTime: number }[]
+  }
 
   // ─────────────────────────────────────────────
   // Runners
@@ -56,19 +72,11 @@ export interface IPCChannels {
   }
   'runner:list': {
     request: void
-    response: Runner[]
+    response: DetectedRunner[]
   }
   'runner:download': {
     request: { type: 'proton' | 'wine'; version: string }
     response: { success: boolean; error?: string }
-  }
-
-  // ─────────────────────────────────────────────
-  // Library import (Phase 1)
-  // ─────────────────────────────────────────────
-  'library:import-lutris': {
-    request: void
-    response: { imported: number; skipped: number }
   }
 }
 

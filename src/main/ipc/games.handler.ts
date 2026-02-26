@@ -17,6 +17,8 @@ import {
   deleteGameConfig,
   getGameConfigPath,
 } from '../services/config'
+import { detectGame, detectRunners } from '../services/game-detector'
+import { launchGame, getRunningGames } from '../services/game-launcher'
 import type { Game } from '../../shared/types'
 
 export const registerGamesHandlers = () => {
@@ -122,15 +124,28 @@ export const registerGamesHandlers = () => {
     dbDeleteGame(id)
   })
 
-  // Launch a game (placeholder - will be implemented with game-launcher.ts)
+  // Launch a game
   ipcMain.handle(
     'game:launch',
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    (_event, { id: _id }: { id: string }): { success: boolean; pid?: number; error?: string } => {
-      // TODO: Implement with game-launcher service
-      return { success: false, error: 'Not implemented yet' }
+    async (_event, { id }: { id: string }): Promise<{ success: boolean; pid?: number; error?: string }> => {
+      return launchGame(id)
     }
   )
+
+  // List running games
+  ipcMain.handle('game:running', () => {
+    return getRunningGames()
+  })
+
+  // Detect game info from executable path
+  ipcMain.handle('game:detect', (_event, { exePath }: { exePath: string }) => {
+    return detectGame(exePath)
+  })
+
+  // List available runners
+  ipcMain.handle('runner:list', () => {
+    return detectRunners()
+  })
 }
 
 // Generate URL-safe slug from name

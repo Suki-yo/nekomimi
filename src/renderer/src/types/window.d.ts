@@ -7,6 +7,7 @@ interface NekomimiAPI {
     channel: K,
     request?: IPCRequest<K>
   ) => Promise<IPCResponse<K>>
+  openFile: () => Promise<string | null>
   platform: NodeJS.Platform
   version: string
 }

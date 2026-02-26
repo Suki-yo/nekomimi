@@ -52,3 +52,18 @@ export interface UpdateConfig {
   currentVersion: string
   channel: 'stable' | 'beta'
 }
+
+// Detection types - used when auto-detecting game info from executable
+
+export interface DetectedGameInfo {
+  name: string
+  executable: string
+  directory: string
+  prefix: string | null
+}
+
+export interface DetectedRunner {
+  name: string
+  type: 'wine' | 'proton'
+  path: string
+}

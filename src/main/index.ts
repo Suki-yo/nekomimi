@@ -54,8 +54,6 @@ const createWindow = async () => {
   if (isDev) {
     // Development: load from Vite dev server
     await mainWindow.loadURL('http://localhost:5173')
-    // Open DevTools in development
-    mainWindow.webContents.openDevTools()
   } else {
     // Production: load built files
     await mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'))

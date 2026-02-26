@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Plus, Gamepad2, Trash2 } from 'lucide-react'
+import { Plus, Gamepad2, Trash2, FolderOpen } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import {
@@ -13,15 +13,9 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import type { Game } from '../../../shared/types/game'
+import type { Game, DetectedRunner } from '../../../shared/types/game'
 
 // Default configs for new games
-const defaultRunner = {
-  type: 'proton' as const,
-  path: '',
-  prefix: '',
-}
-
 const defaultLaunch = {
   env: {},
   preLaunch: [],
@@ -33,20 +27,47 @@ const defaultMods = {}
 
 function Library() {
   const [games, setGames] = useState<Game[]>([])
+  const [runners, setRunners] = useState<DetectedRunner[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [addDialogOpen, setAddDialogOpen] = useState(false)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const [gameToDelete, setGameToDelete] = useState<Game | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [detecting, setDetecting] = useState(false)
+  const [runningGames, setRunningGames] = useState<Set<string>>(new Set())
+  const [toast, setToast] = useState<{ message: string; type: 'info' | 'warning' } | null>(null)
+
+  const showToast = (message: string, type: 'info' | 'warning' = 'info') => {
+    setToast({ message, type })
+    setTimeout(() => setToast(null), 3000)
+  }
 
   // Form state
   const [formName, setFormName] = useState('')
   const [formDirectory, setFormDirectory] = useState('')
   const [formExecutable, setFormExecutable] = useState('')
+  const [formPrefix, setFormPrefix] = useState('')
+  const [formRunnerPath, setFormRunnerPath] = useState('')
 
   useEffect(() => {
     loadGames()
+    loadRunners()
+  }, [])
+
+  // Poll for running games
+  useEffect(() => {
+    const pollRunning = async () => {
+      const running = await window.api.invoke('game:running')
+      if (running) {
+        setRunningGames(new Set(running.map((g) => g.id)))
+      }
+    }
+
+    pollRunning() // Initial check
+    const interval = setInterval(pollRunning, 3000) // Poll every 3s
+
+    return () => clearInterval(interval)
   }, [])
 
   const loadGames = async () => {
@@ -59,6 +80,42 @@ function Library() {
       setError(err instanceof Error ? err.message : 'Failed to load games')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const loadRunners = async () => {
+    try {
+      const runnerList = await window.api.invoke('runner:list')
+      setRunners(runnerList)
+      // Select first runner by default
+      if (runnerList.length > 0) {
+        setFormRunnerPath(runnerList[0].path)
+      }
+    } catch (err) {
+      console.error('Failed to load runners:', err)
+    }
+  }
+
+  const handleBrowseExecutable = async () => {
+    try {
+      setDetecting(true)
+      const filePath = await window.api.openFile()
+      if (!filePath) return
+
+      setFormExecutable(filePath)
+
+      // Detect game info from executable
+      const detected = await window.api.invoke('game:detect', { exePath: filePath })
+
+      setFormName(detected.name)
+      setFormDirectory(detected.directory)
+      if (detected.prefix) {
+        setFormPrefix(detected.prefix)
+      }
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to detect game')
+    } finally {
+      setDetecting(false)
     }
   }
 
@@ -75,6 +132,8 @@ function Library() {
       return
     }
 
+    const selectedRunner = runners.find((r) => r.path === formRunnerPath)
+
     try {
       setSubmitting(true)
 
@@ -84,16 +143,22 @@ function Library() {
         installed: true,
         directory: formDirectory,
         executable: formExecutable,
-        runner: defaultRunner,
+        runner: {
+          type: selectedRunner?.type || 'proton',
+          path: formRunnerPath,
+          prefix: formPrefix,
+        },
         launch: defaultLaunch,
         mods: defaultMods,
       })
 
       setGames((prev) => [...prev, newGame])
 
+      // Reset form
       setFormName('')
       setFormDirectory('')
       setFormExecutable('')
+      setFormPrefix('')
       setAddDialogOpen(false)
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to add game')
@@ -125,10 +190,25 @@ function Library() {
   }
 
   const launchGame = async (id: string) => {
+    if (runningGames.has(id)) {
+      showToast('Game is already running', 'warning')
+      return
+    }
     const result = await window.api.invoke('game:launch', { id })
     if (!result.success) {
-      alert(`Failed to launch: ${result.error}`)
+      showToast(`Failed to launch: ${result.error}`, 'warning')
     }
+  }
+
+  // Single click handler (placeholder for game details)
+  const handleGameClick = (game: Game) => {
+    // TODO: Navigate to game details page
+    console.log('Game details coming soon:', game.name)
+  }
+
+  // Double click handler (launch game)
+  const handleGameDoubleClick = (game: Game) => {
+    launchGame(game.id)
   }
 
   if (loading) {
@@ -152,6 +232,14 @@ function Library() {
 
   return (
     <div className="p-6">
+      {/* Toast notification */}
+      {toast && (
+        <div className={`fixed top-4 right-4 z-50 px-4 py-2 rounded shadow-lg ${
+          toast.type === 'warning' ? 'bg-yellow-500' : 'bg-blue-500'
+        } text-white`}>
+          {toast.message}
+        </div>
+      )}
       {/* Add Game Dialog */}
       <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
         <div className="flex items-center justify-between mb-6">
@@ -171,10 +259,29 @@ function Library() {
           <DialogHeader>
             <DialogTitle>Add New Game</DialogTitle>
             <DialogDescription>
-              Add a game manually by providing its details.
+              Select the game executable and we'll auto-detect the rest.
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
+            <div className="grid gap-2">
+              <Label>Executable</Label>
+              <div className="flex gap-2">
+                <Input
+                  value={formExecutable}
+                  onChange={(e) => setFormExecutable(e.target.value)}
+                  placeholder="/path/to/game.exe"
+                  className="flex-1"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={handleBrowseExecutable}
+                  disabled={detecting}
+                >
+                  <FolderOpen className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
             <div className="grid gap-2">
               <Label htmlFor="name">Game Name</Label>
               <Input
@@ -194,13 +301,28 @@ function Library() {
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor="executable">Executable</Label>
+              <Label htmlFor="prefix">Wine Prefix</Label>
               <Input
-                id="executable"
-                placeholder="GenshinImpact.exe"
-                value={formExecutable}
-                onChange={(e) => setFormExecutable(e.target.value)}
+                id="prefix"
+                placeholder="/home/user/Games/Genshin Impact/prefix"
+                value={formPrefix}
+                onChange={(e) => setFormPrefix(e.target.value)}
               />
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor="runner">Runner</Label>
+              <select
+                id="runner"
+                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                value={formRunnerPath}
+                onChange={(e) => setFormRunnerPath(e.target.value)}
+              >
+                {runners.map((runner) => (
+                  <option key={runner.path} value={runner.path}>
+                    {runner.name} ({runner.type})
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
           <DialogFooter>
@@ -261,10 +383,17 @@ function Library() {
             <Card
               key={game.id}
               className="cursor-pointer hover:ring-2 hover:ring-ring transition overflow-hidden group"
-              onClick={() => launchGame(game.id)}
+              onClick={() => handleGameClick(game)}
+              onDoubleClick={() => handleGameDoubleClick(game)}
             >
               <div className="aspect-[3/4] bg-muted flex items-center justify-center relative">
                 <Gamepad2 className="h-12 w-12 text-muted-foreground" />
+                {/* Running indicator */}
+                {runningGames.has(game.id) && (
+                  <div className="absolute top-2 left-2 bg-green-500 text-white text-xs px-2 py-1 rounded">
+                    Running
+                  </div>
+                )}
                 {/* Delete button - shows on hover */}
                 <Button
                   type="button"

@@ -13,6 +13,11 @@ export const api = {
     return ipcRenderer.invoke(channel, request)
   },
 
+  // File dialog
+  openFile: async (): Promise<string | null> => {
+    return ipcRenderer.invoke('dialog:openFile')
+  },
+
   // Platform info (useful for OS-specific UI)
   platform: process.platform,
 

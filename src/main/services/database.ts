@@ -90,12 +90,13 @@ export interface CreateGameInput {
   config_path: string
   cover_path?: string
   installed?: boolean
+  playtime?: number
 }
 
 export const createGame = (input: CreateGameInput): GameRow => {
   const stmt = getDb().prepare(`
-    INSERT INTO games (id, name, slug, config_path, cover_path, installed)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO games (id, name, slug, config_path, cover_path, installed, playtime)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `)
 
   stmt.run(
@@ -104,7 +105,8 @@ export const createGame = (input: CreateGameInput): GameRow => {
     input.slug || null,
     input.config_path,
     input.cover_path || null,
-    input.installed ? 1 : 0
+    input.installed ? 1 : 0,
+    input.playtime || 0
   )
 
   return getGame(input.id)!
