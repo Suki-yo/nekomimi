@@ -200,12 +200,6 @@ function Library() {
     }
   }
 
-  // Single click handler (placeholder for game details)
-  const handleGameClick = (game: Game) => {
-    // TODO: Navigate to game details page
-    console.log('Game details coming soon:', game.name)
-  }
-
   // Double click handler (launch game)
   const handleGameDoubleClick = (game: Game) => {
     launchGame(game.id)
@@ -383,7 +377,6 @@ function Library() {
             <Card
               key={game.id}
               className="cursor-pointer hover:ring-2 hover:ring-ring transition overflow-hidden group"
-              onClick={() => handleGameClick(game)}
               onDoubleClick={() => handleGameDoubleClick(game)}
             >
               <div className="aspect-[3/4] bg-muted flex items-center justify-center relative">
