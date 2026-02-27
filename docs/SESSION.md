@@ -4,6 +4,155 @@
 
 ---
 
+### 2026-02-25 (Session 5) - XXMI Research
+
+#### What We Did
+
+1. **Attempted XXMI integration** (later reverted)
+   - Created mod-manager.ts, mods.handler.ts for XXMI mod support
+   - Tried using 3dmloader.exe (from Twintail) for injection
+   - Tried using XXMI Launcher's `--nogui` mode
+   - All attempts failed - game crashed with d3d11.dll error
+   - Reverted all changes to protect working Lutris setup
+
+2. **Deep dive into XXMI Launcher internals**
+   - Analyzed XXMI Launcher Config.json for EFMI settings
+   - Examined d3dx.ini configuration structure
+   - Read XXMI Launcher Log.txt to understand actual launch process
+
+3. **Key discovery: XXMI uses two injection modes**
+   - **Hook mode**: Standard DLL proxying (d3d11.dll in game folder)
+   - **Inject mode**: Direct WriteProcessMemory injection (for anti-cheat games)
+   - EFMI uses **Inject mode** because Endfield has AntiCheatExpert
+
+#### XXMI Launch Process (Dissected)
+
+From the XXMI Launcher log, the exact launch sequence for EFMI:
+
+```
+1. ApplicationEvents.Launch()
+2. ModelImporterEvents.StartGame()
+3. MigotoManagerEvents.StartAndInject(
+     game_exe_path = Endfield.exe
+     start_exe_path = Endfield.exe
+     start_args = ['-force-d3d11']    ← DX11 mode required!
+     work_dir = game directory
+     use_hook = False                 ← Inject mode, not Hook!
+   )
+4. ApplicationEvents.Inject(library_name='d3d11.dll', process_name='Endfield.exe')
+5. Starting game process using Native method:
+     exe_path = Endfield.exe
+     start_args = ['-force-d3d11']
+     process_flags = 67108912
+     dll_paths = [XXMI-Launcher/EFMI/d3d11.dll]
+6. Successfully injected DLL to process Endfield.exe (PID: 408)
+```
+
+**Key parameters from config:**
+- `custom_launch_inject_mode: "Inject"` (not "Hook")
+- `xxmi_dll_init_delay: 500` (ms delay before injection)
+- `process_timeout: 60` (seconds to wait for process)
+- `process_start_method: "Native"` (not "Shell")
+
+**EFMI d3dx.ini critical settings:**
+```ini
+[Loader]
+target = Endfield.exe        ; Process to inject into
+loader = XXMI Launcher.exe   ; The loader executable
+module = d3d11.dll           ; DLL to inject
+```
+
+#### XXMI File Structure
+
+```
+XXMI-Launcher/
+├── EFMI/                        # Endfield template
+│   ├── Core/                    # Core EFMI config
+│   │   └── EFMI/main.ini
+│   ├── Mods/                    # User mods go here
+│   ├── d3d11.dll                # 3DMigoto DLL
+│   ├── d3dcompiler_47.dll       # Shader compiler
+│   └── d3dx.ini                 # 3DMigoto config
+├── Resources/
+│   ├── Bin/
+│   │   └── XXMI Launcher.exe    # Main launcher
+│   └── Packages/
+│       └── XXMI/
+│           ├── 3dmloader.dll    # Note: .dll, not .exe
+│           ├── d3d11.dll
+│           └── d3dcompiler_47.dll
+└── XXMI Launcher Config.json    # All settings
+```
+
+#### Twintail vs XXMI Launcher Approach
+
+| Aspect | Twintail | XXMI Launcher |
+|--------|----------|---------------|
+| Loader | `3dmloader.exe` | `XXMI Launcher.exe` |
+| Core DLLs | In xxmi root | In per-game folder |
+| Templates | In xxmi root | In Launcher root |
+| Injection | Hook mode | Hook or Inject mode |
+
+Twintail uses `3dmloader.exe` which is a separate build (27KB console app).
+XXMI Launcher has `3dmloader.dll` which is different (loaded by launcher).
+
+#### Implementation Plan for Nekomimi
+
+To implement XXMI-like injection without running XXMI Launcher:
+
+1. **Package XXMI files in Nekomimi:**
+   ```
+   dev-data/xxmi/
+   ├── core/
+   │   ├── d3d11.dll
+   │   └── d3dcompiler_47.dll
+   └── templates/
+       ├── efmi/ (d3dx.ini, Core/, Mods/)
+       ├── gimi/
+       ├── srmi/
+       └── ...
+   ```
+
+2. **Implement DLL injection:**
+   - Need a Windows injector executable (like 3dmloader.exe)
+   - Must use WriteProcessMemory for anti-cheat games
+   - Or find a way to call 3dmloader functions from Node.js
+
+3. **Launch sequence for Endfield:**
+   ```
+   1. Start game.exe with -force-d3d11 arg
+   2. Wait for process to start
+   3. Inject d3d11.dll into process
+   4. Wait for game to close
+   ```
+
+4. **Alternative: Use XXMI Launcher headless:**
+   ```
+   wine "XXMI Launcher.exe" --nogui --xxmi EFMI
+   ```
+   This runs XXMI Launcher in CLI mode, which handles everything.
+
+#### GitHub Repositories
+- Core: `SpectrumQT/XXMI-Libs-Package`
+- GIMI: `SilentNightSound/GIMI-Package`
+- SRMI: `SpectrumQT/SRMI-Package`
+- WWMI: `SpectrumQT/WWMI-Package`
+- ZZMI: `leotorrez/ZZMI-Package`
+- EFMI: `wakka810/3dmigoto-arknights-endfield`
+
+#### References
+- Working XXMI setup: `/home/jyq/Games/XXMI-Launcher/`
+- Twintail XXMI: `/home/jyq/.local/share/twintaillauncher/extras/xxmi/`
+- Twintail source: `/home/jyq/twintaillauncher/src/TwintailLauncher-ttl-v1.1.15/src-tauri/src/utils/game_launch_manager.rs`
+
+#### Next Steps
+1. Research how 3dmloader.exe works (C++ source? Binary analysis?)
+2. Consider using XXMI Launcher's `--nogui` mode as interim solution
+3. Look into Node.js native modules for DLL injection
+4. Test with simpler games first (Genshin/Star Rail use Hook mode)
+
+---
+
 ### 2025-02-18 (Session 4)
 
 #### What We Did
