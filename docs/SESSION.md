@@ -4,6 +4,139 @@
 
 ---
 
+### 2026-02-26 (Session 7) - XXMI Mod Injection Success (Partial)
+
+#### Achievement
+**Successfully got 3DMigoto to inject into Endfield!**
+
+```
+[xxmi] 292: 3DMigoto loaded :)
+[xxmi] 780: 3DMigoto loaded :)
+```
+
+The output shows 3DMigoto was successfully loaded into Endfield processes.
+
+#### What Made It Work
+
+After multiple attempts with different approaches, the final solution:
+
+1. **Used Twintail's 3dmloader.exe** (27KB console app) from `/home/jyq/.local/share/twintaillauncher/extras/xxmi/`
+2. **Set up EFMI folder structure** in Twintail's xxmi directory
+3. **Copied real 3DMigoto DLLs** (not symlinks) from XXMI Launcher to EFMI folder
+4. **Ran 3dmloader from inside efmi folder** (not root xxmi)
+5. **Used WINEDLLOVERRIDES="d3d11=n"** to force native 3DMigoto DLL instead of Wine's
+6. **Used game's Proton wine64 binary** to run 3dmloader
+
+#### Final Working Command
+```bash
+WINEPREFIX=/home/jyq/Games/Endfield/prefix/pfx \
+WINEARCH=win64 \
+WINEDLLOVERRIDES="d3d11=n;lsteamclient=d;KRSDKExternal.exe=d" \
+/home/jyq/.steam/steam/compatibilitytools.d/GE-Proton10-30/files/bin/wine64 "3dmloader.exe"
+```
+Run from: `/home/jyq/.local/share/twintaillauncher/extras/xxmi/efmi/`
+
+#### EFMI Folder Structure
+```
+/home/jyq/.local/share/twintaillauncher/extras/xxmi/efmi/
+├── 3dmloader.exe          # Copied from Twintail root
+├── d3d11.dll              # Real 3DMigoto DLL (from XXMI Launcher)
+├── d3dcompiler_47.dll     # Real 3DMigoto DLL
+├── d3dx.ini               # 3DMigoto config
+├── Core/EFMI/main.ini     # EFMI core configuration
+├── Mods/                  # User mods (extracted, not zipped)
+├── ShaderCache/
+└── ShaderFixes/
+```
+
+#### Key Configuration Fixes
+
+**d3dx.ini format** - Must use `key=value` (no spaces):
+```ini
+[Loader]
+loader=XXMI Launcher.exe
+require_admin=false
+launch=C:\Program Files\GRYPHLINK\games\EndField Game\Endfield.exe
+module=d3d11.dll
+delay=20
+target=Endfield.exe
+[Include]
+include_recursive=Mods
+include=Core\EFMI\main.ini
+exclude_recursive=DISABLED*
+```
+
+**Mod folders** - Some mods were still zipped (.zip, .7z), need to be extracted
+
+#### Current Issue
+Mods are being injected, but into the wrong Endfield instance. Multiple processes exist (PIDs 292, 780), and the playable window doesn't have mods active.
+
+#### Files Created/Modified
+- `src/main/services/mod-manager.ts` - Complete rewrite with Twintail approach
+- `src/main/services/game-launcher.ts` - Added XXMI flow, improved process tracking
+- Created EFMI folder in Twintail xxmi directory
+
+#### Next Steps
+1. Figure out why multiple Endfield processes are created
+2. Ensure 3dmloader injects into the correct (playable) instance
+3. Test with F11 to toggle mods once correct instance is injected
+4. Consider making mod support configurable per game
+
+---
+
+### 2026-02-26 (Session 6) - XXMI Integration Attempt
+
+#### What We Did
+
+1. **Researched Twintail's XXMI implementation**
+   - Analyzed `game_launch_manager.rs` for injection logic
+   - Found Twintail uses `3dmloader.exe` (Hook mode) via Wine
+   - XXMI Launcher supports both Hook and Inject modes
+
+2. **Created mod-manager.ts**
+   - `shouldUseXXMI()` - detects Endfield.exe (hardcoded)
+   - `launchGameWithXXMI()` - attempts to launch with XXMI
+   - Initially tried XXMI Launcher `--nogui` mode
+   - Then tried Twintail's 3dmloader.exe approach
+
+3. **Discovered fundamental blockers**
+   - **Twintail's 3dmloader.exe**: Uses Hook mode, triggers anti-cheat detection → crash
+   - **XXMI Launcher --nogui**: Starts game with plain Wine, not Proton → crash
+   - **XXMI Launcher GUI**: Works! But only because both XXMI and game are in Lutris
+
+4. **Key Finding: Lutris Environment**
+   - XXMI works when both XXMI and the game are installed via Lutris
+   - They share the same Wine prefix/environment (simulated Windows)
+   - XXMI can inject because it's in the same Wine "world" as the game
+   - Running XXMI separately (from Node.js) breaks this connection
+
+#### Files Created/Modified
+- Created: `src/main/services/mod-manager.ts`
+- Modified: `src/main/services/game-launcher.ts` - added XXMI check
+- Modified: `src/main/services/game-launcher.ts` - improved "already running" detection
+
+#### Technical Details
+
+**XXMI Injection Modes:**
+- **Hook mode**: Places d3d11.dll in game folder as proxy (3dmloader.exe)
+- **Inject mode**: Uses WriteProcessMemory for anti-cheat games (XXMI Launcher)
+
+**Why Endfield needs Inject mode:**
+- Has AntiCheatExpert
+- Hook mode gets detected → crash
+
+**Why --nogui fails:**
+- XXMI starts game with `process_start_method: "Native"` (plain Wine)
+- Endfield needs Proton/umu for anti-cheat
+- GUI mode works because Lutris sets up proper environment
+
+#### Next Steps (Future)
+1. Research how to run XXMI within game's Proton environment
+2. Consider building custom Proton-aware injector
+3. Or accept XXMI as external tool (not integrated)
+
+---
+
 ### 2026-02-25 (Session 5) - XXMI Research
 
 #### What We Did

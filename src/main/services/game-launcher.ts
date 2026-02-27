@@ -1,6 +1,7 @@
 import { spawn, execSync } from 'child_process'
 import { getGame, updateGame } from './database'
 import { loadGameConfig, saveGameConfig } from './config'
+import { shouldUseXXMI, launchGameWithXXMI } from './mod-manager'
 import type { Game } from '../../shared/types/game'
 
 // Track running game processes
@@ -38,9 +39,27 @@ function buildLaunchCommand(game: Game): { command: string; args: string[]; env:
 }
 
 export async function launchGame(gameId: string): Promise<{ success: boolean; pid?: number; error?: string }> {
-  // Check if already running
-  if (runningProcesses.has(gameId)) {
-    return { success: false, error: 'Game is already running' }
+  // Check if already running - verify process is actually alive
+  const existing = runningProcesses.get(gameId)
+  if (existing) {
+    // For XXMI launches, process is null - check if it's been running less than 30 seconds
+    if (!existing.process) {
+      const elapsed = (Date.now() - existing.startTime) / 1000
+      if (elapsed < 30) {
+        return { success: false, error: 'Game is already starting up' }
+      }
+      // Stale entry, clear it
+      runningProcesses.delete(gameId)
+    } else if (existing.process.pid) {
+      // Normal launch - check if process is still alive
+      try {
+        process.kill(existing.process.pid, 0)
+        return { success: false, error: 'Game is already running' }
+      } catch {
+        // Process is dead, clear stale entry
+        runningProcesses.delete(gameId)
+      }
+    }
   }
 
   // Fetch game row from database
@@ -59,6 +78,28 @@ export async function launchGame(gameId: string): Promise<{ success: boolean; pi
   if (!game.executable || !game.runner?.path || !game.runner?.prefix) {
     return { success: false, error: 'Game is missing required launch fields' }
   }
+
+  // Check if XXMI should be used for this game (hardcoded for Endfield)
+  if (shouldUseXXMI(game.executable)) {
+    console.log(`[launch] Using XXMI for ${game.name}`)
+
+    // Start XXMI loader - it will wait for game and inject
+    const loaderResult = await launchGameWithXXMI(
+      game.executable,
+      game.runner.path,
+      game.runner.prefix
+    )
+
+    if (!loaderResult.success) {
+      return { success: false, error: loaderResult.error }
+    }
+
+    // Now fall through to launch the game normally
+    // 3dmloader is waiting in background and will inject when game starts
+    console.log(`[launch] XXMI loader running, launching game now`)
+  }
+
+  // Normal launch flow
 
   // Run pre-launch commands
   for (const cmd of game.launch.preLaunch || []) {
