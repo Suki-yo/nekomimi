@@ -8,7 +8,7 @@ import type { Game } from '../../shared/types/game'
 const runningProcesses = new Map<string, { process: ReturnType<typeof spawn>, startTime: number }>()
 
 // Build the launch command and environment
-function buildLaunchCommand(game: Game): { command: string; args: string[]; env: Record<string, string> } {
+function buildLaunchCommand(game: Game, useXXMI: boolean = false): { command: string; args: string[]; env: Record<string, string> } {
   const env: Record<string, string> = {
     WINEPREFIX: game.runner.prefix,
     ...game.launch.env,
@@ -28,6 +28,14 @@ function buildLaunchCommand(game: Game): { command: string; args: string[]; env:
     // Native - run directly
     command = game.executable
     args = []
+  }
+
+  // When using XXMI, force native d3d11.dll (3DMigoto) instead of Wine's
+  if (useXXMI) {
+    const existingOverrides = env.WINEDLLOVERRIDES || ''
+    env.WINEDLLOVERRIDES = existingOverrides
+      ? `d3d11=n;${existingOverrides}`
+      : 'd3d11=n'
   }
 
   // Append custom launch args
@@ -80,26 +88,7 @@ export async function launchGame(gameId: string): Promise<{ success: boolean; pi
   }
 
   // Check if XXMI should be used for this game (hardcoded for Endfield)
-  if (shouldUseXXMI(game.executable)) {
-    console.log(`[launch] Using XXMI for ${game.name}`)
-
-    // Start XXMI loader - it will wait for game and inject
-    const loaderResult = await launchGameWithXXMI(
-      game.executable,
-      game.runner.path,
-      game.runner.prefix
-    )
-
-    if (!loaderResult.success) {
-      return { success: false, error: loaderResult.error }
-    }
-
-    // Now fall through to launch the game normally
-    // 3dmloader is waiting in background and will inject when game starts
-    console.log(`[launch] XXMI loader running, launching game now`)
-  }
-
-  // Normal launch flow
+  const useXXMI = shouldUseXXMI(game.executable)
 
   // Run pre-launch commands
   for (const cmd of game.launch.preLaunch || []) {
@@ -111,8 +100,34 @@ export async function launchGame(gameId: string): Promise<{ success: boolean; pi
     }
   }
 
-  // Build launch command
-  const { command, args, env } = buildLaunchCommand(game)
+  // XXMI mode: Launch via XXMI Launcher with --nogui flag
+  // XXMI auto-launches the game with mod injection
+  if (useXXMI) {
+    console.log(`[launch] Using XXMI mode - game will launch with mods`)
+
+    const startTime = Date.now()
+
+    // Launch XXMI Launcher through Lutris
+    const loaderResult = await launchGameWithXXMI(
+      game.executable,
+      game.runner.path,
+      game.runner.prefix
+    )
+
+    if (!loaderResult.success) {
+      return { success: false, error: loaderResult.error }
+    }
+
+    // Track with null process (XXMI manages the game)
+    runningProcesses.set(gameId, { process: null as any, startTime })
+
+    // Note: Playtime tracking is limited with XXMI mode
+    // The user launches the game from XXMI Launcher, not from our app
+    return { success: true }
+  }
+
+  // Normal launch flow (non-XXMI)
+  const { command, args, env } = buildLaunchCommand(game, false)
 
   console.log(`[launch] Launching ${game.name}: ${command} ${args.join(' ')}`)
   console.log(`[launch] Env:`, env)

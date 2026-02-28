@@ -1,138 +1,105 @@
 import { spawn } from 'child_process'
 import * as path from 'path'
 
-// Hardcoded paths for now - will be configurable later
-const TWINTAIL_XXMI_PATH = '/home/jyq/.local/share/twintaillauncher/extras/xxmi'
+// Hardcoded XXMI paths - should be configurable later
+const XXMI_PATH = '/home/jyq/Games/XXMI-Launcher'
+const XXMI_PREFIX = '/home/jyq/Games/XXMI-Launcher/prefix'
+const PROTON_PATH = '/home/jyq/.steam/steam/compatibilitytools.d/dwproton-10.0-14-x86_64-signed'
 
-// Map game executables to XXMI package names (lowercase to match folder names)
-const GAME_TO_PACKAGE: Record<string, string> = {
-  'endfield.exe': 'efmi',
-  'genshinimpact.exe': 'gimi',
-  'starrail.exe': 'srmi',
-  'zenlesszonezero.exe': 'zzmi',
-  'bh3.exe': 'himi',
-  'client-win64-shipping.exe': 'wwmi', // Wuthering Waves
+// Map game executables to XXMI importer names
+const GAME_TO_XXMI_IMPORTER: Record<string, string> = {
+  'endfield.exe': 'EFMI',
+  // Add more games as needed:
+  // 'genshinimpact.exe': 'GIMI',
+  // 'starrail.exe': 'SRMI',
+  // 'zenlesszonezero.exe': 'ZZMI',
 }
 
 /**
- * Detect which XXMI package to use based on game executable name
- */
-export function getXXMIPackage(executablePath: string): string | null {
-  const exeName = path.basename(executablePath).toLowerCase()
-  return GAME_TO_PACKAGE[exeName] || null
-}
-
-/**
- * Check if a game should use XXMI (hardcoded for Endfield for now)
+ * Check if a game should use XXMI
  */
 export function shouldUseXXMI(executablePath: string): boolean {
   const exeName = path.basename(executablePath).toLowerCase()
-  // Hardcoded: only Endfield for now
   return exeName === 'endfield.exe'
 }
 
 /**
- * Start 3dmloader using the Twintail approach
- *
- * Key requirements:
- * 1. Run 3dmloader from inside the game's xxmi folder (efmi/, gimi/, etc.)
- * 2. Use WINEDLLOVERRIDES="d3d11=n" to force native 3DMigoto DLL
- * 3. Use the game's Proton wine64 binary
+ * Get the XXMI importer name for a game
  */
-export async function startXXMILoader(
-  packageName: string,
-  runnerPath: string,
-  winePrefix: string
-): Promise<{ success: boolean; pid?: number; error?: string }> {
-  return new Promise((resolve) => {
-    console.log(`[xxmi] Starting 3dmloader for ${packageName}`)
-
-    // Path to the game's xxmi folder (efmi/, gimi/, etc.)
-    const packagePath = path.join(TWINTAIL_XXMI_PATH, packageName)
-    const wine64 = path.join(runnerPath, 'files/bin/wine64')
-
-    // Build command: run 3dmloader from inside the package folder
-    const command = `"${wine64}" "3dmloader.exe"`
-
-    // Set up Proton environment with DLL override for 3DMigoto
-    const env = {
-      ...process.env,
-      WINEARCH: 'win64',
-      WINEPREFIX: winePrefix,
-      STEAM_COMPAT_APP_ID: '0',
-      STEAM_COMPAT_DATA_PATH: winePrefix.replace('/pfx', ''),
-      STEAM_COMPAT_CLIENT_INSTALL_PATH: '',
-      STEAM_COMPAT_TOOL_PATHS: runnerPath,
-      PROTONFIXES_DISABLE: '1',
-      // Force native d3d11.dll (3DMigoto) instead of Wine's
-      WINEDLLOVERRIDES: 'd3d11=n;lsteamclient=d;KRSDKExternal.exe=d',
-    }
-
-    console.log(`[xxmi] Command: ${command}`)
-    console.log(`[xxmi] Working dir: ${packagePath}`)
-    console.log(`[xxmi] WINEPREFIX: ${winePrefix}`)
-
-    const proc = spawn('bash', ['-c', command], {
-      env,
-      detached: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      cwd: packagePath, // Run from inside the package folder!
-    })
-
-    // Capture output for debugging
-    proc.stdout?.on('data', (data) => {
-      console.log(`[xxmi] ${data.toString().trim()}`)
-    })
-    proc.stderr?.on('data', (data) => {
-      console.log(`[xxmi err] ${data.toString().trim()}`)
-    })
-
-    proc.on('error', (err) => {
-      console.error(`[xxmi] Failed to start 3dmloader:`, err)
-      resolve({ success: false, error: `Failed to start 3dmloader: ${err.message}` })
-    })
-
-    // Give loader time to initialize
-    setTimeout(() => {
-      if (proc.pid) {
-        console.log(`[xxmi] 3dmloader started with PID ${proc.pid}`)
-        resolve({ success: true, pid: proc.pid })
-      } else {
-        resolve({ success: false, error: '3dmloader failed to start' })
-      }
-    }, 2000)
-
-    proc.on('close', (code) => {
-      console.log(`[xxmi] 3dmloader exited with code ${code}`)
-    })
-  })
+export function getXXMIImporter(executablePath: string): string | null {
+  const exeName = path.basename(executablePath).toLowerCase()
+  return GAME_TO_XXMI_IMPORTER[exeName] || null
 }
 
 /**
- * Launch game with XXMI injection
- * Uses Twintail's approach: start loader with Proton, then launch game
+ * Launch game with XXMI directly (no Lutris dependency)
+ *
+ * Uses the same environment that Lutris would set up:
+ * - DXVK for D3D11 -> Vulkan translation
+ * - Wayland disabled for compatibility
+ * - Native d3d11.dll override for 3DMigoto injection
  */
 export async function launchGameWithXXMI(
   executablePath: string,
-  runnerPath: string,
-  winePrefix: string
+  _runnerPath: string,
+  _winePrefix: string
 ): Promise<{ success: boolean; error?: string }> {
-  const packageName = getXXMIPackage(executablePath)
+  const importer = getXXMIImporter(executablePath)
 
-  if (!packageName) {
-    return { success: false, error: 'No XXMI package found for this game' }
+  if (!importer) {
+    return { success: false, error: 'No XXMI importer found for this game' }
   }
 
-  console.log(`[xxmi] Using package: ${packageName}`)
+  return new Promise((resolve) => {
+    console.log(`[xxmi] Launching with ${importer} (nogui mode)`)
 
-  // Start the loader - it will wait for game process
-  const loaderResult = await startXXMILoader(packageName, runnerPath, winePrefix)
+    const wine64 = path.join(PROTON_PATH, 'files/bin/wine64')
+    const xxmiExe = path.join(XXMI_PATH, 'Resources/Bin/XXMI Launcher.exe')
 
-  if (!loaderResult.success) {
-    return { success: false, error: loaderResult.error }
-  }
+    // Environment matching Lutris configuration
+    const env = {
+      ...process.env,
+      WINEPREFIX: XXMI_PREFIX,
+      WINEARCH: 'win64',
+      // Disable Wayland for compatibility
+      DISABLE_WAYLAND: '1',
+      GDK_BACKEND: 'x11',
+      QT_QPA_PLATFORM: 'xcb',
+      // DXVK settings
+      DXVK_STATE_CACHE_PATH: XXMI_PREFIX,
+      // Force native d3d11.dll (3DMigoto) and dxgi.dll
+      WINEDLLOVERRIDES: 'd3d11=n,b;dxgi=n,b',
+    }
 
-  // Return success - caller should launch the game normally
-  console.log(`[xxmi] Loader running, proceeding with game launch`)
-  return { success: true }
+    console.log(`[xxmi] Wine: ${wine64}`)
+    console.log(`[xxmi] XXMI: ${xxmiExe}`)
+    console.log(`[xxmi] Prefix: ${XXMI_PREFIX}`)
+
+    // Run XXMI Launcher with --nogui --xxmi IMPORTER
+    const proc = spawn(wine64, [xxmiExe, '--nogui', '--xxmi', importer], {
+      env,
+      detached: true,
+      stdio: 'ignore',
+      cwd: path.dirname(xxmiExe),
+    })
+
+    proc.on('error', (err) => {
+      console.error(`[xxmi] Failed to start:`, err)
+      resolve({ success: false, error: `Failed to start XXMI: ${err.message}` })
+    })
+
+    // Give XXMI time to start and launch the game
+    setTimeout(() => {
+      if (proc.pid) {
+        console.log(`[xxmi] XXMI started with PID ${proc.pid}`)
+        resolve({ success: true })
+      } else {
+        resolve({ success: false, error: 'XXMI failed to start' })
+      }
+    }, 3000)
+
+    proc.on('close', (code) => {
+      console.log(`[xxmi] XXMI exited with code ${code}`)
+    })
+  })
 }
