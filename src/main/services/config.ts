@@ -4,7 +4,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import * as yaml from 'yaml'
-import { getPaths } from './paths'
+import { getPathsInstance } from './paths'
 import { DEFAULT_CONFIG } from '../../shared/constants'
 import type { AppConfig, Game } from '../../shared/types'
 
@@ -13,8 +13,8 @@ import type { AppConfig, Game } from '../../shared/types'
 // ─────────────────────────────────────────────
 
 export const loadAppConfig = (): AppConfig => {
-  const paths = getPaths()
-  const configPath = paths.config
+  const paths = getPathsInstance()
+  const configPath = path.join(paths.config, 'config.yml')
 
   if (!fs.existsSync(configPath)) {
     // Create default config if missing
@@ -36,10 +36,10 @@ export const loadAppConfig = (): AppConfig => {
 }
 
 export const saveAppConfig = (config: AppConfig): void => {
-  const paths = getPaths()
+  const paths = getPathsInstance()
 
   // Ensure directory exists
-  fs.mkdirSync(paths.base, { recursive: true })
+  fs.mkdirSync(paths.config, { recursive: true })
 
   // Omit paths from saved config (they're computed at runtime)
   const toSave = {
@@ -49,10 +49,10 @@ export const saveAppConfig = (config: AppConfig): void => {
   }
 
   const content = yaml.stringify(toSave)
-  fs.writeFileSync(paths.config, content, 'utf-8')
+  fs.writeFileSync(path.join(paths.config, 'config.yml'), content, 'utf-8')
 }
 
-const buildDefaultConfig = (paths: ReturnType<typeof getPaths>): AppConfig => {
+const buildDefaultConfig = (paths: ReturnType<typeof getPathsInstance>): AppConfig => {
   return {
     paths: paths,
     ui: DEFAULT_CONFIG.ui,
@@ -75,7 +75,7 @@ export const loadGameConfig = (configPath: string): Game | null => {
 }
 
 export const saveGameConfig = (game: Game): void => {
-  const paths = getPaths()
+  const paths = getPathsInstance()
   const gamesDir = paths.games
 
   // Ensure games directory exists
@@ -88,7 +88,7 @@ export const saveGameConfig = (game: Game): void => {
 }
 
 export const deleteGameConfig = (slug: string): void => {
-  const paths = getPaths()
+  const paths = getPathsInstance()
   const configPath = path.join(paths.games, `${slug}.yml`)
 
   if (fs.existsSync(configPath)) {
@@ -97,6 +97,6 @@ export const deleteGameConfig = (slug: string): void => {
 }
 
 export const getGameConfigPath = (slug: string): string => {
-  const paths = getPaths()
+  const paths = getPathsInstance()
   return path.join(paths.games, `${slug}.yml`)
 }

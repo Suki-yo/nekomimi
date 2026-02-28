@@ -78,6 +78,26 @@ export interface IPCChannels {
     request: { type: 'proton' | 'wine'; version: string }
     response: { success: boolean; error?: string }
   }
+
+  // ─────────────────────────────────────────────
+  // Mods (XXMI, etc.)
+  // ─────────────────────────────────────────────
+  'mods:xxmi-status': {
+    request: void
+    response: { xxmiInstalled: boolean; runnerInstalled: boolean }
+  }
+  'mods:xxmi-download': {
+    request: void
+    response: { success: boolean; error?: string }
+  }
+  'mods:runner-download': {
+    request: void
+    response: { success: boolean; error?: string }
+  }
+  'mods:runner-info': {
+    request: void
+    response: { name: string; path: string; wine: string } | null
+  }
 }
 
 // Utility type - extracts request type for a channel

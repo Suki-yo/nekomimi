@@ -7,8 +7,10 @@ export interface AppConfig {
     library: string // SQLite database
     games: string // Per-game YAML configs
     runners: string // Wine/Proton installations
+    xxmi: string // XXMI Launcher + importers
     cache: string // Downloaded patches, temp files
-    mods: string // XXMI, FPS unlocker, etc.
+    config: string // App configuration directory
+    base: string // Base data directory
   }
 
   // UI preferences

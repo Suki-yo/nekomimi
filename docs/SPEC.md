@@ -71,14 +71,21 @@
 
 ### Data Sources
 ```
-~/.config/nekomimi/
+~/.local/share/nekomimi/
 ├── library.db          # SQLite - game library, metadata, playtime
 ├── games/              # Per-game configs (YAML)
 │   ├── genshin-impact.yml
 │   └── wuthering-waves.yml
-├── runners/            # Wine/Proton installations
+├── runners/            # Wine/Proton installations (bundled/downloaded)
+│   └── dwproton-10.0-14/
+├── xxmi/               # XXMI Launcher + importers (bundled/downloaded)
+│   ├── Launcher/       # XXMI Launcher application
+│   ├── EFMI/           # Endfield Model Importer
+│   ├── GIMI/           # Genshin Model Importer
+│   └── ...
 ├── cache/              # Downloaded patches, temporary files
-└── mods/               # XXMI, FPS unlocker, etc.
+└── config/             # App configuration
+    └── settings.yml
 ```
 
 ### Key Modules

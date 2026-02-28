@@ -4,6 +4,107 @@
 
 ---
 
+### 2026-02-27 (Session 8) - Bundled XXMI: SUCCESS!
+
+#### Achievement
+**Mods fully working with bundled XXMI and Proton runners!** No more external dependencies.
+
+#### The Problem
+Two competing modes were running simultaneously:
+1. **Hook mode**: Nekomimi deployed d3d11.dll to game folder → Wine loads it automatically
+2. **Inject mode**: XXMI Launcher injected d3d11.dll from EFMI folder via WriteProcessMemory
+3. **Result**: Two DLLs loaded → d3dx.ini conflict → crash
+
+#### The Fix
+**Stopped deploying files to game folder for EFMI** - let XXMI handle everything via Inject mode.
+
+Changed in `src/main/services/mod-manager.ts`:
+```typescript
+// Removed deployImporterToGame() call for EFMI
+// XXMI uses Inject mode for anti-cheat games, files stay in EFMI folder only
+
+// Also don't force Hook mode for EFMI:
+if (importer !== 'EFMI' && importerConfig.custom_launch_inject_mode !== 'Hook') {
+  importerConfig.custom_launch_inject_mode = 'Hook'
+  needsSave = true
+}
+```
+
+Also removed conflicting files from game directory:
+```bash
+rm ".../EndField Game/d3d11.dll"
+rm ".../EndField Game/d3dx.ini"
+```
+
+#### Final Working Setup
+- **Bundled XXMI**: `/dev-data/xxmi/`
+- **Bundled Proton**: `/dev-data/runners/GE-Proton10-32/`
+- **EFMI config**: `/dev-data/xxmi/EFMI/` (d3d11.dll, d3dx.ini, Mods/)
+- **Game folder**: Clean, no XXMI files
+- **Launch method**: `XXMI Launcher.exe --nogui --xxmi EFMI` via Proton's wine
+
+#### Key Settings (dev-data/xxmi/EFMI/d3dx.ini)
+```ini
+require_admin = false
+dll_initialization_delay = 500
+```
+
+#### Files Modified
+- `src/main/services/mod-manager.ts` - Removed game folder deployment for EFMI
+- `dev-data/xxmi/EFMI/d3dx.ini` - Matched working Lutris config
+
+#### Technical Notes
+- **Hook mode** (non-anti-cheat): Place d3d11.dll in game folder, Wine loads it
+- **Inject mode** (anti-cheat/EFMI): XXMI injects via WriteProcessMemory, DLL stays in EFMI folder
+- XXMI Launcher automatically uses Inject mode for EFMI regardless of config
+- Process is: XXMI → Shell method → spawn game → inject d3d11.dll → 3DMigoto loads
+
+#### Next Steps
+- Clean up unused functions (`deployImporterToGame`, `isImporterDeployedToGame`)
+- Test with other games (Genshin/Star Rail use Hook mode)
+- Consider auto-cleanup of game folder files on launch
+
+---
+
+### 2026-02-27 (Session 8) - Bundled XXMI: Injection Works, Config Conflict
+
+#### Progress
+**Bundled XXMI and Proton runners directly into Nekomimi** - no longer relying on external Lutris/Twintail installations. This containerizes our app dependencies.
+
+#### Current Status
+- **Injection is working!** - 3DMigoto menu appears (F11 toggle visible)
+- Mods are being loaded
+- Game crashes with two errors:
+  1. `d3dx.ini conflict error`
+  2. `Unknown error (d3d11.dll)` ← crash point
+
+#### What Changed
+- Moved from symlinking to Lutris XXMI installation → bundled XXMI in Nekomimi
+- Bundled Proton runners in project instead of using system Steam Proton
+- Self-contained dependency model
+
+#### The Problem
+The d3dx.ini conflict suggests either:
+1. Multiple d3dx.ini files being loaded (our bundled + game's existing one)
+2. Conflicting directives between our config and game's config
+3. Path issues in d3dx.ini pointing to wrong locations
+
+The d3d11.dll error after the config conflict indicates 3DMigoto fails to initialize properly due to the config issue.
+
+#### Key Files
+- Our bundled XXMI: likely in `dev-data/xxmi/` or similar
+- d3dx.ini configuration
+- 3dmloader.exe and DLLs
+
+#### Next Steps
+1. Check d3dx.ini for conflicting includes/paths
+2. Ensure only one d3dx.ini is being loaded
+3. Verify all paths in d3dx.ini point to our bundled locations
+4. Check if game directory has its own d3dx.ini we're conflicting with
+5. Compare our bundled d3dx.ini with the working Lutris version
+
+---
+
 ### 2026-02-26 (Session 7) - XXMI Mod Injection Success (Partial)
 
 #### Achievement

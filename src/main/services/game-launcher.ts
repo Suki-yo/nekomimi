@@ -110,6 +110,7 @@ export async function launchGame(gameId: string): Promise<{ success: boolean; pi
     // Launch XXMI Launcher through Lutris
     const loaderResult = await launchGameWithXXMI(
       game.executable,
+      game.directory,
       game.runner.path,
       game.runner.prefix
     )

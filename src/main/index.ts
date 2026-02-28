@@ -4,6 +4,7 @@ import { app, BrowserWindow, shell } from 'electron'
 import * as path from 'path'
 import { initDatabase, closeDatabase } from './services/database'
 import { loadAppConfig } from './services/config'
+import { initPaths } from './services/paths'
 import { registerAllHandlers } from './ipc'
 
 // Keep reference to prevent garbage collection
@@ -14,6 +15,9 @@ const isDev = !app.isPackaged
 
 // Create the main browser window
 const createWindow = async () => {
+  // Initialize paths first (other services may depend on it)
+  initPaths()
+
   // Initialize services
   initDatabase()
   loadAppConfig() // Ensures config exists

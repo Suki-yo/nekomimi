@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { DownloadModal } from '@/components/DownloadModal'
 import type { Game, DetectedRunner } from '../../../shared/types/game'
 
 // Default configs for new games
@@ -37,6 +38,10 @@ function Library() {
   const [detecting, setDetecting] = useState(false)
   const [runningGames, setRunningGames] = useState<Set<string>>(new Set())
   const [toast, setToast] = useState<{ message: string; type: 'info' | 'warning' } | null>(null)
+  const [downloadModalOpen, setDownloadModalOpen] = useState(false)
+  const [pendingGameId, setPendingGameId] = useState<string | null>(null)
+  const [needsXXMI, setNeedsXXMI] = useState(false)
+  const [needsRunner, setNeedsRunner] = useState(false)
 
   const showToast = (message: string, type: 'info' | 'warning' = 'info') => {
     setToast({ message, type })
@@ -194,9 +199,37 @@ function Library() {
       showToast('Game is already running', 'warning')
       return
     }
+
+    // Check XXMI and runner status
+    const status = await window.api.invoke('mods:xxmi-status', undefined)
+
+    const needXXMI = !status.xxmiInstalled
+    const needRunner = !status.runnerInstalled
+
+    if (needXXMI || needRunner) {
+      // Need to download something first
+      setPendingGameId(id)
+      setNeedsXXMI(needXXMI)
+      setNeedsRunner(needRunner)
+      setDownloadModalOpen(true)
+      return
+    }
+
+    // Everything is installed, launch the game
     const result = await window.api.invoke('game:launch', { id })
     if (!result.success) {
       showToast(`Failed to launch: ${result.error}`, 'warning')
+    }
+  }
+
+  const handleDownloadComplete = async () => {
+    // XXMI downloaded, now launch the pending game
+    if (pendingGameId) {
+      const result = await window.api.invoke('game:launch', { id: pendingGameId })
+      if (!result.success) {
+        showToast(`Failed to launch: ${result.error}`, 'warning')
+      }
+      setPendingGameId(null)
     }
   }
 
@@ -234,6 +267,16 @@ function Library() {
           {toast.message}
         </div>
       )}
+
+      {/* Download Modal */}
+      <DownloadModal
+        open={downloadModalOpen}
+        onClose={() => setDownloadModalOpen(false)}
+        onComplete={handleDownloadComplete}
+        needsXXMI={needsXXMI}
+        needsRunner={needsRunner}
+      />
+
       {/* Add Game Dialog */}
       <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
         <div className="flex items-center justify-between mb-6">
