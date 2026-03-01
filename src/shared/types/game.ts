@@ -9,6 +9,7 @@ export interface Game {
   installed: boolean
   directory: string
   executable: string
+  coverImage?: string // Path to cover image
 
   runner: RunnerConfig
   launch: LaunchConfig

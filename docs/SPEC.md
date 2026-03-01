@@ -203,13 +203,13 @@ last_played: 2025-02-16T10:30:00Z
 
 ## Roadmap
 
-### Phase 1 - MVP ✅ COMPLETE
+### Phase 1 - MVP (MOSTLY COMPLETE)
 - [x] Display game library with basic UI
 - [x] Add game manually (auto-detect runner/prefix)
 - [x] Launch games with Wine/Proton
 - [x] Basic env var configuration
 - [x] Playtime tracking
-- [ ] Cover art display
+- [ ] Cover art display ⚠️ PARTIAL - Selection works, display fails (see SESSION.md Session 12)
 
 ### Phase 2 - Update Management
 - [ ] Game manifest system (track installed files)

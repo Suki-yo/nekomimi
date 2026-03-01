@@ -1,7 +1,8 @@
 // Electron main process entry point
 
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, shell, protocol } from 'electron'
 import * as path from 'path'
+import * as fs from 'fs'
 import { initDatabase, closeDatabase } from './services/database'
 import { loadAppConfig } from './services/config'
 import { initPaths } from './services/paths'
@@ -12,6 +13,19 @@ let mainWindow: BrowserWindow | null = null
 
 // Check if running in development
 const isDev = !app.isPackaged
+
+// Register custom protocol for serving local images (must be called before app ready)
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'local',
+    privileges: {
+      secure: true,
+      standard: true,
+      supportFetchAPI: true,
+      bypassCSP: true,
+    },
+  },
+])
 
 // Create the main browser window
 const createWindow = async () => {
@@ -24,6 +38,33 @@ const createWindow = async () => {
 
   // Register IPC handlers
   registerAllHandlers()
+
+  // Register the local:// protocol handler
+  protocol.handle('local', (request) => {
+    const filePath = decodeURIComponent(request.url.slice(8)) // Remove 'local://' prefix
+    console.log('[local protocol] Loading:', filePath)
+
+    try {
+      const data = fs.readFileSync(filePath)
+      const ext = path.extname(filePath).toLowerCase()
+      const mimeTypes: Record<string, string> = {
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.png': 'image/png',
+        '.webp': 'image/webp',
+        '.gif': 'image/gif',
+        '.bmp': 'image/bmp',
+      }
+      const mimeType = mimeTypes[ext] || 'application/octet-stream'
+      console.log('[local protocol] Serving', data.length, 'bytes')
+      return new Response(data, {
+        headers: { 'Content-Type': mimeType },
+      })
+    } catch (error) {
+      console.error('[local protocol] Error:', error)
+      return new Response('Not found', { status: 404 })
+    }
+  })
 
   // Create browser window
   mainWindow = new BrowserWindow({

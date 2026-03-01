@@ -9,6 +9,7 @@ interface NekomimiAPI {
   ) => Promise<IPCResponse<K>>
   on: (channel: string, callback: (...args: unknown[]) => void) => () => void
   openFile: () => Promise<string | null>
+  openImage: (defaultPath?: string) => Promise<string | null>
   platform: NodeJS.Platform
   version: string
 }

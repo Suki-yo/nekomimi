@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { X, Puzzle, Settings, Image as ImageIcon } from 'lucide-react'
+import { X, Puzzle, Settings, Image as ImageIcon, Gamepad2 } from 'lucide-react'
 import type { Game, Mod, DetectedRunner } from '../../../shared/types/game'
 import { getXXMIImporter } from '../utils/mods'
 
@@ -13,6 +13,55 @@ interface GameConfigModalProps {
 
 type Tab = 'general' | 'mods'
 
+// Component to load and display cover image
+function CoverImage({ imagePath, alt }: { imagePath: string; alt: string }) {
+  const [src, setSrc] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let mounted = true
+    setLoadError(null)
+    setSrc(null)
+
+    window.api.invoke('image:read', { imagePath })
+      .then((url) => {
+        if (mounted) {
+          if (url) {
+            setSrc(url)
+          } else {
+            setLoadError('No data')
+          }
+        }
+      })
+      .catch((err) => {
+        if (mounted) setLoadError(String(err))
+      })
+
+    return () => { mounted = false }
+  }, [imagePath])
+
+  if (loadError) {
+    return (
+      <div className="flex flex-col items-center justify-center w-full h-full">
+        <ImageIcon className="h-6 w-6 text-muted-foreground" />
+        <span className="text-xs text-red-500 mt-1">{loadError}</span>
+      </div>
+    )
+  }
+
+  if (!src) {
+    return <ImageIcon className="h-8 w-8 text-muted-foreground" />
+  }
+
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className="w-full h-full object-cover"
+    />
+  )
+}
+
 function GameConfigModal({ game, open, onClose, onUpdate, runners }: GameConfigModalProps) {
   const [tab, setTab] = useState<Tab>('general')
   const [mods, setMods] = useState<Mod[]>([])
@@ -21,6 +70,7 @@ function GameConfigModal({ game, open, onClose, onUpdate, runners }: GameConfigM
   // Form state for general tab
   const [name, setName] = useState('')
   const [runnerPath, setRunnerPath] = useState('')
+  const [coverImage, setCoverImage] = useState<string | undefined>()
 
   // Mod rename state
   const [editingModPath, setEditingModPath] = useState<string | null>(null)
@@ -31,6 +81,7 @@ function GameConfigModal({ game, open, onClose, onUpdate, runners }: GameConfigM
     if (game) {
       setName(game.name)
       setRunnerPath(game.runner?.path || '')
+      setCoverImage(game.coverImage)
     }
   }, [game])
 
@@ -81,6 +132,18 @@ function GameConfigModal({ game, open, onClose, onUpdate, runners }: GameConfigM
       }
     })
     onUpdate(updated)
+  }
+
+  const handleCoverImageChange = async () => {
+    const imagePath = await window.api.openImage(game.directory)
+    if (imagePath) {
+      setCoverImage(imagePath)
+      const updated = await window.api.invoke('game:update', {
+        id: game.id,
+        updates: { coverImage: imagePath }
+      })
+      onUpdate(updated)
+    }
   }
 
   const handleModSupportToggle = async (enabled: boolean) => {
@@ -211,10 +274,17 @@ function GameConfigModal({ game, open, onClose, onUpdate, runners }: GameConfigM
             <div className="space-y-4">
               {/* Cover Image */}
               <div className="flex flex-col items-center gap-2">
-                <div className="w-32 h-44 bg-muted rounded flex items-center justify-center">
-                  <ImageIcon className="h-8 w-8 text-muted-foreground" />
+                <div className="w-32 h-44 bg-muted rounded flex items-center justify-center overflow-hidden">
+                  {coverImage ? (
+                    <CoverImage imagePath={coverImage} alt={game.name} />
+                  ) : (
+                    <ImageIcon className="h-8 w-8 text-muted-foreground" />
+                  )}
                 </div>
-                <button className="text-sm text-muted-foreground hover:text-foreground transition">
+                <button
+                  onClick={handleCoverImageChange}
+                  className="text-sm text-muted-foreground hover:text-foreground transition"
+                >
                   Change Image
                 </button>
               </div>

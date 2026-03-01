@@ -26,6 +26,14 @@ export interface IPCChannels {
     request: void
     response: string | null
   }
+  'dialog:openImage': {
+    request: { defaultPath?: string }
+    response: string | null
+  }
+  'image:read': {
+    request: { imagePath: string }
+    response: string | null  // file:// URL
+  }
 
   // ─────────────────────────────────────────────
   // Games

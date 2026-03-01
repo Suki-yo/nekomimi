@@ -4,6 +4,149 @@
 
 ---
 
+### 2026-02-28 (Session 12) - Cover Image Display Attempts (UNRESOLVED)
+
+#### Achievement
+**Cover image selection working, but image display still failing.**
+
+#### Problem Statement
+Cover images can be selected and stored, but the `<img>` tag fails to render them. Multiple approaches tried, all result in `onError` or blank display.
+
+#### What We Tried
+
+**1. Base64 Data URL (Initial Approach)**
+- Read file in main process
+- Convert to base64
+- Return as `data:image/png;base64,...`
+- Result: `onError` fired, image not displayed
+- Large images (4MB → 5.2MB base64) caused issues
+
+**2. Blob URL Approach**
+- Read file as buffer
+- Create `Blob` in renderer
+- Use `URL.createObjectURL()`
+- Result: URL created but revoked too early, image never rendered
+
+**3. Custom `img://` Protocol with `protocol.handle()`**
+- Registered privileged scheme before app ready
+- Handler read file and returned `Response` with data
+- Result: Protocol handler never invoked (`[img protocol]` logs never appeared)
+
+**4. `file://` URL Directly**
+- Returned `file:///path/to/image.jpg` from IPC
+- Result: Blocked by CORS (file:// from http://localhost:5173)
+
+**5. Custom `local://` Protocol with `net.fetch()`**
+- Used `net.fetch('file://...')` in protocol handler
+- Result: `net::ERR_FAILED`
+
+**6. Custom `local://` Protocol with Direct File Read**
+- Read file with `fs.readFileSync()`
+- Return `Response` with proper MIME type
+- URL-encode the path: `local://%2Fhome%2F...`
+- Result: Still getting `net::ERR_FAILED` (may be cached old code)
+
+#### Current Code State
+
+**Main Process (`src/main/index.ts`):**
+```typescript
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'local',
+    privileges: {
+      secure: true,
+      standard: true,
+      supportFetchAPI: true,
+      bypassCSP: true,
+    },
+  },
+]);
+
+// In createWindow():
+protocol.handle('local', (request) => {
+  const filePath = decodeURIComponent(request.url.slice(8))
+  const data = fs.readFileSync(filePath)
+  const mimeType = /* MIME type from extension */
+  return new Response(data, {
+    headers: { 'Content-Type': mimeType },
+  })
+})
+```
+
+**IPC Handler (`src/main/ipc/image.handler.ts`):**
+```typescript
+ipcMain.handle('image:read', async (_event, { imagePath }) => {
+  const encodedPath = encodeURIComponent(imagePath)
+  return `local://${encodedPath}`
+})
+```
+
+**Renderer (`src/renderer/src/pages/Library.tsx`):**
+```typescript
+const CoverImage = ({ imagePath, alt }) => {
+  const [src, setSrc] = useState<string | null>(null)
+  const [loaded, setLoaded] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    window.api.invoke('image:read', { imagePath })
+      .then((url) => setSrc(url))
+      .catch((err) => setError(String(err)))
+  }, [imagePath])
+
+  return (
+    <img
+      src={src!}
+      alt={alt}
+      onLoad={() => setLoaded(true)}
+      onError={(e) => setError('Failed to load')}
+    />
+  )
+}
+```
+
+#### Debugging Findings
+
+- IPC handler is called successfully
+- `local://` URLs are generated correctly
+- Protocol handler logs `[local protocol] Loading:` never appear
+- `onError` fires on img tag
+- No `[CoverImage] onLoad fired` logs
+- Console shows `net::ERR_FAILED` (even after removing `net.fetch()`)
+
+#### Possible Issues
+
+1. **Hot reload not updating main process** - Electron main process changes require full restart
+2. **Protocol not registered in time** - `registerSchemesAsPrivileged` called before `app.ready()` but maybe still too late
+3. **Renderer caching failures** - Browser might be caching failed loads
+4. **URL encoding issues** - Special characters in paths (spaces in "Screenshot from 2026-02-09 19-20-43.png")
+5. **CSP blocking** - Content Security Policy might be blocking custom protocols
+
+#### Files Modified
+
+- `src/main/index.ts` - Added protocol registration and handler
+- `src/main/ipc/image.handler.ts` - Multiple iterations (base64 → file:// → img:// → local://)
+- `src/renderer/src/pages/Library.tsx` - CoverImage component with debug states
+- `src/renderer/src/components/GameConfigModal.tsx` - Same CoverImage component
+- `src/shared/types/ipc.ts` - Updated image:read response type
+
+#### Next Steps (To Resolve)
+
+1. **Fully restart Electron** - Stop all processes and clean start
+2. **Check CSP** - Add `<meta http-equiv="Content-Security-Policy" content="img-src local: *">` to index.html
+3. **Try simpler protocol** - Use `protocol.registerFileProtocol` (deprecated but stable)
+4. **Use preload script** - Load image in preload, pass data URL to renderer
+5. **Downgrade Electron** - Try older Electron version if regression
+6. **Use different approach** - NativeImage in preload → PNG to buffer → send to renderer
+7. **Check for Electron issues** - Search for similar problems with `protocol.handle()` in dev mode
+
+#### References
+- Electron docs: https://www.electronjs.org/docs/latest/tutorial/quick-start
+- protocol.handle(): https://www.electronjs.org/docs/latest/api/protocol
+- Content Security Policy: https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP
+
+---
+
 ### 2026-02-28 (Session 10) - UI/UX Redesign + Mod Rename Feature
 
 #### Achievement
@@ -125,6 +268,52 @@ if (match) {
 3. **Clear affordances** - Play and Config are distinct, primary/secondary actions
 4. **Progressive disclosure** - Click Config to see options, not everything upfront
 5. **Undo is easy** - Toggle back to revert changes
+
+---
+
+### 2026-02-28 (Session 11) - Cover Image Support
+
+#### Achievement
+**Cover image support with smart folder traversal for image selection!**
+
+#### What We Built
+
+**1. Cover Image Storage**
+- Added `coverImage?: string` field to `Game` type
+- Stores full path to image file
+- Images displayed on game cards and in config modal
+
+**2. Smart Image Dialog**
+- `dialog:openImage` IPC channel with `defaultPath` option
+- Traverses up/down file tree looking for pictures folders
+- Searches for: `pictures`, `Images`, `photos`, `Wallpapers` folders
+- Falls back to provided default path or home directory
+- Filters: `jpg`, `jpeg`, `png`, `webp`, `gif`, `bmp`
+
+**3. Folder Traversal Logic**
+```typescript
+function findPicturesFolder(startDir: string): string | null {
+  // Traverse up (max 10 levels)
+  // Check each directory for pictures subfolder
+  // Traverse down 1 level if not found up
+  // Return first match or null
+}
+```
+
+**4. UI Updates**
+- Game cards: Show cover image or placeholder icon
+- Config modal: Display current image, "Change Image" button
+- Images loaded via `file://` protocol
+
+#### Files Modified
+
+- `src/shared/types/game.ts` - Added `coverImage?: string`
+- `src/shared/types/ipc.ts` - Added `dialog:openImage` channel
+- `src/main/ipc/dialog.handler.ts` - Added `findPicturesFolder()`, `dialog:openImage` handler
+- `src/preload/index.ts` - Exposed `openImage(defaultPath?)`
+- `src/renderer/src/types/window.d.ts` - Added `openImage` to API type
+- `src/renderer/src/components/GameConfigModal.tsx` - Image selection and display
+- `src/renderer/src/pages/Library.tsx` - Display cover on game cards
 
 ---
 

@@ -29,6 +29,76 @@ const defaultMods = {
   enabled: false,
 }
 
+// Component to load and display cover image
+function CoverImage({ imagePath, alt }: { imagePath: string; alt: string }) {
+  const [src, setSrc] = useState<string | null>(null)
+  const [loaded, setLoaded] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setSrc(null)
+    setLoaded(false)
+    setError(null)
+
+    window.api.invoke('image:read', { imagePath })
+      .then((url) => {
+        console.log('[CoverImage] Got URL length:', url?.length)
+        if (url) {
+          setSrc(url)
+        } else {
+          setError('No data')
+        }
+      })
+      .catch((err) => {
+        console.error('[CoverImage] Error:', err)
+        setError(String(err))
+      })
+  }, [imagePath])
+
+  // Loading state
+  if (!src && !error) {
+    return (
+      <div className="absolute inset-0 flex items-center justify-center bg-muted">
+        <span className="text-xs text-muted-foreground">Loading...</span>
+      </div>
+    )
+  }
+
+  // Error state
+  if (error) {
+    return (
+      <div className="absolute inset-0 flex flex-col items-center justify-center bg-muted">
+        <Gamepad2 className="h-8 w-8 text-muted-foreground" />
+        <span className="text-xs text-red-500 mt-1">{error}</span>
+      </div>
+    )
+  }
+
+  // Image loaded or loading
+  return (
+    <>
+      {!loaded && (
+        <div className="absolute inset-0 flex items-center justify-center bg-muted">
+          <span className="text-xs text-muted-foreground">Rendering...</span>
+        </div>
+      )}
+      <img
+        src={src!}
+        alt={alt}
+        className={`absolute inset-0 w-full h-full object-cover ${loaded ? '' : 'opacity-0'}`}
+        onLoad={() => {
+          console.log('[CoverImage] onLoad fired')
+          setLoaded(true)
+        }}
+        onError={(e) => {
+          console.error('[CoverImage] img error:', e)
+          setError('Failed to load')
+        }}
+      />
+    </>
+  )
+}
+
 function Library() {
   const [games, setGames] = useState<Game[]>([])
   const [runners, setRunners] = useState<DetectedRunner[]>([])
@@ -448,8 +518,12 @@ function Library() {
               key={game.id}
               className="overflow-hidden group"
             >
-              <div className="aspect-[3/4] bg-muted flex items-center justify-center relative">
-                <Gamepad2 className="h-12 w-12 text-muted-foreground" />
+              <div className="aspect-[3/4] bg-muted flex items-center justify-center relative overflow-hidden">
+                {game.coverImage ? (
+                  <CoverImage imagePath={game.coverImage} alt={game.name} />
+                ) : (
+                  <Gamepad2 className="h-12 w-12 text-muted-foreground" />
+                )}
                 {/* Badges container - top-left */}
                 <div className="absolute top-2 left-2 flex flex-col gap-1">
                   {/* Running indicator */}

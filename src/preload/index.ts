@@ -25,6 +25,11 @@ export const api = {
     return ipcRenderer.invoke('dialog:openFile')
   },
 
+  // Image file dialog
+  openImage: async (defaultPath?: string): Promise<string | null> => {
+    return ipcRenderer.invoke('dialog:openImage', { defaultPath })
+  },
+
   // Platform info (useful for OS-specific UI)
   platform: process.platform,
 
