@@ -13,9 +13,9 @@ export const registerImageHandlers = () => {
         return null
       }
 
-      // Return local:// URL with encoded path
-      const encodedPath = encodeURIComponent(imagePath)
-      const localUrl = `local://${encodedPath}`
+      // Return local:// URL with the path (will be decoded by protocol handler)
+      // Using triple-slash format: local:///absolute/path/to/file
+      const localUrl = `local://${imagePath}`
       console.log('[image:read] Returning local URL:', localUrl)
       return localUrl
     } catch (error) {

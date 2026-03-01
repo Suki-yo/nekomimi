@@ -4,7 +4,62 @@
 
 ---
 
-### 2026-02-28 (Session 12) - Cover Image Display Attempts (UNRESOLVED)
+### 2026-03-01 (Session 13) - Cover Image Display Fixed! ✅
+
+#### Achievement
+**Cover images now display correctly!** The issue was a combination of CSP blocking and URL normalization.
+
+#### Root Causes
+
+1. **CSP Blocking**: The Content Security Policy in `index.html` only allowed `'self'` for images, which blocked the custom `local://` protocol.
+
+2. **URL Normalization**: Browsers normalize `local:///home/user/...` to `local://home/user/...`, treating `home` as the host. This caused the leading `/` to be lost when parsing the path.
+
+#### The Fix
+
+**1. Updated CSP** (`src/renderer/index.html`):
+```html
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' local: data: blob:" />
+```
+
+Added `img-src 'self' local: data: blob:` to allow images from the custom protocol.
+
+**2. Fixed Protocol Handler** (`src/main/index.ts`):
+```typescript
+protocol.handle('local', (request) => {
+  const url = request.url
+  let filePath = decodeURIComponent(url.slice(8))
+
+  // Browser normalizes local:///path to local://path, so ensure leading /
+  if (!filePath.startsWith('/')) {
+    filePath = '/' + filePath
+  }
+
+  const data = fs.readFileSync(filePath)
+  const mimeType = mimeTypes[path.extname(filePath).toLowerCase()] || 'application/octet-stream'
+  return new Response(data, {
+    headers: { 'Content-Type': mimeType },
+  })
+})
+```
+
+#### Files Modified
+
+- `src/renderer/index.html` - Added `local:` to CSP img-src
+- `src/main/index.ts` - Fixed path parsing to handle URL normalization
+- `src/main/ipc/image.handler.ts` - Simplified URL generation
+
+#### Lessons Learned
+
+1. **CSP affects custom protocols** - Even though `local://` is a custom protocol registered with `bypassCSP: true`, the renderer's CSP still affects whether images can load.
+
+2. **Browser URL normalization** - Setting `img.src = 'local:///home/...'` may be normalized to `local://home/...'` by the browser. Always handle both cases.
+
+3. **Full restart required** - Electron main process changes require a full app restart, not just hot reload.
+
+---
+
+### 2026-02-28 (Session 12) - Cover Image Display Attempts (RESOLVED in Session 13)
 
 #### Achievement
 **Cover image selection working, but image display still failing.**

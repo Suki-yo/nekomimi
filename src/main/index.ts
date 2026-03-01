@@ -30,8 +30,18 @@ const createWindow = async (): Promise<void> => {
 
   // Register local:// protocol handler
   protocol.handle('local', (request) => {
-    const filePath = decodeURIComponent(request.url.slice(8))
-    console.log('[local protocol] Loading:', filePath)
+    const url = request.url
+    console.log('[local protocol] Request URL:', url)
+
+    // Remove 'local://' prefix (8 chars)
+    // Browser may normalize local:///path to local://path, so handle both
+    let filePath = decodeURIComponent(url.slice(8))
+
+    // Ensure absolute path starts with /
+    if (!filePath.startsWith('/')) {
+      filePath = '/' + filePath
+    }
+    console.log('[local protocol] Loading file:', filePath)
 
     try {
       const data = fs.readFileSync(filePath)
@@ -45,11 +55,12 @@ const createWindow = async (): Promise<void> => {
         '.bmp': 'image/bmp',
       }
       const mimeType = mimeTypes[ext] || 'application/octet-stream'
+      console.log('[local protocol] Success, MIME:', mimeType, 'Size:', data.length)
       return new Response(data, {
         headers: { 'Content-Type': mimeType },
       })
     } catch (error) {
-      console.error('[local protocol] Error:', error)
+      console.error('[local protocol] Error reading file:', error)
       return new Response('Not found', { status: 404 })
     }
   })
