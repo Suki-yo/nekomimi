@@ -36,10 +36,11 @@ export interface LaunchConfig {
 
 // Individual mod entry
 export interface Mod {
-  name: string        // Display name (without DISABLED_ prefix)
-  folder: string      // Actual folder name (may include DISABLED_ prefix)
-  enabled: boolean    // Whether mod is active
-  path: string        // Full path to mod folder
+  name: string           // Display name (custom name or original)
+  originalName: string   // Original folder name (extracted from (custom)original format)
+  folder: string         // Actual folder name (may include DISABLED_ prefix)
+  enabled: boolean       // Whether mod is active
+  path: string           // Full path to mod folder
 }
 
 export interface ModConfig {

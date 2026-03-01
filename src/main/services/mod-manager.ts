@@ -697,6 +697,26 @@ export function getModsPath(importer: string): string {
 }
 
 /**
+ * Parse custom name from folder format: (CUSTOMNAME)originalname
+ * Returns { displayName, originalName }
+ */
+function parseModFolderName(folderName: string): { displayName: string; originalName: string } {
+  // Check for custom name format: (CUSTOMNAME)originalname
+  const customMatch = folderName.match(/^\((.+)\)(.+)$/)
+  if (customMatch) {
+    return {
+      displayName: customMatch[1],
+      originalName: customMatch[2],
+    }
+  }
+  // No custom name, use folder name as both
+  return {
+    displayName: folderName,
+    originalName: folderName,
+  }
+}
+
+/**
  * Get all mods for an importer
  * Scans the Mods folder and returns a list of mods with their enabled state
  */
@@ -717,10 +737,12 @@ export function getMods(importer: string): Mod[] {
     .filter(e => e.isDirectory() && !excludeFolders.includes(e.name))
     .map(e => {
       const isDisabled = e.name.startsWith('DISABLED_')
-      const cleanName = isDisabled ? e.name.substring(9) : e.name
+      const cleanFolder = isDisabled ? e.name.substring(9) : e.name
+      const { displayName, originalName } = parseModFolderName(cleanFolder)
 
       return {
-        name: cleanName,
+        name: displayName,
+        originalName,
         folder: e.name,
         enabled: !isDisabled,
         path: path.join(modsPath, e.name),
@@ -759,6 +781,54 @@ export function toggleMod(modPath: string, enabled: boolean): boolean {
   } catch (err) {
     console.error(`[mods] Failed to toggle mod:`, err)
     return false
+  }
+}
+
+/**
+ * Rename a mod with a custom display name
+ * Folder format: (CUSTOMNAME)originalname
+ * If customName is empty, removes the custom prefix
+ */
+export function renameMod(modPath: string, customName: string): { success: boolean; newPath?: string; error?: string } {
+  const dir = path.dirname(modPath)
+  const folder = path.basename(modPath)
+
+  // Handle DISABLED_ prefix
+  const isDisabled = folder.startsWith('DISABLED_')
+  const cleanFolder = isDisabled ? folder.substring(9) : folder
+
+  // Parse the current folder name to get original name
+  const { originalName } = parseModFolderName(cleanFolder)
+
+  try {
+    // Build new folder name
+    let newFolderName: string
+    if (customName && customName.trim()) {
+      // Add custom name prefix: (CUSTOMNAME)originalname
+      newFolderName = `(${customName.trim()})${originalName}`
+    } else {
+      // Remove custom name, use original name only
+      newFolderName = originalName
+    }
+
+    // Re-add DISABLED_ prefix if was disabled
+    if (isDisabled) {
+      newFolderName = 'DISABLED_' + newFolderName
+    }
+
+    const newPath = path.join(dir, newFolderName)
+
+    // Don't rename if same
+    if (folder === newFolderName) {
+      return { success: true, newPath: modPath }
+    }
+
+    fs.renameSync(modPath, newPath)
+    console.log(`[mods] Renamed mod: ${folder} → ${newFolderName}`)
+    return { success: true, newPath }
+  } catch (err) {
+    console.error(`[mods] Failed to rename mod:`, err)
+    return { success: false, error: String(err) }
   }
 }
 

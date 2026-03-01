@@ -123,6 +123,10 @@ export interface IPCChannels {
     request: { importer: string }
     response: void
   }
+  'mods:rename': {
+    request: { modPath: string; customName: string }
+    response: { success: boolean; newPath?: string; error?: string }
+  }
 }
 
 // Utility type - extracts request type for a channel

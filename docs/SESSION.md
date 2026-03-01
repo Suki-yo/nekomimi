@@ -4,6 +4,278 @@
 
 ---
 
+### 2026-02-28 (Session 10) - UI/UX Redesign + Mod Rename Feature
+
+#### Achievement
+**Complete UI/UX redesign with Play/Config buttons, tabbed config modal, auto-save, and custom mod names!**
+
+#### What We Built
+
+**1. Game Card Redesign**
+- Removed click-to-open behavior on cards
+- Added dedicated **Play** button (launches game)
+- Added dedicated **Config** button (opens settings modal)
+- Play button shows "Running" state when game is active
+- Badges (Running, Mods) stacked at top-left
+
+**2. GameConfigModal Component**
+- Created new modal component with **tabs** (General | Mods)
+- **Auto-save on every change** - no Save/Cancel buttons
+- Clean tab switcher with icons
+- Responsive modal with max-height scrolling
+
+**3. General Tab**
+- Cover image placeholder (not yet functional)
+- Game name input (auto-saves on change)
+- Runner dropdown (auto-saves)
+- Read-only info: playtime, last played, directory
+
+**4. Mods Tab** (moved from old detail dialog)
+- Mod support toggle
+- Individual mod list with enable/disable toggles
+- Enable All / Disable All buttons
+- **Double-click mod name to rename**
+
+**5. Mod Rename Feature**
+- Double-click mod name → inline edit
+- Folder format: `(CUSTOMNAME)originalname`
+- If custom name empty, removes custom prefix
+- App displays only `CUSTOMNAME`
+- Original name preserved in folder structure
+
+**6. Toggle Switch Styling**
+- Gray bar when off, **purple bar** when on
+- White circle with **matching border** (gray/purple)
+- Proper circle sizing for different toggle sizes
+- Proper vertical centering
+
+#### Files Created/Modified
+
+**Created:**
+- `src/renderer/src/components/GameConfigModal.tsx` - New config modal with tabs
+
+**Modified:**
+- `src/shared/types/game.ts` - Added `originalName` to `Mod` interface
+- `src/shared/types/ipc.ts` - Added `mods:rename` channel
+- `src/main/services/mod-manager.ts` - Added `parseModFolderName()`, `renameMod()`
+- `src/main/ipc/mods.handler.ts` - Added `mods:rename` handler
+- `src/renderer/src/pages/Library.tsx` - Complete UI redesign with Play/Config buttons
+- `src/main/index.ts` - Removed menu bar (`mainWindow.setMenu(null)`)
+
+#### Mod Rename Technical Details
+
+**Folder naming:**
+- No custom name: `original_folder_name/`
+- With custom name: `(My Custom Name)original_folder_name/`
+- Disabled: `DISABLED_(My Custom Name)original_folder_name/`
+
+**Parsing logic:**
+```typescript
+// Extracts custom name from (CUSTOM)original format
+const match = folderName.match(/^\((.+)\)(.+)$/)
+if (match) {
+  displayName: match[1],  // CUSTOM
+  originalName: match[2], // original_folder_name
+}
+```
+
+#### Toggle Switch Specs
+
+**Large toggle (Mod Support):**
+- Frame: 44px × 24px (`w-11 h-6`)
+- Circle: 20px × 20px (`w-5 h-5`)
+- Slide distance: 16px (`translate-x-4`)
+- Top offset: 2px for centering (`top-0.5`)
+
+**Small toggle (Individual mods):**
+- Frame: 36px × 20px (`w-9 h-5`)
+- Circle: 16px × 16px (`w-4 h-4`)
+- Slide distance: 16px (`translate-x-4`)
+- Top offset: 2px for centering (`top-0.5`)
+
+#### UI Flow
+
+**Library View:**
+```
+┌─────────────────────────┐
+│   [Game Cover Image]     │
+│   [Running] [Mods]       │
+├─────────────────────────┤
+│ Game Name                │
+│ [▶ Play] [⚙ Config]     │
+└─────────────────────────┘
+```
+
+**Config Modal:**
+```
+┌─────────────────────────────┐
+│ Game Name              [✕]  │
+├─────────────────────────────┤
+│ [General]  [Mods]            │
+├─────────────────────────────┤
+│ (tab content...)             │
+│ (all changes auto-save)      │
+└─────────────────────────────┘
+```
+
+#### Key UX Principles Applied
+
+1. **No modals for modals** - Direct actions, no extra confirmation steps
+2. **Auto-save** - Changes apply immediately, visual feedback confirms
+3. **Clear affordances** - Play and Config are distinct, primary/secondary actions
+4. **Progressive disclosure** - Click Config to see options, not everything upfront
+5. **Undo is easy** - Toggle back to revert changes
+
+---
+
+### 2026-02-28 (Session 9) - Mod Management UX + Process Tracking Fix
+
+#### Achievement
+**Complete mod management system with UI, proper process tracking, and cleaned up UX!**
+
+#### What We Built
+
+**1. Mod Management System**
+- Per-game mod toggle (global on/off)
+- Individual mod enable/disable via UI
+- In-game detail modal for managing mods
+- Visual mod indicator badges on game cards
+
+**2. Process Tracking Overhaul**
+- Fixed stale entry problem - games no longer show as "running" when they're not
+- Now tracks actual game executable (e.g., `Endfield.exe`), not just launcher
+- Active polling with `pgrep` every 5 seconds to verify game is actually running
+- Automatic cleanup of dead processes
+
+**3. UX Polish**
+- Removed Electron menu bar (File, Edit, View, etc.)
+- Fixed overlapping badges on game cards (now stacked vertically)
+- Game detail modal shows game info + mod settings
+
+#### Files Created/Modified
+
+**Type Definitions:**
+- `src/shared/types/game.ts` - Added `Mod` interface, extended `ModConfig` with `enabled`, `importer`
+- `src/shared/types/ipc.ts` - Added mod management channels
+- `src/renderer/src/utils/mods.ts` - New utility for mod detection
+
+**Backend Services:**
+- `src/main/services/mod-manager.ts` - Added:
+  - `getMods(importer)` - Scan Mods folder, return list with enabled state
+  - `toggleMod(modPath, enabled)` - Rename with/without DISABLED_ prefix
+  - `installMod(importer, zipPath)` - Extract zip to Mods folder
+  - `deleteMod(modPath)` - Remove mod folder
+  - `enableAllMods()`, `disableAllMods()` - Bulk operations
+
+- `src/main/services/game-launcher.ts` - Complete tracking rewrite:
+  ```typescript
+  interface RunningGame {
+    exeName: string         // Game executable name
+    launcherPid?: number    // Launcher PID (for cleanup)
+    startTime: number
+    lastCheck: number       // Last verification time
+  }
+
+  // Poll every 5 seconds to verify processes are actually running
+  function isProcessRunning(exeName: string): boolean {
+    // Uses pgrep -f "Endfield.exe" to verify
+  }
+  ```
+
+**IPC Handlers:**
+- `src/main/ipc/mods.handler.ts` - Added handlers:
+  - `mods:list` - Get mods for a game
+  - `mods:toggle` - Toggle individual mod
+  - `mods:install` - Install from zip
+  - `mods:delete` - Delete mod
+  - `mods:enable-all`, `mods:disable-all` - Bulk operations
+
+**Frontend:**
+- `src/renderer/src/pages/Library.tsx` - Major updates:
+  - Game cards now show mod badge (purple "Mods" indicator)
+  - Click on card opens detail modal
+  - Detail modal shows mod support toggle + individual mod list
+  - Badges stacked vertically (no more overlap)
+
+**Main Process:**
+- `src/main/index.ts` - Removed menu bar:
+  ```typescript
+  mainWindow.setMenu(null)  // Goodbye File/Edit/View
+  ```
+
+#### Game Config Schema Update
+
+```yaml
+mods:
+  enabled: false           # NEW: Global mod toggle
+  importer: "EFMI"         # NEW: Which XXMI importer
+  # Legacy xxmi.path still supported but optional
+```
+
+#### Mod States
+
+XXMI's `d3dx.ini` uses:
+```ini
+include_recursive = Mods
+exclude_recursive = DISABLED*
+```
+
+Our implementation:
+- **Active mod**: `modname/` folder
+- **Disabled mod**: `DISABLED_modname/` folder (rename to toggle)
+- **Install**: Extract `.zip` to Mods folder
+
+#### Process Tracking Details
+
+**Before:**
+- Tracked launcher process only
+- Stale entries persisted if launch failed
+- XXMI launches stored `null` - couldn't verify status
+
+**After:**
+- Tracks actual game exe name (`Endfield.exe`)
+- Polls every 5s with `pgrep -f "Endfield.exe"`
+- Auto-cleans dead entries
+- Works for both XXMI and normal launches
+
+#### UI Flow
+
+1. **Library View** - Game cards show:
+   - Green "Running" badge (if game is running)
+   - Purple "Mods" badge (if mods enabled)
+   - Badges stacked at top-left
+
+2. **Click Game Card** → Opens detail modal:
+   - Game info (playtime, last played)
+   - Mod Support toggle (if game supports XXMI)
+   - List of installed mods with individual toggles
+   - Active mod count
+
+3. **Launch**:
+   - If mods enabled → XXMI mode
+   - If mods disabled → Vanilla launch
+   - Process tracked by exe name, not launcher
+
+#### XXMI Architecture (Shared)
+
+One XXMI install, per-game folders:
+```
+dev-data/xxmi/
+├── Resources/Bin/XXMI Launcher.exe  # Shared launcher
+├── EFMI/Mods/                         # Endfield mods
+├── GIMI/Mods/                         # Genshin mods
+├── SRMI/Mods/                         # Star Rail mods
+└── XXMI Launcher Config.json          # Central config
+```
+
+#### Next Steps
+- [ ] Drag-drop mod installation (UI)
+- [ ] Mod metadata parsing (author, version, preview images)
+- [ ] Mod profile system (save/load mod configurations)
+- [ ] In-app mod browser (future)
+
+---
+
 ### 2026-02-27 (Session 8) - Bundled XXMI: SUCCESS!
 
 #### Achievement

@@ -13,6 +13,7 @@ import {
   deleteMod,
   enableAllMods,
   disableAllMods,
+  renameMod,
 } from '../services/mod-manager'
 
 export const registerModsHandlers = () => {
@@ -99,5 +100,11 @@ export const registerModsHandlers = () => {
   ipcMain.handle('mods:disable-all', (_event, { importer }: { importer: string }) => {
     console.log(`[mods] Disabling all mods for ${importer}`)
     disableAllMods(importer)
+  })
+
+  // Rename a mod (set custom display name)
+  ipcMain.handle('mods:rename', (_event, { modPath, customName }: { modPath: string; customName: string }) => {
+    console.log(`[mods] Renaming mod: ${modPath} → "${customName}"`)
+    return renameMod(modPath, customName)
   })
 }

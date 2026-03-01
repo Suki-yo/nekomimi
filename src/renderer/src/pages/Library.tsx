@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Plus, Gamepad2, Trash2, FolderOpen, Puzzle } from 'lucide-react'
+import { Plus, Gamepad2, Trash2, FolderOpen, Puzzle, Play, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import {
@@ -14,8 +14,8 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { DownloadModal } from '@/components/DownloadModal'
-import type { Game, DetectedRunner, Mod } from '../../../shared/types/game'
-import { getXXMIImporter } from '../utils/mods'
+import GameConfigModal from '@/components/GameConfigModal'
+import type { Game, DetectedRunner } from '../../../shared/types/game'
 
 // Default configs for new games
 const defaultLaunch = {
@@ -46,11 +46,9 @@ function Library() {
   const [needsXXMI, setNeedsXXMI] = useState(false)
   const [needsRunner, setNeedsRunner] = useState(false)
 
-  // Game detail modal state
-  const [detailDialogOpen, setDetailDialogOpen] = useState(false)
+  // Config modal state
+  const [configModalOpen, setConfigModalOpen] = useState(false)
   const [selectedGame, setSelectedGame] = useState<Game | null>(null)
-  const [mods, setMods] = useState<Mod[]>([])
-  const [loadingMods, setLoadingMods] = useState(false)
 
   const showToast = (message: string, type: 'info' | 'warning' = 'info') => {
     setToast({ message, type })
@@ -198,7 +196,7 @@ function Library() {
   }
 
   const confirmDelete = (game: Game, e: React.MouseEvent) => {
-    e.stopPropagation() // Prevent card click (launch)
+    e.stopPropagation()
     setGameToDelete(game)
     setDeleteDialogOpen(true)
   }
@@ -242,71 +240,19 @@ function Library() {
     }
   }
 
-  // Open game detail modal
-  const handleGameClick = async (game: Game) => {
+  const handleOpenConfig = (game: Game, e: React.MouseEvent) => {
+    e.stopPropagation()
     setSelectedGame(game)
-    setDetailDialogOpen(true)
-
-    // Load mods if the game supports them
-    const importer = getXXMIImporter(game.executable)
-    if (importer) {
-      setLoadingMods(true)
-      try {
-        const modList = await window.api.invoke('mods:list', { importer })
-        setMods(modList)
-      } catch (err) {
-        console.error('Failed to load mods:', err)
-        setMods([])
-      } finally {
-        setLoadingMods(false)
-      }
-    } else {
-      setMods([])
-    }
+    setConfigModalOpen(true)
   }
 
-  // Toggle mod support for a game
-  const handleToggleModSupport = async (enabled: boolean) => {
-    if (!selectedGame) return
-
-    try {
-      const importer = getXXMIImporter(selectedGame.executable)
-
-      const updated = await window.api.invoke('game:update', {
-        id: selectedGame.id,
-        updates: {
-          mods: {
-            ...selectedGame.mods,
-            enabled,
-            importer: importer || undefined,
-          }
-        }
-      })
-
-      // Update local state
-      setSelectedGame(updated)
-      setGames(prev => prev.map(g => g.id === updated.id ? updated : g))
-      showToast(enabled ? 'Mod support enabled' : 'Mod support disabled')
-    } catch (err) {
-      showToast(`Failed to update mod settings: ${err}`, 'warning')
-    }
+  const handleGameUpdate = (updatedGame: Game) => {
+    setGames(prev => prev.map(g => g.id === updatedGame.id ? updatedGame : g))
+    setSelectedGame(updatedGame)
   }
 
-  // Toggle individual mod
-  const handleToggleMod = async (mod: Mod) => {
-    try {
-      await window.api.invoke('mods:toggle', { modPath: mod.path, enabled: !mod.enabled })
-      // Update local state
-      setMods(prev => prev.map(m =>
-        m.path === mod.path ? { ...m, enabled: !m.enabled } : m
-      ))
-    } catch (err) {
-      showToast(`Failed to toggle mod: ${err}`, 'warning')
-    }
-  }
-
-  // Double click handler (launch game)
-  const handleGameDoubleClick = (game: Game) => {
+  const handlePlayClick = (game: Game, e: React.MouseEvent) => {
+    e.stopPropagation()
     launchGame(game.id)
   }
 
@@ -347,6 +293,15 @@ function Library() {
         onComplete={handleDownloadComplete}
         needsXXMI={needsXXMI}
         needsRunner={needsRunner}
+      />
+
+      {/* Config Modal */}
+      <GameConfigModal
+        game={selectedGame}
+        open={configModalOpen}
+        onClose={() => setConfigModalOpen(false)}
+        onUpdate={handleGameUpdate}
+        runners={runners}
       />
 
       {/* Add Game Dialog */}
@@ -480,113 +435,6 @@ function Library() {
         </DialogContent>
       </Dialog>
 
-      {/* Game Detail Dialog */}
-      <Dialog open={detailDialogOpen} onOpenChange={setDetailDialogOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>{selectedGame?.name}</DialogTitle>
-            <DialogDescription>
-              Manage game settings and mods
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            {/* Game Info */}
-            <div className="text-sm text-muted-foreground space-y-1">
-              <p><strong>Playtime:</strong> {Math.round(selectedGame?.playtime || 0)} hours</p>
-              <p><strong>Last played:</strong> {selectedGame?.lastPlayed
-                ? new Date(selectedGame.lastPlayed).toLocaleDateString()
-                : 'Never'}</p>
-            </div>
-
-            {/* Mod Support Section */}
-            {selectedGame && getXXMIImporter(selectedGame.executable) && (
-              <div className="border-t pt-4">
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <Puzzle className="h-5 w-5 text-purple-500" />
-                    <span className="font-medium">Mod Support</span>
-                  </div>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={selectedGame.mods?.enabled ?? false}
-                      onChange={(e) => handleToggleModSupport(e.target.checked)}
-                      className="h-4 w-4"
-                    />
-                    <span className="text-sm">Enabled</span>
-                  </label>
-                </div>
-
-                {/* Mod List */}
-                {selectedGame.mods?.enabled && (
-                  <div className="bg-muted/50 rounded-lg p-3">
-                    {loadingMods ? (
-                      <p className="text-sm text-muted-foreground">Loading mods...</p>
-                    ) : mods.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">No mods installed</p>
-                    ) : (
-                      <div className="space-y-2 max-h-48 overflow-y-auto">
-                        {mods.map((mod) => (
-                          <div
-                            key={mod.path}
-                            className="flex items-center justify-between p-2 bg-background rounded"
-                          >
-                            <span className={`text-sm ${!mod.enabled ? 'text-muted-foreground' : ''}`}>
-                              {mod.name}
-                            </span>
-                            <label className="flex items-center cursor-pointer">
-                              <input
-                                type="checkbox"
-                                checked={mod.enabled}
-                                onChange={() => handleToggleMod(mod)}
-                                className="h-4 w-4"
-                              />
-                            </label>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    <p className="text-xs text-muted-foreground mt-2">
-                      {mods.filter(m => m.enabled).length} of {mods.length} mods active
-                    </p>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* No Mod Support */}
-            {selectedGame && !getXXMIImporter(selectedGame.executable) && (
-              <div className="border-t pt-4">
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <Puzzle className="h-5 w-5" />
-                  <span className="text-sm">Mod support not available for this game</span>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setDetailDialogOpen(false)}
-            >
-              Close
-            </Button>
-            <Button
-              type="button"
-              onClick={() => {
-                setDetailDialogOpen(false)
-                if (selectedGame) launchGame(selectedGame.id)
-              }}
-            >
-              Play
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       {games.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
           <Gamepad2 className="h-16 w-16 mb-4 opacity-50" />
@@ -598,9 +446,7 @@ function Library() {
           {games.map((game) => (
             <Card
               key={game.id}
-              className="cursor-pointer hover:ring-2 hover:ring-ring transition overflow-hidden group"
-              onClick={() => handleGameClick(game)}
-              onDoubleClick={() => handleGameDoubleClick(game)}
+              className="overflow-hidden group"
             >
               <div className="aspect-[3/4] bg-muted flex items-center justify-center relative">
                 <Gamepad2 className="h-12 w-12 text-muted-foreground" />
@@ -633,16 +479,24 @@ function Library() {
               </div>
 
               <CardContent className="p-3">
-                <h3 className="font-medium truncate">{game.name}</h3>
-                <div className="flex items-center justify-between mt-1 text-sm text-muted-foreground">
-                  <span>
-                    {game.installed ? (
-                      <span className="text-green-500">Installed</span>
-                    ) : (
-                      <span>Not installed</span>
-                    )}
-                  </span>
-                  <span>{Math.round(game.playtime)}h</span>
+                <h3 className="font-medium truncate mb-2">{game.name}</h3>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    onClick={(e) => handlePlayClick(game, e)}
+                    disabled={runningGames.has(game.id)}
+                    className="flex-1"
+                  >
+                    <Play className="h-4 w-4 mr-1" />
+                    {runningGames.has(game.id) ? 'Running' : 'Play'}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={(e) => handleOpenConfig(game, e)}
+                  >
+                    <Settings className="h-4 w-4" />
+                  </Button>
                 </div>
               </CardContent>
             </Card>
