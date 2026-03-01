@@ -47,10 +47,11 @@
   - (others as needed)
 
 ### 4. Mod Support
-- XXMI Loader integration
-- FPS Unlocker integration
-- Mod enable/disable toggles
-- Mod configuration UI
+- Per-game mod toggle (vanilla vs modded launch)
+- XXMI Loader integration (one install, per-game folders)
+- Individual mod enable/disable via UI
+- Mod list management (install, delete, toggle)
+- Game detail modal for mod configuration
 
 ### 5. Linux-Specific Patches
 - Anti-cheat workarounds per game
@@ -71,14 +72,21 @@
 
 ### Data Sources
 ```
-~/.config/nekomimi/
+~/.local/share/nekomimi/
 ├── library.db          # SQLite - game library, metadata, playtime
 ├── games/              # Per-game configs (YAML)
 │   ├── genshin-impact.yml
 │   └── wuthering-waves.yml
-├── runners/            # Wine/Proton installations
+├── runners/            # Wine/Proton installations (bundled/downloaded)
+│   └── dwproton-10.0-14/
+├── xxmi/               # XXMI Launcher + importers (bundled/downloaded)
+│   ├── Launcher/       # XXMI Launcher application
+│   ├── EFMI/           # Endfield Model Importer
+│   ├── GIMI/           # Genshin Model Importer
+│   └── ...
 ├── cache/              # Downloaded patches, temporary files
-└── mods/               # XXMI, FPS unlocker, etc.
+└── config/             # App configuration
+    └── settings.yml
 ```
 
 ### Key Modules
@@ -175,9 +183,9 @@ launch:
   args: ""
 
 mods:
-  xxmi:
-    enabled: true
-    path: /home/jyq/Games/XXMI
+  enabled: true          # Global mod toggle for this game
+  importer: "GIMI"       # Which XXMI importer (GIMI/SRMI/EFMI/WWMI/ZZMI/HIMI)
+  # Legacy xxmi.path optional - auto-detected from importer
   fps_unlock:
     enabled: true
     fps: 120
@@ -195,13 +203,13 @@ last_played: 2025-02-16T10:30:00Z
 
 ## Roadmap
 
-### Phase 1 - MVP
-- [ ] Display game library with basic UI
-- [ ] Add game manually (auto-detect runner/prefix)
-- [ ] Launch games with Wine/Proton
-- [ ] Basic env var configuration
-- [ ] Playtime tracking
-- [ ] Cover art display
+### Phase 1 - MVP (MOSTLY COMPLETE)
+- [x] Display game library with basic UI
+- [x] Add game manually (auto-detect runner/prefix)
+- [x] Launch games with Wine/Proton
+- [x] Basic env var configuration
+- [x] Playtime tracking
+- [ ] Cover art display ⚠️ PARTIAL - Selection works, display fails (see SESSION.md Session 12)
 
 ### Phase 2 - Update Management
 - [ ] Game manifest system (track installed files)
@@ -211,16 +219,25 @@ last_played: 2025-02-16T10:30:00Z
 - [ ] Start with ONE game (Genshin or WuWa)
 - [ ] Runner management (scan, list, download Proton-GE/Wine versions)
 
-### Phase 3 - Mod Integration
-- [ ] XXMI Loader integration
-- [ ] FPS Unlocker integration
-- [ ] Mod toggles in UI
+### Phase 3 - Mod Integration ✅ COMPLETE
+- [x] XXMI Loader integration (bundled, single install)
+- [x] FPS Unlocker integration
+- [x] Mod toggles in UI
+- [x] Per-game mod enable/disable
+- [x] Individual mod list with toggles
+- [x] Game config modal with tabs (General | Mods)
+- [x] Auto-save on change (no Save/Cancel buttons)
+- [x] Play/Config buttons on game cards
+- [x] Custom mod names (double-click to rename)
+- [ ] Drag-drop mod installation
+- [ ] Mod metadata (author, version, previews)
 
 ### Phase 4 - Polish
 - [ ] Game-specific patch logic
 - [ ] SteamLinuxRuntime integration
-- [ ] UI polish
 - [ ] Settings page
+- [ ] Cover art support
+- [ ] Categories/tags
 
 ---
 
@@ -230,7 +247,9 @@ last_played: 2025-02-16T10:30:00Z
 2. **Download sources** - Official servers only, or mirrors?
 3. **Proton vs Wine** - Default to Proton (SteamLinuxRuntime) or pure Wine?
 4. **XXMI versioning** - Handle XXMI updates too?
-5. **Multi-game mod support** - One XXMI install for all games, or per-game?
+5. ~~**Multi-game mod support** - One XXMI install for all games, or per-game?~~ ✅ **RESOLVED**: One shared XXMI install with per-game importer folders
+6. **Cover images** - Store as files? Base64 in YAML? Separate asset folder?
+7. **Mod metadata** - Parse from mod folders? Community API? (EFMI/, GIMI/, etc.)
 
 ---
 

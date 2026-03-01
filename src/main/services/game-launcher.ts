@@ -1,13 +1,51 @@
 import { spawn, execSync } from 'child_process'
 import { getGame, updateGame } from './database'
 import { loadGameConfig, saveGameConfig } from './config'
+import { shouldUseXXMI, launchGameWithXXMI } from './mod-manager'
 import type { Game } from '../../shared/types/game'
 
-// Track running game processes
-const runningProcesses = new Map<string, { process: ReturnType<typeof spawn>, startTime: number }>()
+interface RunningGame {
+  exeName: string
+  launcherPid?: number
+  startTime: number
+  lastCheck: number
+}
 
-// Build the launch command and environment
-function buildLaunchCommand(game: Game): { command: string; args: string[]; env: Record<string, string> } {
+const runningProcesses = new Map<string, RunningGame>()
+const POLL_INTERVAL = 5000
+
+function isProcessRunning(exeName: string): boolean {
+  try {
+    const result = execSync(`pgrep -f "${exeName}"`, { stdio: 'pipe' })
+    return result.toString().trim().length > 0
+  } catch {
+    return false
+  }
+}
+
+function cleanupStaleEntries() {
+  const now = Date.now()
+
+  for (const [gameId, running] of runningProcesses.entries()) {
+    if (!isProcessRunning(running.exeName)) {
+      console.log(`[launch] Cleaning up stale entry for ${running.exeName}`)
+      runningProcesses.delete(gameId)
+    } else {
+      running.lastCheck = now
+    }
+  }
+}
+
+let pollInterval: NodeJS.Timeout | null = null
+
+function startPolling() {
+  if (pollInterval) return
+  pollInterval = setInterval(cleanupStaleEntries, POLL_INTERVAL)
+}
+
+startPolling()
+
+function buildLaunchCommand(game: Game, useXXMI: boolean): { command: string; args: string[]; env: Record<string, string> } {
   const env: Record<string, string> = {
     WINEPREFIX: game.runner.prefix,
     ...game.launch.env,
@@ -24,12 +62,17 @@ function buildLaunchCommand(game: Game): { command: string; args: string[]; env:
     command = 'wine'
     args = [game.executable]
   } else {
-    // Native - run directly
     command = game.executable
     args = []
   }
 
-  // Append custom launch args
+  if (useXXMI) {
+    const existingOverrides = env.WINEDLLOVERRIDES || ''
+    env.WINEDLLOVERRIDES = existingOverrides
+      ? `d3d11=n;${existingOverrides}`
+      : 'd3d11=n'
+  }
+
   if (game.launch.args) {
     args = args.concat(game.launch.args.split(' ').filter(Boolean))
   }
@@ -38,81 +81,118 @@ function buildLaunchCommand(game: Game): { command: string; args: string[]; env:
 }
 
 export async function launchGame(gameId: string): Promise<{ success: boolean; pid?: number; error?: string }> {
-  // Check if already running
-  if (runningProcesses.has(gameId)) {
-    return { success: false, error: 'Game is already running' }
-  }
+  startPolling()
+  cleanupStaleEntries()
 
-  // Fetch game row from database
   const gameRow = getGame(gameId)
   if (!gameRow) {
     return { success: false, error: 'Game not found' }
   }
 
-  // Load full game config from YAML
   const game = loadGameConfig(gameRow.config_path)
   if (!game) {
     return { success: false, error: 'Game config not found' }
   }
 
-  // Validate required fields
+  const exeName = game.executable.split(/[/\\]/).pop() || game.executable
+
+  if (isProcessRunning(exeName)) {
+    console.log(`[launch] ${exeName} is already running`)
+    return { success: false, error: 'Game is already running' }
+  }
+
+  const existing = runningProcesses.get(gameId)
+  if (existing) {
+    console.log(`[launch] Cleaning up stale entry for ${exeName}`)
+    runningProcesses.delete(gameId)
+  }
+
   if (!game.executable || !game.runner?.path || !game.runner?.prefix) {
     return { success: false, error: 'Game is missing required launch fields' }
   }
 
-  // Run pre-launch commands
+  const gameSupportsXXMI = shouldUseXXMI(game.executable)
+  const modsEnabled = game.mods?.enabled ?? false
+  const useXXMI = gameSupportsXXMI && modsEnabled
+
+  if (gameSupportsXXMI && !modsEnabled) {
+    console.log(`[launch] Game supports mods but mods are disabled - launching vanilla`)
+  }
+
   for (const cmd of game.launch.preLaunch || []) {
     console.log(`[launch] Running pre-launch: ${cmd}`)
     try {
       execSync(cmd, { stdio: 'inherit' })
-    } catch (err) {
+    } catch {
       return { success: false, error: `Pre-launch command failed: ${cmd}` }
     }
   }
 
-  // Build launch command
-  const { command, args, env } = buildLaunchCommand(game)
+  const startTime = Date.now()
+
+  if (useXXMI) {
+    console.log(`[launch] Using XXMI mode for ${exeName}`)
+
+    const loaderResult = await launchGameWithXXMI(
+      game.executable,
+      game.directory,
+      game.runner.path,
+      game.runner.prefix
+    )
+
+    if (!loaderResult.success) {
+      return { success: false, error: loaderResult.error }
+    }
+
+    runningProcesses.set(gameId, {
+      exeName,
+      startTime,
+      lastCheck: Date.now(),
+    })
+
+    return { success: true }
+  }
+
+  const { command, args, env } = buildLaunchCommand(game, false)
 
   console.log(`[launch] Launching ${game.name}: ${command} ${args.join(' ')}`)
-  console.log(`[launch] Env:`, env)
 
-  // Spawn the process
   const proc = spawn(command, args, {
     env: { ...process.env, ...env },
     detached: true,
     stdio: 'ignore',
   })
 
-  const startTime = Date.now()
+  runningProcesses.set(gameId, {
+    exeName,
+    launcherPid: proc.pid,
+    startTime,
+    lastCheck: Date.now(),
+  })
 
-  // Track the process
-  runningProcesses.set(gameId, { process: proc, startTime })
-
-  // Handle exit
   proc.on('close', (code) => {
-    console.log(`[launch] ${game.name} exited with code ${code}`)
+    console.log(`[launch] Launcher for ${game.name} exited with code ${code}`)
 
-    // Calculate playtime in hours
     const sessionPlaytime = (Date.now() - startTime) / 1000 / 60 / 60
 
-    // Update database
     updateGame(gameId, {
       playtime: game.playtime + sessionPlaytime,
       last_played: new Date().toISOString(),
     })
 
-    // Update YAML config with new playtime
     game.playtime = game.playtime + sessionPlaytime
     game.lastPlayed = new Date().toISOString()
     saveGameConfig(game)
 
-    // Run post-launch commands
     for (const cmd of game.launch.postLaunch || []) {
       console.log(`[launch] Running post-launch: ${cmd}`)
-      execSync(cmd, { stdio: 'inherit' })
+      try {
+        execSync(cmd, { stdio: 'inherit' })
+      } catch {
+        // Ignore post-launch errors
+      }
     }
 
-    // Remove from tracking
     runningProcesses.delete(gameId)
   })
 

@@ -13,9 +13,21 @@ export const api = {
     return ipcRenderer.invoke(channel, request)
   },
 
+  // Listen for events from main process
+  on: (channel: string, callback: (...args: unknown[]) => void) => {
+    const subscription = (_event: unknown, ...args: unknown[]) => callback(...args)
+    ipcRenderer.on(channel, subscription)
+    return () => ipcRenderer.removeListener(channel, subscription)
+  },
+
   // File dialog
   openFile: async (): Promise<string | null> => {
     return ipcRenderer.invoke('dialog:openFile')
+  },
+
+  // Image file dialog
+  openImage: async (defaultPath?: string): Promise<string | null> => {
+    return ipcRenderer.invoke('dialog:openImage', { defaultPath })
   },
 
   // Platform info (useful for OS-specific UI)

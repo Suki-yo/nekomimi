@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Plus, Gamepad2, Trash2, FolderOpen } from 'lucide-react'
+import { Plus, Gamepad2, Trash2, FolderOpen, Puzzle, Play, Settings } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import {
@@ -13,17 +13,21 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { DownloadModal } from '@/components/DownloadModal'
+import GameConfigModal from '@/components/GameConfigModal'
+import CoverImage from '@/components/CoverImage'
 import type { Game, DetectedRunner } from '../../../shared/types/game'
 
-// Default configs for new games
-const defaultLaunch = {
+const DEFAULT_LAUNCH = {
   env: {},
   preLaunch: [],
   postLaunch: [],
   args: '',
 }
 
-const defaultMods = {}
+const DEFAULT_MODS = {
+  enabled: false,
+}
 
 function Library() {
   const [games, setGames] = useState<Game[]>([])
@@ -37,25 +41,29 @@ function Library() {
   const [detecting, setDetecting] = useState(false)
   const [runningGames, setRunningGames] = useState<Set<string>>(new Set())
   const [toast, setToast] = useState<{ message: string; type: 'info' | 'warning' } | null>(null)
+  const [downloadModalOpen, setDownloadModalOpen] = useState(false)
+  const [pendingGameId, setPendingGameId] = useState<string | null>(null)
+  const [needsXXMI, setNeedsXXMI] = useState(false)
+  const [needsRunner, setNeedsRunner] = useState(false)
+  const [configModalOpen, setConfigModalOpen] = useState(false)
+  const [selectedGame, setSelectedGame] = useState<Game | null>(null)
 
-  const showToast = (message: string, type: 'info' | 'warning' = 'info') => {
-    setToast({ message, type })
-    setTimeout(() => setToast(null), 3000)
-  }
-
-  // Form state
   const [formName, setFormName] = useState('')
   const [formDirectory, setFormDirectory] = useState('')
   const [formExecutable, setFormExecutable] = useState('')
   const [formPrefix, setFormPrefix] = useState('')
   const [formRunnerPath, setFormRunnerPath] = useState('')
 
+  const showToast = (message: string, type: 'info' | 'warning' = 'info') => {
+    setToast({ message, type })
+    setTimeout(() => setToast(null), 3000)
+  }
+
   useEffect(() => {
     loadGames()
     loadRunners()
   }, [])
 
-  // Poll for running games
   useEffect(() => {
     const pollRunning = async () => {
       const running = await window.api.invoke('game:running')
@@ -64,9 +72,8 @@ function Library() {
       }
     }
 
-    pollRunning() // Initial check
-    const interval = setInterval(pollRunning, 3000) // Poll every 3s
-
+    pollRunning()
+    const interval = setInterval(pollRunning, 3000)
     return () => clearInterval(interval)
   }, [])
 
@@ -87,7 +94,6 @@ function Library() {
     try {
       const runnerList = await window.api.invoke('runner:list')
       setRunners(runnerList)
-      // Select first runner by default
       if (runnerList.length > 0) {
         setFormRunnerPath(runnerList[0].path)
       }
@@ -103,8 +109,6 @@ function Library() {
       if (!filePath) return
 
       setFormExecutable(filePath)
-
-      // Detect game info from executable
       const detected = await window.api.invoke('game:detect', { exePath: filePath })
 
       setFormName(detected.name)
@@ -148,13 +152,11 @@ function Library() {
           path: formRunnerPath,
           prefix: formPrefix,
         },
-        launch: defaultLaunch,
-        mods: defaultMods,
+        launch: DEFAULT_LAUNCH,
+        mods: DEFAULT_MODS,
       })
 
       setGames((prev) => [...prev, newGame])
-
-      // Reset form
       setFormName('')
       setFormDirectory('')
       setFormExecutable('')
@@ -184,7 +186,7 @@ function Library() {
   }
 
   const confirmDelete = (game: Game, e: React.MouseEvent) => {
-    e.stopPropagation() // Prevent card click (launch)
+    e.stopPropagation()
     setGameToDelete(game)
     setDeleteDialogOpen(true)
   }
@@ -194,14 +196,48 @@ function Library() {
       showToast('Game is already running', 'warning')
       return
     }
+
+    const status = await window.api.invoke('mods:xxmi-status', undefined)
+    const needXXMI = !status.xxmiInstalled
+    const needRunner = !status.runnerInstalled
+
+    if (needXXMI || needRunner) {
+      setPendingGameId(id)
+      setNeedsXXMI(needXXMI)
+      setNeedsRunner(needRunner)
+      setDownloadModalOpen(true)
+      return
+    }
+
     const result = await window.api.invoke('game:launch', { id })
     if (!result.success) {
       showToast(`Failed to launch: ${result.error}`, 'warning')
     }
   }
 
-  // Double click handler (launch game)
-  const handleGameDoubleClick = (game: Game) => {
+  const handleDownloadComplete = async () => {
+    if (pendingGameId) {
+      const result = await window.api.invoke('game:launch', { id: pendingGameId })
+      if (!result.success) {
+        showToast(`Failed to launch: ${result.error}`, 'warning')
+      }
+      setPendingGameId(null)
+    }
+  }
+
+  const handleOpenConfig = (game: Game, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setSelectedGame(game)
+    setConfigModalOpen(true)
+  }
+
+  const handleGameUpdate = (updatedGame: Game) => {
+    setGames(prev => prev.map(g => g.id === updatedGame.id ? updatedGame : g))
+    setSelectedGame(updatedGame)
+  }
+
+  const handlePlayClick = (game: Game, e: React.MouseEvent) => {
+    e.stopPropagation()
     launchGame(game.id)
   }
 
@@ -217,16 +253,13 @@ function Library() {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-4">
         <div className="text-destructive">{error}</div>
-        <Button onClick={loadGames} variant="outline">
-          Retry
-        </Button>
+        <Button onClick={loadGames} variant="outline">Retry</Button>
       </div>
     )
   }
 
   return (
     <div className="p-6">
-      {/* Toast notification */}
       {toast && (
         <div className={`fixed top-4 right-4 z-50 px-4 py-2 rounded shadow-lg ${
           toast.type === 'warning' ? 'bg-yellow-500' : 'bg-blue-500'
@@ -234,7 +267,23 @@ function Library() {
           {toast.message}
         </div>
       )}
-      {/* Add Game Dialog */}
+
+      <DownloadModal
+        open={downloadModalOpen}
+        onClose={() => setDownloadModalOpen(false)}
+        onComplete={handleDownloadComplete}
+        needsXXMI={needsXXMI}
+        needsRunner={needsRunner}
+      />
+
+      <GameConfigModal
+        game={selectedGame}
+        open={configModalOpen}
+        onClose={() => setConfigModalOpen(false)}
+        onUpdate={handleGameUpdate}
+        runners={runners}
+      />
+
       <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl font-bold">Library</h1>
@@ -266,12 +315,7 @@ function Library() {
                   placeholder="/path/to/game.exe"
                   className="flex-1"
                 />
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={handleBrowseExecutable}
-                  disabled={detecting}
-                >
+                <Button type="button" variant="outline" onClick={handleBrowseExecutable} disabled={detecting}>
                   <FolderOpen className="h-4 w-4" />
                 </Button>
               </div>
@@ -320,12 +364,7 @@ function Library() {
             </div>
           </div>
           <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setAddDialogOpen(false)}
-              disabled={submitting}
-            >
+            <Button type="button" variant="outline" onClick={() => setAddDialogOpen(false)} disabled={submitting}>
               Cancel
             </Button>
             <Button type="button" onClick={handleAddGame} disabled={submitting}>
@@ -335,7 +374,6 @@ function Library() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <DialogContent onPointerDownOutside={(e) => e.preventDefault()}>
           <DialogHeader>
@@ -345,20 +383,10 @@ function Library() {
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setDeleteDialogOpen(false)}
-              disabled={submitting}
-            >
+            <Button type="button" variant="outline" onClick={() => setDeleteDialogOpen(false)} disabled={submitting}>
               Cancel
             </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              onClick={handleDeleteGame}
-              disabled={submitting}
-            >
+            <Button type="button" variant="destructive" onClick={handleDeleteGame} disabled={submitting}>
               {submitting ? 'Deleting...' : 'Delete'}
             </Button>
           </DialogFooter>
@@ -374,20 +402,24 @@ function Library() {
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
           {games.map((game) => (
-            <Card
-              key={game.id}
-              className="cursor-pointer hover:ring-2 hover:ring-ring transition overflow-hidden group"
-              onDoubleClick={() => handleGameDoubleClick(game)}
-            >
-              <div className="aspect-[3/4] bg-muted flex items-center justify-center relative">
-                <Gamepad2 className="h-12 w-12 text-muted-foreground" />
-                {/* Running indicator */}
-                {runningGames.has(game.id) && (
-                  <div className="absolute top-2 left-2 bg-green-500 text-white text-xs px-2 py-1 rounded">
-                    Running
-                  </div>
+            <Card key={game.id} className="overflow-hidden group">
+              <div className="aspect-[3/4] bg-muted flex items-center justify-center relative overflow-hidden">
+                {game.coverImage ? (
+                  <CoverImage imagePath={game.coverImage} alt={game.name} />
+                ) : (
+                  <Gamepad2 className="h-12 w-12 text-muted-foreground" />
                 )}
-                {/* Delete button - shows on hover */}
+                <div className="absolute top-2 left-2 flex flex-col gap-1">
+                  {runningGames.has(game.id) && (
+                    <div className="bg-green-500 text-white text-xs px-2 py-1 rounded">Running</div>
+                  )}
+                  {game.mods?.enabled && (
+                    <div className="bg-purple-500 text-white text-xs px-2 py-1 rounded flex items-center gap-1">
+                      <Puzzle className="h-3 w-3" />
+                      Mods
+                    </div>
+                  )}
+                </div>
                 <Button
                   type="button"
                   variant="destructive"
@@ -400,16 +432,20 @@ function Library() {
               </div>
 
               <CardContent className="p-3">
-                <h3 className="font-medium truncate">{game.name}</h3>
-                <div className="flex items-center justify-between mt-1 text-sm text-muted-foreground">
-                  <span>
-                    {game.installed ? (
-                      <span className="text-green-500">Installed</span>
-                    ) : (
-                      <span>Not installed</span>
-                    )}
-                  </span>
-                  <span>{Math.round(game.playtime)}h</span>
+                <h3 className="font-medium truncate mb-2">{game.name}</h3>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    onClick={(e) => handlePlayClick(game, e)}
+                    disabled={runningGames.has(game.id)}
+                    className="flex-1"
+                  >
+                    <Play className="h-4 w-4 mr-1" />
+                    {runningGames.has(game.id) ? 'Running' : 'Play'}
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={(e) => handleOpenConfig(game, e)}>
+                    <Settings className="h-4 w-4" />
+                  </Button>
                 </div>
               </CardContent>
             </Card>

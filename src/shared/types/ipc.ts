@@ -2,7 +2,7 @@
 // Each channel has: request (what you send) and response (what you get back)
 
 import type { AppConfig } from './config'
-import type { Game, DetectedGameInfo, DetectedRunner } from './game'
+import type { Game, DetectedGameInfo, DetectedRunner, Mod } from './game'
 import type { Runner } from './runner'
 
 // All IPC channels - this is the contract between frontend and backend
@@ -25,6 +25,14 @@ export interface IPCChannels {
   'dialog:openFile': {
     request: void
     response: string | null
+  }
+  'dialog:openImage': {
+    request: { defaultPath?: string }
+    response: string | null
+  }
+  'image:read': {
+    request: { imagePath: string }
+    response: string | null  // file:// URL
   }
 
   // ─────────────────────────────────────────────
@@ -77,6 +85,55 @@ export interface IPCChannels {
   'runner:download': {
     request: { type: 'proton' | 'wine'; version: string }
     response: { success: boolean; error?: string }
+  }
+
+  // ─────────────────────────────────────────────
+  // Mods (XXMI, etc.)
+  // ─────────────────────────────────────────────
+  'mods:xxmi-status': {
+    request: void
+    response: { xxmiInstalled: boolean; runnerInstalled: boolean }
+  }
+  'mods:xxmi-download': {
+    request: void
+    response: { success: boolean; error?: string }
+  }
+  'mods:runner-download': {
+    request: void
+    response: { success: boolean; error?: string }
+  }
+  'mods:runner-info': {
+    request: void
+    response: { name: string; path: string; wine: string } | null
+  }
+  // Mod management
+  'mods:list': {
+    request: { importer: string }
+    response: Mod[]
+  }
+  'mods:toggle': {
+    request: { modPath: string; enabled: boolean }
+    response: { success: boolean }
+  }
+  'mods:install': {
+    request: { importer: string; zipPath: string }
+    response: { success: boolean; error?: string }
+  }
+  'mods:delete': {
+    request: { modPath: string }
+    response: { success: boolean }
+  }
+  'mods:enable-all': {
+    request: { importer: string }
+    response: void
+  }
+  'mods:disable-all': {
+    request: { importer: string }
+    response: void
+  }
+  'mods:rename': {
+    request: { modPath: string; customName: string }
+    response: { success: boolean; newPath?: string; error?: string }
   }
 }
 

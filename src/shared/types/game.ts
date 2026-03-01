@@ -9,6 +9,7 @@ export interface Game {
   installed: boolean
   directory: string
   executable: string
+  coverImage?: string // Path to cover image
 
   runner: RunnerConfig
   launch: LaunchConfig
@@ -34,8 +35,21 @@ export interface LaunchConfig {
   args: string
 }
 
+// Individual mod entry
+export interface Mod {
+  name: string           // Display name (custom name or original)
+  originalName: string   // Original folder name (extracted from (custom)original format)
+  folder: string         // Actual folder name (may include DISABLED_ prefix)
+  enabled: boolean       // Whether mod is active
+  path: string           // Full path to mod folder
+}
+
 export interface ModConfig {
-  // TODO: Phase 3 - will expand when we add mod support
+  // Global mod toggle for this game
+  enabled: boolean
+  // Which XXMI importer to use (e.g., "EFMI", "GIMI", "SRMI")
+  importer?: string
+  // Legacy XXMI path (if manually configured)
   xxmi?: {
     enabled: boolean
     path: string
