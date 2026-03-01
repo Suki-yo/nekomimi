@@ -1,11 +1,80 @@
 import { spawn, execSync } from 'child_process'
 import { getGame, updateGame } from './database'
 import { loadGameConfig, saveGameConfig } from './config'
-import { shouldUseXXMI, launchGameWithXXMI } from './mod-manager'
+import { shouldUseXXMI, launchGameWithXXMI, getXXMIImporter } from './mod-manager'
 import type { Game } from '../../shared/types/game'
 
-// Track running game processes
-const runningProcesses = new Map<string, { process: ReturnType<typeof spawn>, startTime: number }>()
+// Track running game processes - now tracks actual game process info
+interface RunningGame {
+  exeName: string         // Game executable name (e.g., "Endfield.exe")
+  launcherPid?: number    // Launcher/wine process PID (for cleanup)
+  startTime: number
+  lastCheck: number       // Last time we verified it was running
+}
+
+const runningProcesses = new Map<string, RunningGame>()
+
+// Polling interval for checking running games (ms)
+const POLL_INTERVAL = 5000
+
+// Check if a process is running by name using pgrep
+function isProcessRunning(exeName: string): boolean {
+  try {
+    // pgrep returns 0 if found, 1 if not found
+    const result = execSync(`pgrep -f "${exeName}"`, { stdio: 'pipe' })
+    return result.toString().trim().length > 0
+  } catch {
+    return false
+  }
+}
+
+// Get all PIDs for a process name
+function getProcessPids(exeName: string): number[] {
+  try {
+    const result = execSync(`pgrep -f "${exeName}"`, { stdio: 'pipe' })
+    return result.toString().trim().split('\n')
+      .filter(Boolean)
+      .map(line => parseInt(line, 10))
+  } catch {
+    return []
+  }
+}
+
+// Clean up stale entries (processes that are no longer running)
+function cleanupStaleEntries() {
+  let cleaned = 0
+  const now = Date.now()
+
+  for (const [gameId, running] of runningProcesses.entries()) {
+    // Check if process is actually running
+    const isRunning = isProcessRunning(running.exeName)
+
+    if (!isRunning) {
+      // Process not found - remove stale entry
+      console.log(`[launch] Cleaning up stale entry for ${running.exeName}`)
+      runningProcesses.delete(gameId)
+      cleaned++
+    } else {
+      // Update last check time
+      running.lastCheck = now
+    }
+  }
+
+  if (cleaned > 0) {
+    console.log(`[launch] Cleaned up ${cleaned} stale game tracking entries`)
+  }
+}
+
+// Start the polling loop for cleanup
+let pollInterval: NodeJS.Timeout | null = null
+function startPolling() {
+  if (pollInterval) return
+  pollInterval = setInterval(cleanupStaleEntries, POLL_INTERVAL)
+  console.log('[launch] Started process polling (every 5s)')
+}
+
+// Ensure polling is started when this module is imported
+startPolling()
 
 // Build the launch command and environment
 function buildLaunchCommand(game: Game, useXXMI: boolean = false): { command: string; args: string[]; env: Record<string, string> } {
@@ -47,30 +116,13 @@ function buildLaunchCommand(game: Game, useXXMI: boolean = false): { command: st
 }
 
 export async function launchGame(gameId: string): Promise<{ success: boolean; pid?: number; error?: string }> {
-  // Check if already running - verify process is actually alive
-  const existing = runningProcesses.get(gameId)
-  if (existing) {
-    // For XXMI launches, process is null - check if it's been running less than 30 seconds
-    if (!existing.process) {
-      const elapsed = (Date.now() - existing.startTime) / 1000
-      if (elapsed < 30) {
-        return { success: false, error: 'Game is already starting up' }
-      }
-      // Stale entry, clear it
-      runningProcesses.delete(gameId)
-    } else if (existing.process.pid) {
-      // Normal launch - check if process is still alive
-      try {
-        process.kill(existing.process.pid, 0)
-        return { success: false, error: 'Game is already running' }
-      } catch {
-        // Process is dead, clear stale entry
-        runningProcesses.delete(gameId)
-      }
-    }
-  }
+  // Start polling if not already running
+  startPolling()
 
-  // Fetch game row from database
+  // Clean up any stale entries before checking
+  cleanupStaleEntries()
+
+  // Fetch game from database
   const gameRow = getGame(gameId)
   if (!gameRow) {
     return { success: false, error: 'Game not found' }
@@ -82,13 +134,40 @@ export async function launchGame(gameId: string): Promise<{ success: boolean; pi
     return { success: false, error: 'Game config not found' }
   }
 
+  // Get game executable name for tracking
+  const exeName = game.executable.split(/[/\\]/).pop() || game.executable
+
+  // Check if already running by searching for the actual game process
+  const existing = runningProcesses.get(gameId)
+  const isCurrentlyRunning = isProcessRunning(exeName)
+
+  if (isCurrentlyRunning) {
+    // Game is actually running
+    console.log(`[launch] ${exeName} is already running`)
+    return { success: false, error: 'Game is already running' }
+  }
+
+  // If we have a stale entry (exists in our map but not actually running), clean it up
+  if (existing) {
+    console.log(`[launch] Cleaning up stale entry for ${exeName}`)
+    runningProcesses.delete(gameId)
+  }
+
   // Validate required fields
   if (!game.executable || !game.runner?.path || !game.runner?.prefix) {
     return { success: false, error: 'Game is missing required launch fields' }
   }
 
-  // Check if XXMI should be used for this game (hardcoded for Endfield)
-  const useXXMI = shouldUseXXMI(game.executable)
+  // Check if XXMI should be used for this game
+  // Only use XXMI if: 1) game supports XXMI, AND 2) mods are enabled for this game
+  const gameSupportsXXMI = shouldUseXXMI(game.executable)
+  const modsEnabled = game.mods?.enabled ?? false
+  const useXXMI = gameSupportsXXMI && modsEnabled
+
+  // Log why XXMI is or isn't being used
+  if (gameSupportsXXMI && !modsEnabled) {
+    console.log(`[launch] Game supports mods but mods are disabled - launching vanilla`)
+  }
 
   // Run pre-launch commands
   for (const cmd of game.launch.preLaunch || []) {
@@ -100,14 +179,14 @@ export async function launchGame(gameId: string): Promise<{ success: boolean; pi
     }
   }
 
+  const startTime = Date.now()
+
   // XXMI mode: Launch via XXMI Launcher with --nogui flag
   // XXMI auto-launches the game with mod injection
   if (useXXMI) {
-    console.log(`[launch] Using XXMI mode - game will launch with mods`)
+    console.log(`[launch] Using XXMI mode - game will launch with mods (gameSupportsXXMI=${gameSupportsXXMI}, modsEnabled=${modsEnabled})`)
 
-    const startTime = Date.now()
-
-    // Launch XXMI Launcher through Lutris
+    // Launch XXMI Launcher
     const loaderResult = await launchGameWithXXMI(
       game.executable,
       game.directory,
@@ -119,11 +198,15 @@ export async function launchGame(gameId: string): Promise<{ success: boolean; pi
       return { success: false, error: loaderResult.error }
     }
 
-    // Track with null process (XXMI manages the game)
-    runningProcesses.set(gameId, { process: null as any, startTime })
+    // Track the game by executable name (XXMI mode)
+    runningProcesses.set(gameId, {
+      exeName,
+      startTime,
+      lastCheck: Date.now(),
+    })
 
     // Note: Playtime tracking is limited with XXMI mode
-    // The user launches the game from XXMI Launcher, not from our app
+    // The actual game PID is managed by XXMI, not us
     return { success: true }
   }
 
@@ -140,16 +223,22 @@ export async function launchGame(gameId: string): Promise<{ success: boolean; pi
     stdio: 'ignore',
   })
 
-  const startTime = Date.now()
-
-  // Track the process
-  runningProcesses.set(gameId, { process: proc, startTime })
+  // Track the game by executable name and launcher PID
+  runningProcesses.set(gameId, {
+    exeName,
+    launcherPid: proc.pid,
+    startTime,
+    lastCheck: Date.now(),
+  })
 
   // Handle exit
   proc.on('close', (code) => {
-    console.log(`[launch] ${game.name} exited with code ${code}`)
+    console.log(`[launch] Launcher for ${game.name} exited with code ${code}`)
 
-    // Calculate playtime in hours
+    // Note: For Proton/Wine, the launcher exiting doesn't mean the game exited
+    // We'll rely on polling to detect when the actual game process is gone
+
+    // Calculate playtime in hours (rough estimate since we track launcher, not game)
     const sessionPlaytime = (Date.now() - startTime) / 1000 / 60 / 60
 
     // Update database
@@ -169,7 +258,7 @@ export async function launchGame(gameId: string): Promise<{ success: boolean; pi
       execSync(cmd, { stdio: 'inherit' })
     }
 
-    // Remove from tracking
+    // Remove from tracking (polling will verify game is actually gone)
     runningProcesses.delete(gameId)
   })
 

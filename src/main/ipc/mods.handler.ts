@@ -7,6 +7,12 @@ import {
   downloadXXMI,
   downloadRunner,
   getInstalledRunner,
+  getMods,
+  toggleMod,
+  installMod,
+  deleteMod,
+  enableAllMods,
+  disableAllMods,
 } from '../services/mod-manager'
 
 export const registerModsHandlers = () => {
@@ -53,5 +59,45 @@ export const registerModsHandlers = () => {
   // Get installed runner info
   ipcMain.handle('mods:runner-info', () => {
     return getInstalledRunner()
+  })
+
+  // ─────────────────────────────────────────────
+  // Mod Management
+  // ─────────────────────────────────────────────
+
+  // Get list of mods for an importer
+  ipcMain.handle('mods:list', (_event, { importer }: { importer: string }) => {
+    console.log(`[mods] Listing mods for ${importer}`)
+    return getMods(importer)
+  })
+
+  // Toggle a mod on/off
+  ipcMain.handle('mods:toggle', (_event, { modPath, enabled }: { modPath: string; enabled: boolean }) => {
+    console.log(`[mods] Toggling mod: ${modPath} → ${enabled ? 'enabled' : 'disabled'}`)
+    return { success: toggleMod(modPath, enabled) }
+  })
+
+  // Install a mod from zip
+  ipcMain.handle('mods:install', async (_event, { importer, zipPath }: { importer: string; zipPath: string }) => {
+    console.log(`[mods] Installing mod from ${zipPath} to ${importer}`)
+    return await installMod(importer, zipPath)
+  })
+
+  // Delete a mod
+  ipcMain.handle('mods:delete', (_event, { modPath }: { modPath: string }) => {
+    console.log(`[mods] Deleting mod: ${modPath}`)
+    return { success: deleteMod(modPath) }
+  })
+
+  // Enable all mods for an importer
+  ipcMain.handle('mods:enable-all', (_event, { importer }: { importer: string }) => {
+    console.log(`[mods] Enabling all mods for ${importer}`)
+    enableAllMods(importer)
+  })
+
+  // Disable all mods for an importer
+  ipcMain.handle('mods:disable-all', (_event, { importer }: { importer: string }) => {
+    console.log(`[mods] Disabling all mods for ${importer}`)
+    disableAllMods(importer)
   })
 }

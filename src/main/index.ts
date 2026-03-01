@@ -33,6 +33,7 @@ const createWindow = async () => {
     minHeight: 600,
     title: 'Nekomimi',
     show: false, // Show when ready (prevents white flash)
+    autoHideMenuBar: true, // Hide menu bar (Alt to show temporarily)
     webPreferences: {
       // Security: context isolation enabled by default
       contextIsolation: true,
@@ -42,6 +43,9 @@ const createWindow = async () => {
       preload: path.join(__dirname, '../preload/index.js'),
     },
   })
+
+  // Remove the default menu bar completely
+  mainWindow.setMenu(null)
 
   // Show window when ready
   mainWindow.once('ready-to-show', () => {

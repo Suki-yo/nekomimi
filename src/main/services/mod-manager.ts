@@ -3,6 +3,7 @@ import * as path from 'path'
 import * as fs from 'fs'
 import * as https from 'https'
 import { getPathsInstance } from './paths'
+import type { Mod } from '../../shared/types/game'
 
 // XXMI Launcher GitHub API URL for releases
 const XXMI_RELEASES_API = 'https://api.github.com/repos/SpectrumQT/XXMI-Launcher/releases/latest'
@@ -681,4 +682,165 @@ export async function launchGameWithXXMI(
       console.log(`[xxmi] XXMI exited with code ${code}`)
     })
   })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Mod Management Functions
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Get the Mods folder path for an importer
+ */
+export function getModsPath(importer: string): string {
+  const { xxmiDir } = getXXMIPaths()
+  return path.join(xxmiDir, importer, 'Mods')
+}
+
+/**
+ * Get all mods for an importer
+ * Scans the Mods folder and returns a list of mods with their enabled state
+ */
+export function getMods(importer: string): Mod[] {
+  const modsPath = getModsPath(importer)
+
+  if (!fs.existsSync(modsPath)) {
+    console.log(`[mods] Mods folder not found: ${modsPath}`)
+    return []
+  }
+
+  const entries = fs.readdirSync(modsPath, { withFileTypes: true })
+
+  // Filter to only directories, exclude special folders
+  const excludeFolders = ['ShaderCache', 'ShaderFixes', 'Core']
+
+  return entries
+    .filter(e => e.isDirectory() && !excludeFolders.includes(e.name))
+    .map(e => {
+      const isDisabled = e.name.startsWith('DISABLED_')
+      const cleanName = isDisabled ? e.name.substring(9) : e.name
+
+      return {
+        name: cleanName,
+        folder: e.name,
+        enabled: !isDisabled,
+        path: path.join(modsPath, e.name),
+      }
+    })
+}
+
+/**
+ * Toggle a mod on/off by renaming the folder
+ * Enabled: modname/
+ * Disabled: DISABLED_modname/
+ */
+export function toggleMod(modPath: string, enabled: boolean): boolean {
+  const dir = path.dirname(modPath)
+  const folder = path.basename(modPath)
+  const isCurrentlyDisabled = folder.startsWith('DISABLED_')
+
+  try {
+    if (enabled && isCurrentlyDisabled) {
+      // Disabled → Enabled: remove DISABLED_ prefix
+      const newName = folder.substring(9)
+      const newPath = path.join(dir, newName)
+      fs.renameSync(modPath, newPath)
+      console.log(`[mods] Enabled mod: ${newName}`)
+      return true
+    } else if (!enabled && !isCurrentlyDisabled) {
+      // Enabled → Disabled: add DISABLED_ prefix
+      const newName = 'DISABLED_' + folder
+      const newPath = path.join(dir, newName)
+      fs.renameSync(modPath, newPath)
+      console.log(`[mods] Disabled mod: ${folder}`)
+      return true
+    }
+    // Already in desired state
+    return true
+  } catch (err) {
+    console.error(`[mods] Failed to toggle mod:`, err)
+    return false
+  }
+}
+
+/**
+ * Install a mod from a zip file
+ * Extracts the zip to the Mods folder
+ */
+export async function installMod(importer: string, zipPath: string): Promise<{ success: boolean; error?: string }> {
+  const modsPath = getModsPath(importer)
+
+  // Ensure Mods folder exists
+  if (!fs.existsSync(modsPath)) {
+    fs.mkdirSync(modsPath, { recursive: true })
+  }
+
+  // Get mod name from zip filename
+  const modName = path.basename(zipPath, path.extname(zipPath))
+  const destPath = path.join(modsPath, modName)
+
+  // Check if already exists
+  if (fs.existsSync(destPath) || fs.existsSync(path.join(modsPath, 'DISABLED_' + modName))) {
+    return { success: false, error: 'Mod already exists' }
+  }
+
+  return new Promise((resolve) => {
+    console.log(`[mods] Extracting ${zipPath} to ${destPath}`)
+
+    const extract = spawn('unzip', ['-o', zipPath, '-d', destPath], {
+      stdio: 'inherit'
+    })
+
+    extract.on('close', (code) => {
+      if (code === 0) {
+        console.log(`[mods] Installed mod: ${modName}`)
+        resolve({ success: true })
+      } else {
+        console.error(`[mods] Extraction failed with code:`, code)
+        resolve({ success: false, error: `Failed to extract mod (exit code ${code})` })
+      }
+    })
+
+    extract.on('error', (err) => {
+      console.error(`[mods] Extraction error:`, err)
+      resolve({ success: false, error: `Extraction failed: ${err.message}` })
+    })
+  })
+}
+
+/**
+ * Delete a mod folder
+ */
+export function deleteMod(modPath: string): boolean {
+  try {
+    fs.rmSync(modPath, { recursive: true, force: true })
+    console.log(`[mods] Deleted mod: ${path.basename(modPath)}`)
+    return true
+  } catch (err) {
+    console.error(`[mods] Failed to delete mod:`, err)
+    return false
+  }
+}
+
+/**
+ * Enable all mods for an importer
+ */
+export function enableAllMods(importer: string): void {
+  const mods = getMods(importer)
+  for (const mod of mods) {
+    if (!mod.enabled) {
+      toggleMod(mod.path, true)
+    }
+  }
+}
+
+/**
+ * Disable all mods for an importer
+ */
+export function disableAllMods(importer: string): void {
+  const mods = getMods(importer)
+  for (const mod of mods) {
+    if (mod.enabled) {
+      toggleMod(mod.path, false)
+    }
+  }
 }

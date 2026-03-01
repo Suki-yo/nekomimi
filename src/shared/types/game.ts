@@ -34,8 +34,20 @@ export interface LaunchConfig {
   args: string
 }
 
+// Individual mod entry
+export interface Mod {
+  name: string        // Display name (without DISABLED_ prefix)
+  folder: string      // Actual folder name (may include DISABLED_ prefix)
+  enabled: boolean    // Whether mod is active
+  path: string        // Full path to mod folder
+}
+
 export interface ModConfig {
-  // TODO: Phase 3 - will expand when we add mod support
+  // Global mod toggle for this game
+  enabled: boolean
+  // Which XXMI importer to use (e.g., "EFMI", "GIMI", "SRMI")
+  importer?: string
+  // Legacy XXMI path (if manually configured)
   xxmi?: {
     enabled: boolean
     path: string

@@ -2,7 +2,7 @@
 // Each channel has: request (what you send) and response (what you get back)
 
 import type { AppConfig } from './config'
-import type { Game, DetectedGameInfo, DetectedRunner } from './game'
+import type { Game, DetectedGameInfo, DetectedRunner, Mod } from './game'
 import type { Runner } from './runner'
 
 // All IPC channels - this is the contract between frontend and backend
@@ -97,6 +97,31 @@ export interface IPCChannels {
   'mods:runner-info': {
     request: void
     response: { name: string; path: string; wine: string } | null
+  }
+  // Mod management
+  'mods:list': {
+    request: { importer: string }
+    response: Mod[]
+  }
+  'mods:toggle': {
+    request: { modPath: string; enabled: boolean }
+    response: { success: boolean }
+  }
+  'mods:install': {
+    request: { importer: string; zipPath: string }
+    response: { success: boolean; error?: string }
+  }
+  'mods:delete': {
+    request: { modPath: string }
+    response: { success: boolean }
+  }
+  'mods:enable-all': {
+    request: { importer: string }
+    response: void
+  }
+  'mods:disable-all': {
+    request: { importer: string }
+    response: void
   }
 }
 
