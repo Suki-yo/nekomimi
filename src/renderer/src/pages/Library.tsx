@@ -15,88 +15,18 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { DownloadModal } from '@/components/DownloadModal'
 import GameConfigModal from '@/components/GameConfigModal'
+import CoverImage from '@/components/CoverImage'
 import type { Game, DetectedRunner } from '../../../shared/types/game'
 
-// Default configs for new games
-const defaultLaunch = {
+const DEFAULT_LAUNCH = {
   env: {},
   preLaunch: [],
   postLaunch: [],
   args: '',
 }
 
-const defaultMods = {
+const DEFAULT_MODS = {
   enabled: false,
-}
-
-// Component to load and display cover image
-function CoverImage({ imagePath, alt }: { imagePath: string; alt: string }) {
-  const [src, setSrc] = useState<string | null>(null)
-  const [loaded, setLoaded] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    setSrc(null)
-    setLoaded(false)
-    setError(null)
-
-    window.api.invoke('image:read', { imagePath })
-      .then((url) => {
-        console.log('[CoverImage] Got URL length:', url?.length)
-        if (url) {
-          setSrc(url)
-        } else {
-          setError('No data')
-        }
-      })
-      .catch((err) => {
-        console.error('[CoverImage] Error:', err)
-        setError(String(err))
-      })
-  }, [imagePath])
-
-  // Loading state
-  if (!src && !error) {
-    return (
-      <div className="absolute inset-0 flex items-center justify-center bg-muted">
-        <span className="text-xs text-muted-foreground">Loading...</span>
-      </div>
-    )
-  }
-
-  // Error state
-  if (error) {
-    return (
-      <div className="absolute inset-0 flex flex-col items-center justify-center bg-muted">
-        <Gamepad2 className="h-8 w-8 text-muted-foreground" />
-        <span className="text-xs text-red-500 mt-1">{error}</span>
-      </div>
-    )
-  }
-
-  // Image loaded or loading
-  return (
-    <>
-      {!loaded && (
-        <div className="absolute inset-0 flex items-center justify-center bg-muted">
-          <span className="text-xs text-muted-foreground">Rendering...</span>
-        </div>
-      )}
-      <img
-        src={src!}
-        alt={alt}
-        className={`absolute inset-0 w-full h-full object-cover ${loaded ? '' : 'opacity-0'}`}
-        onLoad={() => {
-          console.log('[CoverImage] onLoad fired')
-          setLoaded(true)
-        }}
-        onError={(e) => {
-          console.error('[CoverImage] img error:', e)
-          setError('Failed to load')
-        }}
-      />
-    </>
-  )
 }
 
 function Library() {
@@ -115,29 +45,25 @@ function Library() {
   const [pendingGameId, setPendingGameId] = useState<string | null>(null)
   const [needsXXMI, setNeedsXXMI] = useState(false)
   const [needsRunner, setNeedsRunner] = useState(false)
-
-  // Config modal state
   const [configModalOpen, setConfigModalOpen] = useState(false)
   const [selectedGame, setSelectedGame] = useState<Game | null>(null)
 
-  const showToast = (message: string, type: 'info' | 'warning' = 'info') => {
-    setToast({ message, type })
-    setTimeout(() => setToast(null), 3000)
-  }
-
-  // Form state
   const [formName, setFormName] = useState('')
   const [formDirectory, setFormDirectory] = useState('')
   const [formExecutable, setFormExecutable] = useState('')
   const [formPrefix, setFormPrefix] = useState('')
   const [formRunnerPath, setFormRunnerPath] = useState('')
 
+  const showToast = (message: string, type: 'info' | 'warning' = 'info') => {
+    setToast({ message, type })
+    setTimeout(() => setToast(null), 3000)
+  }
+
   useEffect(() => {
     loadGames()
     loadRunners()
   }, [])
 
-  // Poll for running games
   useEffect(() => {
     const pollRunning = async () => {
       const running = await window.api.invoke('game:running')
@@ -146,9 +72,8 @@ function Library() {
       }
     }
 
-    pollRunning() // Initial check
-    const interval = setInterval(pollRunning, 3000) // Poll every 3s
-
+    pollRunning()
+    const interval = setInterval(pollRunning, 3000)
     return () => clearInterval(interval)
   }, [])
 
@@ -169,7 +94,6 @@ function Library() {
     try {
       const runnerList = await window.api.invoke('runner:list')
       setRunners(runnerList)
-      // Select first runner by default
       if (runnerList.length > 0) {
         setFormRunnerPath(runnerList[0].path)
       }
@@ -185,8 +109,6 @@ function Library() {
       if (!filePath) return
 
       setFormExecutable(filePath)
-
-      // Detect game info from executable
       const detected = await window.api.invoke('game:detect', { exePath: filePath })
 
       setFormName(detected.name)
@@ -230,13 +152,11 @@ function Library() {
           path: formRunnerPath,
           prefix: formPrefix,
         },
-        launch: defaultLaunch,
-        mods: defaultMods,
+        launch: DEFAULT_LAUNCH,
+        mods: DEFAULT_MODS,
       })
 
       setGames((prev) => [...prev, newGame])
-
-      // Reset form
       setFormName('')
       setFormDirectory('')
       setFormExecutable('')
@@ -277,14 +197,11 @@ function Library() {
       return
     }
 
-    // Check XXMI and runner status
     const status = await window.api.invoke('mods:xxmi-status', undefined)
-
     const needXXMI = !status.xxmiInstalled
     const needRunner = !status.runnerInstalled
 
     if (needXXMI || needRunner) {
-      // Need to download something first
       setPendingGameId(id)
       setNeedsXXMI(needXXMI)
       setNeedsRunner(needRunner)
@@ -292,7 +209,6 @@ function Library() {
       return
     }
 
-    // Everything is installed, launch the game
     const result = await window.api.invoke('game:launch', { id })
     if (!result.success) {
       showToast(`Failed to launch: ${result.error}`, 'warning')
@@ -300,7 +216,6 @@ function Library() {
   }
 
   const handleDownloadComplete = async () => {
-    // XXMI downloaded, now launch the pending game
     if (pendingGameId) {
       const result = await window.api.invoke('game:launch', { id: pendingGameId })
       if (!result.success) {
@@ -338,16 +253,13 @@ function Library() {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-4">
         <div className="text-destructive">{error}</div>
-        <Button onClick={loadGames} variant="outline">
-          Retry
-        </Button>
+        <Button onClick={loadGames} variant="outline">Retry</Button>
       </div>
     )
   }
 
   return (
     <div className="p-6">
-      {/* Toast notification */}
       {toast && (
         <div className={`fixed top-4 right-4 z-50 px-4 py-2 rounded shadow-lg ${
           toast.type === 'warning' ? 'bg-yellow-500' : 'bg-blue-500'
@@ -356,7 +268,6 @@ function Library() {
         </div>
       )}
 
-      {/* Download Modal */}
       <DownloadModal
         open={downloadModalOpen}
         onClose={() => setDownloadModalOpen(false)}
@@ -365,7 +276,6 @@ function Library() {
         needsRunner={needsRunner}
       />
 
-      {/* Config Modal */}
       <GameConfigModal
         game={selectedGame}
         open={configModalOpen}
@@ -374,7 +284,6 @@ function Library() {
         runners={runners}
       />
 
-      {/* Add Game Dialog */}
       <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl font-bold">Library</h1>
@@ -406,12 +315,7 @@ function Library() {
                   placeholder="/path/to/game.exe"
                   className="flex-1"
                 />
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={handleBrowseExecutable}
-                  disabled={detecting}
-                >
+                <Button type="button" variant="outline" onClick={handleBrowseExecutable} disabled={detecting}>
                   <FolderOpen className="h-4 w-4" />
                 </Button>
               </div>
@@ -460,12 +364,7 @@ function Library() {
             </div>
           </div>
           <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setAddDialogOpen(false)}
-              disabled={submitting}
-            >
+            <Button type="button" variant="outline" onClick={() => setAddDialogOpen(false)} disabled={submitting}>
               Cancel
             </Button>
             <Button type="button" onClick={handleAddGame} disabled={submitting}>
@@ -475,7 +374,6 @@ function Library() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <DialogContent onPointerDownOutside={(e) => e.preventDefault()}>
           <DialogHeader>
@@ -485,20 +383,10 @@ function Library() {
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setDeleteDialogOpen(false)}
-              disabled={submitting}
-            >
+            <Button type="button" variant="outline" onClick={() => setDeleteDialogOpen(false)} disabled={submitting}>
               Cancel
             </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              onClick={handleDeleteGame}
-              disabled={submitting}
-            >
+            <Button type="button" variant="destructive" onClick={handleDeleteGame} disabled={submitting}>
               {submitting ? 'Deleting...' : 'Delete'}
             </Button>
           </DialogFooter>
@@ -514,25 +402,17 @@ function Library() {
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
           {games.map((game) => (
-            <Card
-              key={game.id}
-              className="overflow-hidden group"
-            >
+            <Card key={game.id} className="overflow-hidden group">
               <div className="aspect-[3/4] bg-muted flex items-center justify-center relative overflow-hidden">
                 {game.coverImage ? (
                   <CoverImage imagePath={game.coverImage} alt={game.name} />
                 ) : (
                   <Gamepad2 className="h-12 w-12 text-muted-foreground" />
                 )}
-                {/* Badges container - top-left */}
                 <div className="absolute top-2 left-2 flex flex-col gap-1">
-                  {/* Running indicator */}
                   {runningGames.has(game.id) && (
-                    <div className="bg-green-500 text-white text-xs px-2 py-1 rounded">
-                      Running
-                    </div>
+                    <div className="bg-green-500 text-white text-xs px-2 py-1 rounded">Running</div>
                   )}
-                  {/* Mod indicator */}
                   {game.mods?.enabled && (
                     <div className="bg-purple-500 text-white text-xs px-2 py-1 rounded flex items-center gap-1">
                       <Puzzle className="h-3 w-3" />
@@ -540,7 +420,6 @@ function Library() {
                     </div>
                   )}
                 </div>
-                {/* Delete button - shows on hover */}
                 <Button
                   type="button"
                   variant="destructive"
@@ -564,11 +443,7 @@ function Library() {
                     <Play className="h-4 w-4 mr-1" />
                     {runningGames.has(game.id) ? 'Running' : 'Play'}
                   </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={(e) => handleOpenConfig(game, e)}
-                  >
+                  <Button size="sm" variant="outline" onClick={(e) => handleOpenConfig(game, e)}>
                     <Settings className="h-4 w-4" />
                   </Button>
                 </div>
