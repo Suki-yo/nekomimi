@@ -31,3 +31,19 @@ export type {
   IPCRequest,
   IPCResponse,
 } from './ipc'
+
+// Download types
+export type {
+  DownloadStatus,
+  DownloadMode,
+  DownloadProgress,
+  GameDownloadState,
+  HoyoGameBiz,
+  HoyoVersionInfo,
+  VoicePack,
+  DiffPatch,
+  SophonManifest,
+  SophonManifestFile,
+  SophonFileChunk,
+  DownloadOptions,
+} from './download'

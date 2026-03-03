@@ -1,5 +1,7 @@
 // Core game interface - mirrors the YAML schema from SPEC.md
 
+import type { GameDownloadState } from './download'
+
 export interface Game {
   id: string
   name: string
@@ -15,6 +17,7 @@ export interface Game {
   launch: LaunchConfig
   mods: ModConfig
   update?: UpdateConfig
+  download?: GameDownloadState // Download state for HoYoverse games
 
   playtime: number // hours
   lastPlayed?: string // ISO timestamp

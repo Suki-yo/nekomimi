@@ -4,6 +4,7 @@
 import type { AppConfig } from './config'
 import type { Game, DetectedGameInfo, DetectedRunner, Mod } from './game'
 import type { Runner } from './runner'
+import type { HoyoVersionInfo } from './download'
 
 // All IPC channels - this is the contract between frontend and backend
 export interface IPCChannels {
@@ -134,6 +135,26 @@ export interface IPCChannels {
   'mods:rename': {
     request: { modPath: string; customName: string }
     response: { success: boolean; newPath?: string; error?: string }
+  }
+
+  // ─────────────────────────────────────────────
+  // Downloads
+  // ─────────────────────────────────────────────
+  'download:fetch-info': {
+    request: { biz: 'genshin' | 'starrail' | 'zzz' }
+    response: HoyoVersionInfo | null
+  }
+  'download:start': {
+    request: { gameId: string; biz: 'genshin' | 'starrail' | 'zzz'; destDir: string; manifestUrl?: string }
+    response: { success: boolean; error?: string }
+  }
+  'download:cancel': {
+    request: { gameId: string }
+    response: { success: boolean }
+  }
+  'download:status': {
+    request: { gameId: string }
+    response: { inProgress: boolean }
   }
 }
 

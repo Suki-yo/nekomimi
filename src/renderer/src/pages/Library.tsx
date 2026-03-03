@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Plus, Gamepad2, Trash2, FolderOpen, Puzzle, Play, Settings } from 'lucide-react'
+import { Plus, Gamepad2, Trash2, FolderOpen, Puzzle, Play, Settings, Download, Cloud } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import {
@@ -14,9 +14,11 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { DownloadModal } from '@/components/DownloadModal'
+import { GameInstallModal } from '@/components/GameInstallModal'
 import GameConfigModal from '@/components/GameConfigModal'
 import CoverImage from '@/components/CoverImage'
 import type { Game, DetectedRunner } from '../../../shared/types/game'
+import type { HoyoVersionInfo } from '../../../shared/types/download'
 
 const DEFAULT_LAUNCH = {
   env: {},
@@ -29,7 +31,35 @@ const DEFAULT_MODS = {
   enabled: false,
 }
 
+// Supported HoYoverse games for the Explore tab
+const HOYO_GAMES = [
+  {
+    biz: 'genshin' as const,
+    name: 'Genshin Impact',
+    coverUrl: 'https://upload.wikimedia.org/wikipedia/en/4/44/Genshin_Impact_logo.svg',
+    color: '#00a0e9',
+    estimatedSize: '80 GB',
+  },
+  {
+    biz: 'starrail' as const,
+    name: 'Honkai Star Rail',
+    coverUrl: 'https://upload.wikimedia.org/wikipedia/en/7/7f/Honkai-Star-Rail-Logo.png',
+    color: '#6b5ce7',
+    estimatedSize: '40 GB',
+  },
+  {
+    biz: 'zzz' as const,
+    name: 'Zenless Zone Zero',
+    coverUrl: 'https://upload.wikimedia.org/wikipedia/en/7/7a/Zenless_Zone_Zero_logo.png',
+    color: '#ff6b35',
+    estimatedSize: '60 GB',
+  },
+]
+
+type LibraryTab = 'my-games' | 'explore'
+
 function Library() {
+  const [activeTab, setActiveTab] = useState<LibraryTab>('my-games')
   const [games, setGames] = useState<Game[]>([])
   const [runners, setRunners] = useState<DetectedRunner[]>([])
   const [loading, setLoading] = useState(true)
@@ -48,6 +78,12 @@ function Library() {
   const [configModalOpen, setConfigModalOpen] = useState(false)
   const [selectedGame, setSelectedGame] = useState<Game | null>(null)
 
+  // Explore tab state
+  const [installModalOpen, setInstallModalOpen] = useState(false)
+  const [selectedHoyoGame, setSelectedHoyoGame] = useState<typeof HOYO_GAMES[0] | null>(null)
+  const [hoyoVersionInfo, setHoyoVersionInfo] = useState<Record<string, HoyoVersionInfo>>({})
+  const [loadingVersions, setLoadingVersions] = useState(false)
+
   const [formName, setFormName] = useState('')
   const [formDirectory, setFormDirectory] = useState('')
   const [formExecutable, setFormExecutable] = useState('')
@@ -63,6 +99,31 @@ function Library() {
     loadGames()
     loadRunners()
   }, [])
+
+  // Load HoYoverse version info when Explore tab is active
+  useEffect(() => {
+    if (activeTab === 'explore' && Object.keys(hoyoVersionInfo).length === 0) {
+      loadHoyoVersions()
+    }
+  }, [activeTab])
+
+  const loadHoyoVersions = async () => {
+    setLoadingVersions(true)
+    try {
+      const versions: Record<string, HoyoVersionInfo> = {}
+      for (const game of HOYO_GAMES) {
+        const info = await window.api.invoke('download:fetch-info', { biz: game.biz })
+        if (info) {
+          versions[game.biz] = info
+        }
+      }
+      setHoyoVersionInfo(versions)
+    } catch (err) {
+      console.error('Failed to load HoYoverse versions:', err)
+    } finally {
+      setLoadingVersions(false)
+    }
+  }
 
   useEffect(() => {
     const pollRunning = async () => {
@@ -241,6 +302,15 @@ function Library() {
     launchGame(game.id)
   }
 
+  const handleInstallGame = (hoyoGame: typeof HOYO_GAMES[0]) => {
+    setSelectedHoyoGame(hoyoGame)
+    setInstallModalOpen(true)
+  }
+
+  const checkGameInstalled = (biz: string) => {
+    return games.some(g => g.slug.toLowerCase().includes(biz) || g.name.toLowerCase().includes(biz.replace('starrail', 'star rail')))
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -276,6 +346,15 @@ function Library() {
         needsRunner={needsRunner}
       />
 
+      <GameInstallModal
+        open={installModalOpen}
+        onClose={() => setInstallModalOpen(false)}
+        gameName={selectedHoyoGame?.name || ''}
+        gameBiz={selectedHoyoGame?.biz || 'genshin'}
+        latestVersion={hoyoVersionInfo[selectedHoyoGame?.biz || '']?.version || 'Unknown'}
+        downloadSize={selectedHoyoGame?.estimatedSize}
+      />
+
       <GameConfigModal
         game={selectedGame}
         open={configModalOpen}
@@ -284,172 +363,274 @@ function Library() {
         runners={runners}
       />
 
-      <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
-        <div className="flex items-center justify-between mb-6">
+      {/* Header with tabs */}
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center gap-6">
           <h1 className="text-2xl font-bold">Library</h1>
-          <div className="flex items-center gap-4">
-            <span className="text-muted-foreground">{games.length} games</span>
-            <DialogTrigger asChild>
-              <Button>
-                <Plus className="h-4 w-4" />
-                Add Game
-              </Button>
-            </DialogTrigger>
+          <div className="flex gap-1 bg-muted p-1 rounded-lg">
+            <button
+              className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                activeTab === 'my-games'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+              onClick={() => setActiveTab('my-games')}
+            >
+              My Games
+            </button>
+            <button
+              className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors flex items-center gap-2 ${
+                activeTab === 'explore'
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
+              }`}
+              onClick={() => setActiveTab('explore')}
+            >
+              <Cloud className="h-4 w-4" />
+              Explore
+            </button>
           </div>
         </div>
 
-        <DialogContent onPointerDownOutside={(e) => e.preventDefault()}>
-          <DialogHeader>
-            <DialogTitle>Add New Game</DialogTitle>
-            <DialogDescription>
-              Select the game executable and we'll auto-detect the rest.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-4 py-4">
-            <div className="grid gap-2">
-              <Label>Executable</Label>
-              <div className="flex gap-2">
-                <Input
-                  value={formExecutable}
-                  onChange={(e) => setFormExecutable(e.target.value)}
-                  placeholder="/path/to/game.exe"
-                  className="flex-1"
-                />
-                <Button type="button" variant="outline" onClick={handleBrowseExecutable} disabled={detecting}>
-                  <FolderOpen className="h-4 w-4" />
+        {activeTab === 'my-games' && (
+          <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
+            <div className="flex items-center gap-4">
+              <span className="text-muted-foreground">{games.length} games</span>
+              <DialogTrigger asChild>
+                <Button>
+                  <Plus className="h-4 w-4" />
+                  Add Game
                 </Button>
+              </DialogTrigger>
+            </div>
+
+            <DialogContent onPointerDownOutside={(e) => e.preventDefault()}>
+              <DialogHeader>
+                <DialogTitle>Add New Game</DialogTitle>
+                <DialogDescription>
+                  Select the game executable and we'll auto-detect the rest.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="grid gap-4 py-4">
+                <div className="grid gap-2">
+                  <Label>Executable</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      value={formExecutable}
+                      onChange={(e) => setFormExecutable(e.target.value)}
+                      placeholder="/path/to/game.exe"
+                      className="flex-1"
+                    />
+                    <Button type="button" variant="outline" onClick={handleBrowseExecutable} disabled={detecting}>
+                      <FolderOpen className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="name">Game Name</Label>
+                  <Input
+                    id="name"
+                    placeholder="Genshin Impact"
+                    value={formName}
+                    onChange={(e) => setFormName(e.target.value)}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="directory">Game Directory</Label>
+                  <Input
+                    id="directory"
+                    placeholder="/home/user/Games/Genshin Impact"
+                    value={formDirectory}
+                    onChange={(e) => setFormDirectory(e.target.value)}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="prefix">Wine Prefix</Label>
+                  <Input
+                    id="prefix"
+                    placeholder="/home/user/Games/Genshin Impact/prefix"
+                    value={formPrefix}
+                    onChange={(e) => setFormPrefix(e.target.value)}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="runner">Runner</Label>
+                  <select
+                    id="runner"
+                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                    value={formRunnerPath}
+                    onChange={(e) => setFormRunnerPath(e.target.value)}
+                  >
+                    {runners.map((runner) => (
+                      <option key={runner.path} value={runner.path}>
+                        {runner.name} ({runner.type})
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="name">Game Name</Label>
-              <Input
-                id="name"
-                placeholder="Genshin Impact"
-                value={formName}
-                onChange={(e) => setFormName(e.target.value)}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="directory">Game Directory</Label>
-              <Input
-                id="directory"
-                placeholder="/home/user/Games/Genshin Impact"
-                value={formDirectory}
-                onChange={(e) => setFormDirectory(e.target.value)}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="prefix">Wine Prefix</Label>
-              <Input
-                id="prefix"
-                placeholder="/home/user/Games/Genshin Impact/prefix"
-                value={formPrefix}
-                onChange={(e) => setFormPrefix(e.target.value)}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="runner">Runner</Label>
-              <select
-                id="runner"
-                className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                value={formRunnerPath}
-                onChange={(e) => setFormRunnerPath(e.target.value)}
-              >
-                {runners.map((runner) => (
-                  <option key={runner.path} value={runner.path}>
-                    {runner.name} ({runner.type})
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setAddDialogOpen(false)} disabled={submitting}>
-              Cancel
-            </Button>
-            <Button type="button" onClick={handleAddGame} disabled={submitting}>
-              {submitting ? 'Adding...' : 'Add Game'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setAddDialogOpen(false)} disabled={submitting}>
+                  Cancel
+                </Button>
+                <Button type="button" onClick={handleAddGame} disabled={submitting}>
+                  {submitting ? 'Adding...' : 'Add Game'}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        )}
 
-      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <DialogContent onPointerDownOutside={(e) => e.preventDefault()}>
-          <DialogHeader>
-            <DialogTitle>Delete Game</DialogTitle>
-            <DialogDescription>
-              Are you sure you want to delete "{gameToDelete?.name}"? This cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setDeleteDialogOpen(false)} disabled={submitting}>
-              Cancel
-            </Button>
-            <Button type="button" variant="destructive" onClick={handleDeleteGame} disabled={submitting}>
-              {submitting ? 'Deleting...' : 'Delete'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        {activeTab === 'explore' && (
+          <Button variant="outline" onClick={loadHoyoVersions} disabled={loadingVersions}>
+            {loadingVersions ? 'Refreshing...' : 'Refresh'}
+          </Button>
+        )}
+      </div>
 
-      {games.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
-          <Gamepad2 className="h-16 w-16 mb-4 opacity-50" />
-          <p className="text-lg mb-2">No games yet</p>
-          <p className="text-sm">Click "Add Game" to get started</p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-          {games.map((game) => (
-            <Card key={game.id} className="overflow-hidden group">
-              <div className="aspect-[3/4] bg-muted flex items-center justify-center relative overflow-hidden">
-                {game.coverImage ? (
-                  <CoverImage imagePath={game.coverImage} alt={game.name} />
-                ) : (
-                  <Gamepad2 className="h-12 w-12 text-muted-foreground" />
-                )}
-                <div className="absolute top-2 left-2 flex flex-col gap-1">
-                  {runningGames.has(game.id) && (
-                    <div className="bg-green-500 text-white text-xs px-2 py-1 rounded">Running</div>
-                  )}
-                  {game.mods?.enabled && (
-                    <div className="bg-purple-500 text-white text-xs px-2 py-1 rounded flex items-center gap-1">
-                      <Puzzle className="h-3 w-3" />
-                      Mods
+      {/* My Games Tab */}
+      {activeTab === 'my-games' && (
+        <>
+          <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+            <DialogContent onPointerDownOutside={(e) => e.preventDefault()}>
+              <DialogHeader>
+                <DialogTitle>Delete Game</DialogTitle>
+                <DialogDescription>
+                  Are you sure you want to delete "{gameToDelete?.name}"? This cannot be undone.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={() => setDeleteDialogOpen(false)} disabled={submitting}>
+                  Cancel
+                </Button>
+                <Button type="button" variant="destructive" onClick={handleDeleteGame} disabled={submitting}>
+                  {submitting ? 'Deleting...' : 'Delete'}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          {games.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
+              <Gamepad2 className="h-16 w-16 mb-4 opacity-50" />
+              <p className="text-lg mb-2">No games yet</p>
+              <p className="text-sm">Click "Add Game" to get started or explore HoYoverse games</p>
+              <Button variant="outline" className="mt-4" onClick={() => setActiveTab('explore')}>
+                <Cloud className="h-4 w-4 mr-2" />
+                Explore Games
+              </Button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+              {games.map((game) => (
+                <Card key={game.id} className="overflow-hidden group">
+                  <div className="aspect-[3/4] bg-muted flex items-center justify-center relative overflow-hidden">
+                    {game.coverImage ? (
+                      <CoverImage imagePath={game.coverImage} alt={game.name} />
+                    ) : (
+                      <Gamepad2 className="h-12 w-12 text-muted-foreground" />
+                    )}
+                    <div className="absolute top-2 left-2 flex flex-col gap-1">
+                      {runningGames.has(game.id) && (
+                        <div className="bg-green-500 text-white text-xs px-2 py-1 rounded">Running</div>
+                      )}
+                      {game.mods?.enabled && (
+                        <div className="bg-purple-500 text-white text-xs px-2 py-1 rounded flex items-center gap-1">
+                          <Puzzle className="h-3 w-3" />
+                          Mods
+                        </div>
+                      )}
+                    </div>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="icon"
+                      className="absolute top-2 right-2 h-8 w-8 opacity-0 group-hover:opacity-100 transition"
+                      onClick={(e) => confirmDelete(game, e)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+
+                  <CardContent className="p-3">
+                    <h3 className="font-medium truncate mb-2">{game.name}</h3>
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        onClick={(e) => handlePlayClick(game, e)}
+                        disabled={runningGames.has(game.id)}
+                        className="flex-1"
+                      >
+                        <Play className="h-4 w-4 mr-1" />
+                        {runningGames.has(game.id) ? 'Running' : 'Play'}
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={(e) => handleOpenConfig(game, e)}>
+                        <Settings className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Explore Tab */}
+      {activeTab === 'explore' && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {HOYO_GAMES.map((hoyoGame) => {
+            const versionInfo = hoyoVersionInfo[hoyoGame.biz]
+            const isInstalled = checkGameInstalled(hoyoGame.biz)
+
+            return (
+              <Card key={hoyoGame.biz} className="overflow-hidden">
+                <div
+                  className="aspect-video bg-gradient-to-br from-muted to-muted/50 flex items-center justify-center relative"
+                  style={{
+                    background: `linear-gradient(135deg, ${hoyoGame.color}20, ${hoyoGame.color}10)`,
+                  }}
+                >
+                  <div
+                    className="text-4xl font-bold opacity-20"
+                    style={{ color: hoyoGame.color }}
+                  >
+                    {hoyoGame.name.split(' ').map(w => w[0]).join('')}
+                  </div>
+
+                  {isInstalled && (
+                    <div className="absolute top-2 right-2 bg-green-500 text-white text-xs px-2 py-1 rounded">
+                      Installed
                     </div>
                   )}
                 </div>
-                <Button
-                  type="button"
-                  variant="destructive"
-                  size="icon"
-                  className="absolute top-2 right-2 h-8 w-8 opacity-0 group-hover:opacity-100 transition"
-                  onClick={(e) => confirmDelete(game, e)}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
 
-              <CardContent className="p-3">
-                <h3 className="font-medium truncate mb-2">{game.name}</h3>
-                <div className="flex gap-2">
+                <CardContent className="p-4">
+                  <h3 className="font-semibold text-lg mb-1">{hoyoGame.name}</h3>
+                  <div className="flex items-center gap-4 text-sm text-muted-foreground mb-4">
+                    {versionInfo ? (
+                      <>
+                        <span>v{versionInfo.version}</span>
+                        <span>•</span>
+                        <span>{hoyoGame.estimatedSize}</span>
+                      </>
+                    ) : (
+                      <span>Loading version info...</span>
+                    )}
+                  </div>
+
                   <Button
-                    size="sm"
-                    onClick={(e) => handlePlayClick(game, e)}
-                    disabled={runningGames.has(game.id)}
-                    className="flex-1"
+                    className="w-full"
+                    onClick={() => handleInstallGame(hoyoGame)}
+                    disabled={isInstalled}
                   >
-                    <Play className="h-4 w-4 mr-1" />
-                    {runningGames.has(game.id) ? 'Running' : 'Play'}
+                    <Download className="h-4 w-4 mr-2" />
+                    {isInstalled ? 'Already Installed' : 'Install'}
                   </Button>
-                  <Button size="sm" variant="outline" onClick={(e) => handleOpenConfig(game, e)}>
-                    <Settings className="h-4 w-4" />
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                </CardContent>
+              </Card>
+            )
+          })}
         </div>
       )}
     </div>

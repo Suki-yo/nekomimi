@@ -1,0 +1,111 @@
+// Download system types for game downloads
+
+// Download status for a game
+export type DownloadStatus =
+  | 'not_installed'
+  | 'downloading'
+  | 'paused'
+  | 'extracting'
+  | 'verifying'
+  | 'installed'
+  | 'update_available'
+  | 'error'
+
+// Download mode - how the game is delivered
+export type DownloadMode = 'zip' | 'sophon'
+
+// Progress information sent to renderer
+export interface DownloadProgress {
+  gameId: string
+  status: DownloadStatus
+  percent: number
+  bytesDownloaded: number
+  bytesTotal: number
+  downloadSpeed: number // bytes per second
+  timeRemaining: number // seconds
+  currentFile?: string
+  error?: string
+}
+
+// Game download state (stored in game config)
+export interface GameDownloadState {
+  status: DownloadStatus
+  mode: DownloadMode
+  currentVersion?: string
+  latestVersion?: string
+  totalBytes?: number
+  downloadedBytes?: number
+  installPath?: string
+  manifestUrl?: string
+  error?: string
+}
+
+// HoYoverse API game identifiers
+export type HoyoGameBiz = 'genshin' | 'starrail' | 'zzz'
+
+// Game version info from official API
+export interface HoyoVersionInfo {
+  version: string
+  downloadMode: DownloadMode
+  zipUrl?: string
+  zipMd5?: string
+  zipSize?: number
+  segments?: Array<{
+    url: string
+    md5: string
+    size: number
+  }>
+  sophonManifestUrl?: string
+  voicePacks: VoicePack[]
+  diffs: DiffPatch[]
+}
+
+// Voice pack info
+export interface VoicePack {
+  language: string
+  name: string
+  path: string
+  md5: string
+  size: string
+  packageSize: string
+}
+
+// Delta patch info
+export interface DiffPatch {
+  version: string
+  path: string
+  md5: string
+  size: string
+  voicePacks: VoicePack[]
+}
+
+// Sophon manifest types
+export interface SophonManifest {
+  files: SophonManifestFile[]
+}
+
+export interface SophonManifestFile {
+  name: string
+  chunks: SophonFileChunk[]
+  type: number // 64 = directory
+  size: number
+  md5: string
+}
+
+export interface SophonFileChunk {
+  chunkName: string
+  chunkDecompressedMd5: string
+  chunkOnFileOffset: number
+  chunkSize: number
+  chunkDecompressedSize: number
+  chunkMd5: string
+}
+
+// Download options
+export interface DownloadOptions {
+  gameId: string
+  biz: HoyoGameBiz
+  destDir: string
+  manifestUrl?: string
+  onProgress?: (progress: DownloadProgress) => void
+}
