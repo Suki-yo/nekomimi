@@ -82,6 +82,7 @@ function Library() {
   const [installModalOpen, setInstallModalOpen] = useState(false)
   const [selectedHoyoGame, setSelectedHoyoGame] = useState<typeof HOYO_GAMES[0] | null>(null)
   const [hoyoVersionInfo, setHoyoVersionInfo] = useState<Record<string, HoyoVersionInfo>>({})
+  const [hoyoVersionErrors, setHoyoVersionErrors] = useState<Record<string, string>>({})
   const [loadingVersions, setLoadingVersions] = useState(false)
 
   const [formName, setFormName] = useState('')
@@ -109,17 +110,37 @@ function Library() {
 
   const loadHoyoVersions = async () => {
     setLoadingVersions(true)
+    setHoyoVersionErrors({}) // Clear previous errors
     try {
       const versions: Record<string, HoyoVersionInfo> = {}
+      const errors: Record<string, string> = {}
+
       for (const game of HOYO_GAMES) {
-        const info = await window.api.invoke('download:fetch-info', { biz: game.biz })
-        if (info) {
-          versions[game.biz] = info
+        try {
+          const info = await window.api.invoke('download:fetch-info', { biz: game.biz })
+          if (info) {
+            versions[game.biz] = info
+          } else {
+            errors[game.biz] = 'Unable to fetch version info'
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'Unknown error'
+          errors[game.biz] = message
+          console.error(`Failed to load ${game.biz} version:`, err)
         }
       }
+
       setHoyoVersionInfo(versions)
+      setHoyoVersionErrors(errors)
+
+      // Show warning if all games failed to load
+      if (Object.keys(errors).length === HOYO_GAMES.length) {
+        showToast('Failed to load game versions. Please check your connection.', 'warning')
+      }
     } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to load game versions'
       console.error('Failed to load HoYoverse versions:', err)
+      showToast(message, 'warning')
     } finally {
       setLoadingVersions(false)
     }
@@ -581,6 +602,7 @@ function Library() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {HOYO_GAMES.map((hoyoGame) => {
             const versionInfo = hoyoVersionInfo[hoyoGame.biz]
+            const versionError = hoyoVersionErrors[hoyoGame.biz]
             const isInstalled = checkGameInstalled(hoyoGame.biz)
 
             return (
@@ -614,18 +636,31 @@ function Library() {
                         <span>•</span>
                         <span>{hoyoGame.estimatedSize}</span>
                       </>
-                    ) : (
+                    ) : versionError ? (
+                      <span className="text-destructive" title={versionError}>
+                        Error loading version
+                      </span>
+                    ) : loadingVersions ? (
                       <span>Loading version info...</span>
+                    ) : (
+                      <span className="text-muted-foreground">Version unavailable</span>
                     )}
                   </div>
+
+                  {versionError && (
+                    <p className="text-xs text-muted-foreground mb-3 truncate" title={versionError}>
+                      {versionError}
+                    </p>
+                  )}
 
                   <Button
                     className="w-full"
                     onClick={() => handleInstallGame(hoyoGame)}
-                    disabled={isInstalled}
+                    disabled={isInstalled || !versionInfo}
+                    title={!versionInfo ? 'Version info required to install' : undefined}
                   >
                     <Download className="h-4 w-4 mr-2" />
-                    {isInstalled ? 'Already Installed' : 'Install'}
+                    {isInstalled ? 'Already Installed' : !versionInfo ? 'Unavailable' : 'Install'}
                   </Button>
                 </CardContent>
               </Card>

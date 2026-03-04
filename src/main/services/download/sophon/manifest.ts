@@ -2,8 +2,8 @@
 // Fetches, decompresses (zstd), and parses protobuf manifests
 
 import * as https from 'https'
-import { ZstdCodec } from 'zstd-codec'
 import { decodeManifest } from './proto'
+import { decompressZstd, USER_AGENT } from '../utils'
 import type { SophonManifest, SophonManifestFile } from '../../../../shared/types/download'
 
 // Simple progress callback type
@@ -25,7 +25,7 @@ function fetchBuffer(url: string, onProgress?: ProgressCallback): Promise<Buffer
           currentUrl,
           {
             headers: {
-              'User-Agent': 'Mozilla/5.0',
+              'User-Agent': USER_AGENT,
             },
           },
           (response) => {
@@ -64,21 +64,6 @@ function fetchBuffer(url: string, onProgress?: ProgressCallback): Promise<Buffer
     }
 
     followRedirect(url)
-  })
-}
-
-// Decompress zstd data
-async function decompressZstd(compressed: Buffer): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    ZstdCodec.run((zstd) => {
-      try {
-        const simple = new zstd.Simple()
-        const decompressed = simple.decompress(compressed)
-        resolve(Buffer.from(decompressed))
-      } catch (err) {
-        reject(err)
-      }
-    })
   })
 }
 

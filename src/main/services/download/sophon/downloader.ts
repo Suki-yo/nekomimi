@@ -5,8 +5,14 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as https from 'https'
 import * as crypto from 'crypto'
-import { ZstdCodec } from 'zstd-codec'
 import { fetchManifest, getFilesOnly, calculateChunkDownloadSize } from './manifest'
+import {
+  decompressZstd,
+  sanitizePath,
+  streamingMd5,
+  createLruCache,
+  USER_AGENT,
+} from '../utils'
 import type { SophonManifestFile, SophonFileChunk, DownloadProgress } from '../../../../shared/types/download'
 
 // Download options
@@ -24,21 +30,6 @@ interface DownloadState {
   startTime: number
   speed: number
   speedSamples: Array<{ time: number; bytes: number }>
-}
-
-// Decompress zstd data
-async function decompressZstd(compressed: Buffer): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    ZstdCodec.run((zstd) => {
-      try {
-        const simple = new zstd.Simple()
-        const decompressed = simple.decompress(compressed)
-        resolve(Buffer.from(decompressed))
-      } catch (err) {
-        reject(err)
-      }
-    })
-  })
 }
 
 // Calculate MD5 of buffer
@@ -67,7 +58,7 @@ async function downloadChunk(
           currentUrl,
           {
             headers: {
-              'User-Agent': 'Mozilla/5.0',
+              'User-Agent': USER_AGENT,
             },
           },
           (response) => {
@@ -142,8 +133,8 @@ async function downloadChunk(
   })
 }
 
-// Chunk cache to avoid re-downloading
-const chunkCache = new Map<string, Buffer>()
+// Chunk cache to avoid re-downloading (LRU to limit memory)
+const chunkCache = createLruCache<string, Buffer>(100)
 
 // Download and cache a chunk
 async function getChunk(
@@ -183,7 +174,7 @@ async function processFile(
   state: DownloadState,
   onProgress?: (progress: Partial<DownloadProgress>) => void
 ): Promise<void> {
-  const filePath = path.join(destDir, file.name)
+  const filePath = sanitizePath(destDir, file.name)
 
   // Create directory structure
   const dir = path.dirname(filePath)
@@ -207,9 +198,8 @@ async function processFile(
     fs.closeSync(fd)
   }
 
-  // Verify final file MD5
-  const fileBuffer = fs.readFileSync(filePath)
-  const md5 = calculateMd5(fileBuffer)
+  // Verify final file MD5 (streaming to avoid memory issues with large files)
+  const md5 = await streamingMd5(filePath)
 
   if (md5 !== file.md5) {
     fs.unlinkSync(filePath)
