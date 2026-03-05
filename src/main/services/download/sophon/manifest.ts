@@ -16,7 +16,7 @@ function fetchBuffer(url: string, onProgress?: ProgressCallback): Promise<Buffer
 
     const followRedirect = (currentUrl: string, redirectCount = 0) => {
       if (redirectCount > 5) {
-        reject(new Error('Too many redirects'))
+        reject(new Error(`Too many redirects for URL: ${url}`))
         return
       }
 
@@ -32,13 +32,14 @@ function fetchBuffer(url: string, onProgress?: ProgressCallback): Promise<Buffer
             if (response.statusCode === 301 || response.statusCode === 302) {
               const location = response.headers.location
               if (location) {
+                console.log(`[sophon] Redirecting to: ${location}`)
                 followRedirect(location, redirectCount + 1)
                 return
               }
             }
 
             if (response.statusCode !== 200) {
-              reject(new Error(`HTTP ${response.statusCode}`))
+              reject(new Error(`HTTP ${response.statusCode} - Failed to fetch: ${currentUrl}`))
               return
             }
 
@@ -60,9 +61,12 @@ function fetchBuffer(url: string, onProgress?: ProgressCallback): Promise<Buffer
             response.on('error', reject)
           }
         )
-        .on('error', reject)
+        .on('error', (err) => {
+          reject(new Error(`Network error for ${url}: ${err.message}`))
+        })
     }
 
+    console.log(`[sophon] Fetching: ${url}`)
     followRedirect(url)
   })
 }
@@ -74,47 +78,54 @@ export async function fetchManifest(
 ): Promise<SophonManifest> {
   console.log(`[sophon] Fetching manifest from ${url}`)
 
-  // Download the compressed manifest
-  const compressed = await fetchBuffer(url, (percent) => {
-    console.log(`[sophon] Manifest download: ${percent}%`)
-    onProgress?.(percent * 0.5) // First 50% is download
-  })
+  try {
+    // Download the compressed manifest
+    const compressed = await fetchBuffer(url, (percent) => {
+      console.log(`[sophon] Manifest download: ${percent}%`)
+      onProgress?.(percent * 0.5) // First 50% is download
+    })
 
-  console.log(`[sophon] Manifest size: ${compressed.length} bytes (compressed)`)
+    console.log(`[sophon] Manifest size: ${compressed.length} bytes (compressed)`)
 
-  // Decompress with zstd
-  console.log('[sophon] Decompressing manifest...')
-  const decompressed = await decompressZstd(compressed)
+    // Decompress with zstd
+    console.log('[sophon] Decompressing manifest...')
+    const decompressed = await decompressZstd(compressed)
 
-  console.log(`[sophon] Manifest size: ${decompressed.length} bytes (decompressed)`)
-  onProgress?.(75) // 75% after decompression
+    console.log(`[sophon] Manifest size: ${decompressed.length} bytes (decompressed)`)
+    onProgress?.(75) // 75% after decompression
 
-  // Parse protobuf
-  console.log('[sophon] Parsing protobuf...')
-  const protoManifest = decodeManifest(decompressed)
+    // Parse protobuf
+    console.log('[sophon] Parsing protobuf...')
+    const protoManifest = decodeManifest(decompressed)
 
-  // Convert to our types (camelCase)
-  const manifest: SophonManifest = {
-    files: protoManifest.files.map((file) => ({
-      name: file.name,
-      chunks: file.chunks.map((chunk) => ({
-        chunkName: chunk.chunkName,
-        chunkDecompressedMd5: chunk.chunkDecompressedMd5,
-        chunkOnFileOffset: chunk.chunkOnFileOffset,
-        chunkSize: chunk.chunkSize,
-        chunkDecompressedSize: chunk.chunkDecompressedSize,
-        chunkMd5: chunk.chunkMd5,
+    // Convert to our types (camelCase)
+    const manifest: SophonManifest = {
+      files: protoManifest.files.map((file) => ({
+        name: file.name,
+        chunks: file.chunks.map((chunk) => ({
+          chunkName: chunk.chunkName,
+          chunkDecompressedMd5: chunk.chunkDecompressedMd5,
+          chunkOnFileOffset: chunk.chunkOnFileOffset,
+          chunkSize: chunk.chunkSize,
+          chunkDecompressedSize: chunk.chunkDecompressedSize,
+          chunkMd5: chunk.chunkMd5,
+        })),
+        type: file.type,
+        size: file.size,
+        md5: file.md5,
       })),
-      type: file.type,
-      size: file.size,
-      md5: file.md5,
-    })),
+    }
+
+    onProgress?.(100)
+    console.log(`[sophon] Manifest parsed: ${manifest.files.length} files`)
+
+    return manifest
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err)
+    console.error(`[sophon] Failed to fetch manifest from ${url}`)
+    console.error(`[sophon] Error: ${errorMsg}`)
+    throw new Error(`Failed to fetch Sophon manifest: ${errorMsg}`)
   }
-
-  onProgress?.(100)
-  console.log(`[sophon] Manifest parsed: ${manifest.files.length} files`)
-
-  return manifest
 }
 
 // Filter out directories (type 64) and get only files

@@ -22,11 +22,13 @@ export const registerDownloadHandlers = () => {
   // Start a game download
   ipcMain.handle(
     'download:start',
-    async (event, { gameId, biz, destDir, manifestUrl }: {
+    async (event, { gameId, biz, destDir, manifestUrl, useTwintail, preferVersion }: {
       gameId: string
       biz: HoyoGameBiz
       destDir: string
       manifestUrl?: string
+      useTwintail?: boolean
+      preferVersion?: string
     }) => {
       console.log(`[download] Starting download for ${gameId} (${biz})`)
       const win = BrowserWindow.fromWebContents(event.sender)
@@ -36,6 +38,8 @@ export const registerDownloadHandlers = () => {
         biz,
         destDir,
         manifestUrl,
+        useTwintail,
+        preferVersion,
         onProgress: (progress: DownloadProgress) => {
           win?.webContents.send('download:progress', progress)
         },
@@ -65,6 +69,37 @@ export const registerDownloadHandlers = () => {
     'download:status',
     async (_event, { gameId }: { gameId: string }) => {
       return { inProgress: isDownloadInProgress(gameId) }
+    }
+  )
+
+  // Check for game updates
+  ipcMain.handle(
+    'download:check-updates',
+    async (_event, { biz, currentVersion }: { biz: HoyoGameBiz; currentVersion: string }) => {
+      console.log(`[download] Checking updates for ${biz} (current: ${currentVersion})`)
+
+      // Use Twintail for update checks (more reliable)
+      const latest = await getGameVersionInfo(biz)
+
+      if (!latest) {
+        console.warn(`[download] Failed to fetch version info for ${biz}`)
+        return {
+          hasUpdate: false,
+          currentVersion,
+          latestVersion: undefined,
+          downloadMode: undefined,
+        }
+      }
+
+      const hasUpdate = latest.version !== currentVersion
+      console.log(`[download] ${biz} - current: ${currentVersion}, latest: ${latest.version}, hasUpdate: ${hasUpdate}`)
+
+      return {
+        hasUpdate,
+        currentVersion,
+        latestVersion: latest.version,
+        downloadMode: latest.downloadMode,
+      }
     }
   )
 }

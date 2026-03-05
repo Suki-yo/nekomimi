@@ -40,8 +40,8 @@ export function GameInstallModal({
       setStatus('idle')
       setProgress(null)
       hasStartedRef.current = false
-      // Default install directory
-      setInstallDir(`/home/${process.env.USER}/Games/${gameName.replace(/\s+/g, '')}`)
+      // Default install directory placeholder - user can browse to change
+      setInstallDir(`~/Games/${gameName.replace(/\s+/g, '')}`)
     }
   }, [open, gameName])
 
@@ -94,6 +94,7 @@ export function GameInstallModal({
       gameId: gameBiz,
       biz: gameBiz,
       destDir: installDir,
+      useTwintail: true,
     })
 
     if (!result.success) {

@@ -56,6 +56,7 @@ export interface HoyoVersionInfo {
     size: number
   }>
   sophonManifestUrl?: string
+  sophonChunkBaseUrl?: string // Base URL for downloading chunks (from Twintail's file_path)
   voicePacks: VoicePack[]
   diffs: DiffPatch[]
 }
@@ -107,5 +108,7 @@ export interface DownloadOptions {
   biz: HoyoGameBiz
   destDir: string
   manifestUrl?: string
+  useTwintail?: boolean // Use Twintail manifest instead of official API
+  preferVersion?: string // Specific version from Twintail
   onProgress?: (progress: DownloadProgress) => void
 }

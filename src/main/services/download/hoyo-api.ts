@@ -4,6 +4,7 @@
 import * as https from 'https'
 import type { ClientRequest } from 'http'
 import type { HoyoGameBiz, HoyoVersionInfo, DownloadMode, VoicePack, DiffPatch } from '../../../shared/types/download'
+import { fetchTwintailManifest, twintailToHoyoVersionInfo } from './twintail-api'
 
 // Official HoYoverse launcher API endpoints
 const HOYO_API_ENDPOINTS: Record<HoyoGameBiz, string> = {
@@ -16,6 +17,12 @@ const HOYO_API_ENDPOINTS: Record<HoyoGameBiz, string> = {
 const REQUEST_TIMEOUT_MS = 15000 // 15 seconds
 const MAX_RETRIES = 3
 const RETRY_DELAY_MS = 1000 // Base delay for exponential backoff
+
+// Options for fetching game resources
+export interface FetchGameResourceOptions {
+  useTwintail?: boolean // Default: true for Sophon downloads
+  preferVersion?: string // Specific version from Twintail
+}
 
 // Raw API response structure
 interface HoyoAPIResponse {
@@ -212,9 +219,10 @@ function fetchJSON<T>(url: string): Promise<T> {
 
 // Determine download mode from resource info
 function getDownloadMode(latest: HoyoAPIResponse['data']['game']['latest']): DownloadMode {
-  // If decompressed_path exists and looks like a Sophon manifest URL, use sophon mode
+  // If decompressed_path exists and is non-empty, use sophon mode (chunk-based download)
+  // decompressed_path is the Sophon manifest URL used for chunk-based downloads
   const decompressedPath = latest.decompressed_path
-  if (decompressedPath && decompressedPath.includes('chunk')) {
+  if (decompressedPath && decompressedPath.length > 0) {
     return 'sophon'
   }
   return 'zip'
@@ -229,8 +237,8 @@ function parseSizeToBytes(sizeStr: string): number {
   return num
 }
 
-// Fetch game version info from official API
-export async function fetchGameResource(biz: HoyoGameBiz): Promise<HoyoVersionInfo | null> {
+// Fetch game version info from official API (fallback)
+async function fetchGameResourceFromOfficialAPI(biz: HoyoGameBiz): Promise<HoyoVersionInfo | null> {
   const url = HOYO_API_ENDPOINTS[biz]
   if (!url) {
     console.error(`[hoyo-api] Unknown game biz: ${biz}`)
@@ -265,6 +273,16 @@ export async function fetchGameResource(biz: HoyoGameBiz): Promise<HoyoVersionIn
     const latest = response.data.game.latest
     const downloadMode = getDownloadMode(latest)
 
+    // Log what we got from API for debugging
+    console.log(`[hoyo-api] ${biz} - path: "${latest.path}", decompressed_path: "${latest.decompressed_path}"`)
+
+    // Validate download URLs exist
+    if (!latest.path && !latest.decompressed_path) {
+      console.error(`[hoyo-api] No download URLs in API response for ${biz}`)
+      console.error(`[hoyo-api] path: "${latest.path}", decompressed_path: "${latest.decompressed_path}"`)
+      return null
+    }
+
     const info: HoyoVersionInfo = {
       version: latest.version,
       downloadMode,
@@ -285,8 +303,18 @@ export async function fetchGameResource(biz: HoyoGameBiz): Promise<HoyoVersionIn
     }
 
     // Sophon manifest URL (for chunk-based downloads)
+    // The decompressed_path is a directory, we need to append the manifest filename
     if (downloadMode === 'sophon' && latest.decompressed_path) {
-      info.sophonManifestUrl = latest.decompressed_path
+      // decompressed_path ends with directory like "ScatteredFiles"
+      // Append manifest filename to get the full URL
+      const baseUrl = latest.decompressed_path
+      // Ensure trailing slash
+      const manifestUrl = baseUrl.endsWith('/') ? `${baseUrl}manifest` : `${baseUrl}/manifest`
+      info.sophonManifestUrl = manifestUrl
+      // For official API, chunk base URL is the same as manifest directory
+      info.sophonChunkBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl
+      console.log(`[hoyo-api] ${biz} - Sophon manifest URL: ${info.sophonManifestUrl}`)
+      console.log(`[hoyo-api] ${biz} - Chunk base URL: ${info.sophonChunkBaseUrl}`)
     }
 
     // Convert API snake_case to camelCase for diffs
@@ -299,6 +327,12 @@ export async function fetchGameResource(biz: HoyoGameBiz): Promise<HoyoVersionIn
     }))
 
     console.log(`[hoyo-api] ${biz} version: ${info.version}, mode: ${info.downloadMode}`)
+
+    // Warn if zip mode but no zip URL (shouldn't happen but log for debugging)
+    if (downloadMode === 'zip' && !latest.path) {
+      console.warn(`[hoyo-api] ${biz} - zip mode detected but no zip URL available`)
+    }
+
     return info
   } catch (err) {
     if (err instanceof HoyoApiError) {
@@ -322,6 +356,41 @@ export function getDiffPatches(
   currentVersion: string
 ): DiffPatch[] {
   return resource.diffs.filter((diff) => diff.version === currentVersion)
+}
+
+// Fetch game version info from Twintail or official API
+export async function fetchGameResource(
+  biz: HoyoGameBiz,
+  options?: FetchGameResourceOptions
+): Promise<HoyoVersionInfo | null> {
+  const { useTwintail = true, preferVersion } = options || {}
+
+  // Try Twintail first if enabled
+  if (useTwintail) {
+    console.log(`[hoyo-api] Using Twintail manifest for ${biz}`)
+    const twintailManifest = await fetchTwintailManifest(biz)
+
+    if (twintailManifest) {
+      try {
+        const versionInfo = twintailToHoyoVersionInfo(twintailManifest, preferVersion)
+        if (versionInfo) {
+          console.log(`[hoyo-api] ${biz} - Using Twintail manifest version: ${versionInfo.version}`)
+          return versionInfo
+        }
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err)
+        console.warn(`[hoyo-api] Twintail conversion failed for ${biz}: ${errorMsg}`)
+      }
+    } else {
+      console.warn(`[hoyo-api] Twintail fetch returned null for ${biz}`)
+    }
+
+    // Twintail failed, fall back to official API
+    console.warn(`[hoyo-api] Twintail fetch failed for ${biz}, falling back to official API`)
+  }
+
+  // Use official API as fallback or if Twintail is disabled
+  return fetchGameResourceFromOfficialAPI(biz)
 }
 
 // Check if update is available

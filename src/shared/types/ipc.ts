@@ -145,7 +145,7 @@ export interface IPCChannels {
     response: HoyoVersionInfo | null
   }
   'download:start': {
-    request: { gameId: string; biz: 'genshin' | 'starrail' | 'zzz'; destDir: string; manifestUrl?: string }
+    request: { gameId: string; biz: 'genshin' | 'starrail' | 'zzz'; destDir: string; manifestUrl?: string; useTwintail?: boolean; preferVersion?: string }
     response: { success: boolean; error?: string }
   }
   'download:cancel': {
@@ -155,6 +155,15 @@ export interface IPCChannels {
   'download:status': {
     request: { gameId: string }
     response: { inProgress: boolean }
+  }
+  'download:check-updates': {
+    request: { biz: 'genshin' | 'starrail' | 'zzz'; currentVersion: string }
+    response: {
+      hasUpdate: boolean
+      currentVersion: string
+      latestVersion: string | undefined
+      downloadMode: 'zip' | 'sophon' | undefined
+    }
   }
 }
 

@@ -18,6 +18,7 @@ import type { SophonManifestFile, SophonFileChunk, DownloadProgress } from '../.
 // Download options
 export interface SophonDownloadOptions {
   manifestUrl: string
+  chunkBaseUrl?: string // Optional explicit chunk base URL (from Twintail's file_path)
   destDir: string
   onProgress?: (progress: Partial<DownloadProgress>) => void
   concurrency?: number
@@ -211,7 +212,7 @@ async function processFile(
 export async function downloadSophonGame(
   options: SophonDownloadOptions
 ): Promise<{ success: boolean; error?: string }> {
-  const { manifestUrl, destDir, onProgress, concurrency = 6 } = options
+  const { manifestUrl, chunkBaseUrl: explicitChunkBaseUrl, destDir, onProgress, concurrency = 6 } = options
 
   console.log(`[sophon] Starting download to ${destDir}`)
   console.log(`[sophon] Manifest URL: ${manifestUrl}`)
@@ -244,11 +245,19 @@ export async function downloadSophonGame(
     console.log(`[sophon] ${files.length} files to download`)
     console.log(`[sophon] Total chunk size: ${(totalChunkSize / 1024 / 1024 / 1024).toFixed(2)} GB`)
 
-    // Extract chunk base URL from manifest URL
-    const manifestUrlObj = new URL(manifestUrl)
-    const pathParts = manifestUrlObj.pathname.split('/')
-    pathParts.pop() // Remove manifest filename
-    const chunkBaseUrl = `${manifestUrlObj.origin}${pathParts.join('/')}`
+    // Use explicit chunk base URL if provided, otherwise derive from manifest URL
+    let chunkBaseUrl: string
+    if (explicitChunkBaseUrl) {
+      chunkBaseUrl = explicitChunkBaseUrl
+      console.log(`[sophon] Using explicit chunk base URL: ${chunkBaseUrl}`)
+    } else {
+      // Extract chunk base URL from manifest URL
+      const manifestUrlObj = new URL(manifestUrl)
+      const pathParts = manifestUrlObj.pathname.split('/')
+      pathParts.pop() // Remove manifest filename
+      chunkBaseUrl = `${manifestUrlObj.origin}${pathParts.join('/')}`
+      console.log(`[sophon] Derived chunk base URL from manifest: ${chunkBaseUrl}`)
+    }
 
     // Initialize download state
     const state: DownloadState = {

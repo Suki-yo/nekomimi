@@ -4,6 +4,152 @@
 
 ---
 
+### 2026-03-04 (Session 14) - Game Download Fixed! ✅
+
+#### Achievement
+**Downloads now working with segmented zip fallback!** Twintail repository is dead, official API Sophon manifests are broken, but segmented zips work.
+
+#### Root Cause Analysis
+
+**1. Twintail Repository Gone**
+```
+curl https://raw.githubusercontent.com/TwintailTeam/twintail-manifests/...
+→ 404: Not Found
+```
+
+**2. Official API Sophon Manifests Broken**
+```json
+{
+  "latest": {
+    "decompressed_path": "https://autopatchhk.yuanshen.com/.../ScatteredFiles"
+  }
+}
+```
+```
+curl https://autopatchhk.yuanshen.com/.../ScatteredFiles/manifest
+→ HTTP/2 404
+```
+
+**3. Segments Array Works!**
+```json
+{
+  "segments": [
+    {"path": "https://.../GenshinImpact_4.7.0.zip.001", ...},
+    {"path": "https://.../GenshinImpact_4.7.0.zip.002", ...},
+    ...
+  ]
+}
+```
+```
+curl https://.../GenshinImpact_4.7.0.zip.001
+→ HTTP/2 200
+```
+
+#### The Fix
+
+**Problem:** API returns `decompressed_path` → code chooses 'sophon' mode → manifest 404s → download fails
+
+**Solution:** Validate manifest URL before Sophon, fall back to segments/zip
+
+**1. Added URL Validation** (`src/main/services/download/index.ts`)
+```typescript
+async function isUrlAccessible(url: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const req = https.request(url, { method: 'HEAD', timeout: 10000 }, (response) => {
+      resolve(response.statusCode === 200)
+    })
+    req.on('error', () => resolve(false))
+    req.on('timeout', () => { req.destroy(); resolve(false) })
+    req.end()
+  })
+}
+```
+
+**2. Sophon → Segments → Zip Fallback**
+```typescript
+if (versionInfo.downloadMode === 'sophon') {
+  const manifestAccessible = await isUrlAccessible(url)
+  if (manifestAccessible) {
+    // Use Sophon
+  } else {
+    console.log('[download] Sophon manifest not accessible (404), falling back to zip mode')
+    // Fall through to zip mode
+  }
+}
+
+// Zip mode - check segments first
+if (versionInfo.segments && versionInfo.segments.length > 0) {
+  // Download all segments, merge, extract
+} else if (versionInfo.zipUrl) {
+  // Single zip download
+}
+```
+
+**3. Segmented Zip Support**
+```typescript
+// Download each segment (.001, .002, ...)
+for (let i = 0; i < versionInfo.segments.length; i++) {
+  const segmentPath = path.join(destDir, `game.zip.${String(i + 1).padStart(3, '0')}`)
+  await downloadFile(segment.url, segmentPath, ...)
+}
+
+// Concatenate into single zip
+const mergedZipPath = path.join(destDir, 'game.zip')
+const writeStream = fs.createWriteStream(mergedZipPath)
+for (let i = 0; i < versionInfo.segments.length; i++) {
+  const segmentData = fs.readFileSync(segmentPath)
+  writeStream.write(segmentData)
+}
+writeStream.end()
+
+// Extract merged zip
+await extractZip(mergedZipPath, destDir, ...)
+```
+
+#### Files Modified
+
+**Created:**
+- `src/main/services/download/twintail-api.ts` - Twintail API client (currently non-functional as repo is gone)
+
+**Modified:**
+- `src/main/services/download/hoyo-api.ts` - Added `sophonChunkBaseUrl`, improved error logging
+- `src/shared/types/download.ts` - Added `sophonChunkBaseUrl` to `HoyoVersionInfo`
+- `src/shared/types/ipc.ts` - Added `download:check-updates` channel
+- `src/main/services/download/index.ts` - Added URL validation, Sophon→zip fallback, segmented zip support
+- `src/main/ipc/download.handler.ts` - Added update check handler
+- `src/main/services/download/sophon/downloader.ts` - Accept explicit `chunkBaseUrl` option
+- `src/renderer/src/components/GameInstallModal.tsx` - Passes `useTwintail: true`
+
+#### Download Flow Now
+
+```
+1. Try Sophon mode (if API indicates it)
+   ├─ Check if manifest URL returns HTTP 200
+   ├─ If accessible → proceed with Sophon download
+   └─ If 404 → fall back to zip mode
+
+2. Zip mode (primary or fallback)
+   ├─ Check for segments array (split zip files)
+   │   ├─ Download all segments sequentially
+   │   ├─ Concatenate into single zip
+   │   └─ Extract
+   └─ If no segments, use single zip URL
+```
+
+#### Technical Notes
+
+**Segmented zips** are multiple parts of the same file:
+- `game.zip.001`, `game.zip.002`, `game.zip.003`, etc.
+- Standard `unzip` can handle concatenated multi-part zips
+- Download size: ~60GB for Genshin 4.7.0 (6 segments × ~10GB each)
+
+**Why Sophon fails:**
+- Old game versions are removed from CDN
+- The API still points to old `ScatteredFiles` URLs
+- These return 404, but the segments remain available
+
+---
+
 ### 2026-03-01 (Session 13) - Cover Image Display Fixed! ✅
 
 #### Achievement
