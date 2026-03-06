@@ -1,6 +1,8 @@
 // IPC handlers for game downloads
 
 import { ipcMain, BrowserWindow } from 'electron'
+import * as os from 'os'
+import * as path from 'path'
 import {
   getGameVersionInfo,
   startGameDownload,
@@ -33,10 +35,15 @@ export const registerDownloadHandlers = () => {
       console.log(`[download] Starting download for ${gameId} (${biz})`)
       const win = BrowserWindow.fromWebContents(event.sender)
 
+      // Expand ~ to actual home directory
+      const resolvedDestDir = destDir.startsWith('~')
+        ? path.join(os.homedir(), destDir.slice(1))
+        : destDir
+
       const result = await startGameDownload({
         gameId,
         biz,
-        destDir,
+        destDir: resolvedDestDir,
         manifestUrl,
         useTwintail,
         preferVersion,

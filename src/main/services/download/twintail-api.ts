@@ -8,9 +8,9 @@ import { USER_AGENT } from './utils'
 
 // Twintail manifest URLs from GitHub
 const TWINTAIL_MANIFEST_URLS: Record<HoyoGameBiz, string> = {
-  genshin: 'https://raw.githubusercontent.com/TwintailTeam/twintail-manifests/main/main/game-manifests/hk4e_global.json',
-  starrail: 'https://raw.githubusercontent.com/TwintailTeam/twintail-manifests/main/main/game-manifests/hkrpg_global.json',
-  zzz: 'https://raw.githubusercontent.com/TwintailTeam/twintail-manifests/main/main/game-manifests/nap_global.json',
+  genshin: 'https://raw.githubusercontent.com/TwintailTeam/game-manifests/main/hk4e_global.json',
+  starrail: 'https://raw.githubusercontent.com/TwintailTeam/game-manifests/main/hkrpg_global.json',
+  zzz: 'https://raw.githubusercontent.com/TwintailTeam/game-manifests/main/nap_global.json',
 }
 
 // Configuration
@@ -19,16 +19,22 @@ const REQUEST_TIMEOUT_MS = 15000 // 15 seconds
 // Twintail manifest response structure
 interface TwintailGameVersion {
   metadata: {
+    versioned_name: string
     version: string
     download_mode: string
-    res_list_url: string
-    game_biz: string
+    game_hash: string
+    index_file: string    // Sophon manifest URL (zstd-compressed protobuf)
+    res_list_url: string  // Chunk base URL
+    game_biz?: string
   }
   game: {
     full: Array<{
-      file_url: string // Sophon manifest URL
-      file_path: string // Chunk base URL
+      file_url: string          // Direct zip/7z download URL
+      compressed_size: string
+      decompressed_size: string
       file_hash: string
+      file_path?: string
+      region_code?: string
     }>
     diffs?: Array<{
       version: string
@@ -194,24 +200,18 @@ export function twintailToHoyoVersionInfo(
   // Determine download mode from metadata
   const downloadMode = metadata.download_mode === 'DOWNLOAD_MODE_CHUNK' ? 'sophon' : 'zip'
 
-  // Validate URLs for Sophon mode
+  // Validate Sophon URLs — file_url = manifest, file_path = chunk base
   if (downloadMode === 'sophon') {
     try {
       new URL(fullPackage.file_url)
     } catch {
-      console.error(`[twintail] Invalid manifest URL: ${fullPackage.file_url}`)
+      console.error(`[twintail] Invalid Sophon manifest URL (file_url): ${fullPackage.file_url}`)
       return null
     }
-
-    if (!fullPackage.file_path) {
-      console.error('[twintail] Missing file_path (chunk base URL) for Sophon mode')
-      return null
-    }
-
     try {
-      new URL(fullPackage.file_path)
+      new URL(fullPackage.file_path ?? '')
     } catch {
-      console.error(`[twintail] Invalid chunk base URL: ${fullPackage.file_path}`)
+      console.error(`[twintail] Invalid chunk base URL (file_path): ${fullPackage.file_path}`)
       return null
     }
   }
@@ -220,7 +220,8 @@ export function twintailToHoyoVersionInfo(
     version: metadata.version,
     downloadMode,
     sophonManifestUrl: fullPackage.file_url,
-    sophonChunkBaseUrl: fullPackage.file_path, // Chunk base URL from Twintail
+    sophonChunkBaseUrl: fullPackage.file_path ?? metadata.res_list_url,
+    zipUrl: downloadMode === 'zip' ? fullPackage.file_url : undefined,
     voicePacks: [],
     diffs: [],
   }

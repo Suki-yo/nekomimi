@@ -41,7 +41,7 @@ export function GameInstallModal({
       setProgress(null)
       hasStartedRef.current = false
       // Default install directory placeholder - user can browse to change
-      setInstallDir(`~/Games/${gameName.replace(/\s+/g, '')}`)
+      setInstallDir(`~/Games/${gameName}`)
     }
   }, [open, gameName])
 

@@ -3,14 +3,17 @@
 
 import * as https from 'https'
 import type { ClientRequest } from 'http'
-import type { HoyoGameBiz, HoyoVersionInfo, DownloadMode, VoicePack, DiffPatch } from '../../../shared/types/download'
+import type { HoyoGameBiz, HoyoVersionInfo, DiffPatch } from '../../../shared/types/download'
 import { fetchTwintailManifest, twintailToHoyoVersionInfo } from './twintail-api'
 
-// Official HoYoverse launcher API endpoints
-const HOYO_API_ENDPOINTS: Record<HoyoGameBiz, string> = {
-  genshin: 'https://sdk-os-static.mihoyo.com/hk4e_global/mdk/launcher/api/resource?key=gcStgarh&launcher_id=10&channel_id=1',
-  starrail: 'https://api-os-takumi.hoyoverse.com/common/hkrpg_global/launcher/api/resource?key=6KcVuS3DLdY4Q23j&launcher_id=33&sub_channel_id=1',
-  zzz: 'https://sdk-os-static.hoyoverse.com/nap_global/mdk/launcher/api/resource?key=9LbQej2KuoV34QXD&launcher_id=36&channel_id=1',
+// HoYoPlay (HYP) unified launcher API
+const HYP_API_BASE = 'https://sg-hyp-api.hoyoverse.com/hyp/hyp-connect/api/getGamePackages'
+const HYP_LAUNCHER_ID = 'VYTpXlbWo8'
+
+const HYP_GAME_IDS: Record<HoyoGameBiz, string> = {
+  genshin: 'gopR6Cufr3',
+  starrail: '4ziysqXOQ8',
+  zzz: 'U5hbdsT9W7',
 }
 
 // Configuration
@@ -24,33 +27,45 @@ export interface FetchGameResourceOptions {
   preferVersion?: string // Specific version from Twintail
 }
 
-// Raw API response structure
-interface HoyoAPIResponse {
+// HYP API response structure
+interface HypGamePkg {
+  url: string
+  md5: string
+  size: string
+  decompressed_size: string
+}
+
+interface HypAudioPkg {
+  language: string
+  url: string
+  md5: string
+  size: string
+  decompressed_size: string
+}
+
+interface HypAPIResponse {
   retcode: number
   message: string
   data: {
-    game: {
-      latest: {
-        version: string
-        path: string
-        size: string
-        md5: string
-        segments?: Array<{
-          path: string
-          md5: string
-          package_size: string
-        }>
-        decompressed_path: string
-        voice_packs: VoicePack[]
+    game_packages: Array<{
+      game: {
+        id: string
+        biz: string
       }
-      diffs: Array<{
-        version: string
-        path: string
-        size: string
-        md5: string
-        voice_packs: VoicePack[]
-      }>
-    }
+      main: {
+        major: {
+          version: string
+          game_pkgs: HypGamePkg[]
+          audio_pkgs: HypAudioPkg[]
+          res_list_url?: string
+        }
+        patches: Array<{
+          version: string
+          game_pkgs: HypGamePkg[]
+          audio_pkgs: HypAudioPkg[]
+        }>
+      }
+    }>
   }
 }
 
@@ -217,132 +232,58 @@ function fetchJSON<T>(url: string): Promise<T> {
   })
 }
 
-// Determine download mode from resource info
-function getDownloadMode(latest: HoyoAPIResponse['data']['game']['latest']): DownloadMode {
-  // If decompressed_path exists and is non-empty, use sophon mode (chunk-based download)
-  // decompressed_path is the Sophon manifest URL used for chunk-based downloads
-  const decompressedPath = latest.decompressed_path
-  if (decompressedPath && decompressedPath.length > 0) {
-    return 'sophon'
-  }
-  return 'zip'
-}
-
-// Parse size string to bytes (e.g., "102400" or "100 MB")
-function parseSizeToBytes(sizeStr: string): number {
-  const num = parseInt(sizeStr, 10)
-  if (isNaN(num)) return 0
-  // API returns size in some unit, typically bytes or needs conversion
-  // For now, assume it's bytes
-  return num
-}
-
-// Fetch game version info from official API (fallback)
+// Fetch game version info from HYP API (fallback when Twintail unavailable)
 async function fetchGameResourceFromOfficialAPI(biz: HoyoGameBiz): Promise<HoyoVersionInfo | null> {
-  const url = HOYO_API_ENDPOINTS[biz]
-  if (!url) {
-    console.error(`[hoyo-api] Unknown game biz: ${biz}`)
-    return null
-  }
+  const gameId = HYP_GAME_IDS[biz]
+  const url = `${HYP_API_BASE}?launcher_id=${HYP_LAUNCHER_ID}&game_ids[]=${gameId}`
 
   try {
-    console.log(`[hoyo-api] Fetching ${biz} resource info...`)
-    const response = await fetchJSONWithRetry<HoyoAPIResponse>(url)
+    console.log(`[hoyo-api] Fetching ${biz} from HYP API...`)
+    const response = await fetchJSONWithRetry<HypAPIResponse>(url)
 
     if (response.retcode !== 0) {
-      console.error(`[hoyo-api] API error for ${biz}: retcode=${response.retcode}, message="${response.message}"`)
-
-      // Provide more helpful error messages based on common retcodes
-      let errorMessage = response.message
-      if (response.retcode === -10101) {
-        errorMessage = 'API key may be invalid or expired'
-      } else if (response.retcode === -10001 || response.retcode === -10002) {
-        errorMessage = 'Server is busy, please try again later'
-      }
-
-      console.error(`[hoyo-api] ${biz}: ${errorMessage}`)
+      console.error(`[hoyo-api] HYP API error for ${biz}: retcode=${response.retcode}, message="${response.message}"`)
       return null
     }
 
-    // Validate response structure
-    if (!response.data?.game?.latest) {
-      console.error(`[hoyo-api] Invalid response structure for ${biz}: missing data.game.latest`)
+    const pkg = response.data?.game_packages?.find((p) => p.game.id === gameId)
+    if (!pkg) {
+      console.error(`[hoyo-api] No package found for game_id=${gameId} (${biz})`)
       return null
     }
 
-    const latest = response.data.game.latest
-    const downloadMode = getDownloadMode(latest)
-
-    // Log what we got from API for debugging
-    console.log(`[hoyo-api] ${biz} - path: "${latest.path}", decompressed_path: "${latest.decompressed_path}"`)
-
-    // Validate download URLs exist
-    if (!latest.path && !latest.decompressed_path) {
-      console.error(`[hoyo-api] No download URLs in API response for ${biz}`)
-      console.error(`[hoyo-api] path: "${latest.path}", decompressed_path: "${latest.decompressed_path}"`)
+    const major = pkg.main.major
+    if (!major.game_pkgs || major.game_pkgs.length === 0) {
+      console.error(`[hoyo-api] No game packages in HYP response for ${biz}`)
       return null
     }
 
-    const info: HoyoVersionInfo = {
-      version: latest.version,
-      downloadMode,
-      zipUrl: latest.path,
-      zipMd5: latest.md5,
-      zipSize: parseSizeToBytes(latest.size),
-      voicePacks: latest.voice_packs || [],
-      diffs: [], // Will be set below
-    }
-
-    // Handle segmented downloads (large files split into parts)
-    if (latest.segments && latest.segments.length > 0) {
-      info.segments = latest.segments.map((seg) => ({
-        url: seg.path,
-        md5: seg.md5,
-        size: parseSizeToBytes(seg.package_size),
-      }))
-    }
-
-    // Sophon manifest URL (for chunk-based downloads)
-    // The decompressed_path is a directory, we need to append the manifest filename
-    if (downloadMode === 'sophon' && latest.decompressed_path) {
-      // decompressed_path ends with directory like "ScatteredFiles"
-      // Append manifest filename to get the full URL
-      const baseUrl = latest.decompressed_path
-      // Ensure trailing slash
-      const manifestUrl = baseUrl.endsWith('/') ? `${baseUrl}manifest` : `${baseUrl}/manifest`
-      info.sophonManifestUrl = manifestUrl
-      // For official API, chunk base URL is the same as manifest directory
-      info.sophonChunkBaseUrl = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl
-      console.log(`[hoyo-api] ${biz} - Sophon manifest URL: ${info.sophonManifestUrl}`)
-      console.log(`[hoyo-api] ${biz} - Chunk base URL: ${info.sophonChunkBaseUrl}`)
-    }
-
-    // Convert API snake_case to camelCase for diffs
-    info.diffs = response.data.game.diffs.map((diff) => ({
-      version: diff.version,
-      path: diff.path,
-      md5: diff.md5,
-      size: diff.size,
-      voicePacks: diff.voice_packs || [],
+    const diffs: DiffPatch[] = pkg.main.patches.map((patch) => ({
+      version: patch.version,
+      path: patch.game_pkgs[0]?.url ?? '',
+      md5: patch.game_pkgs[0]?.md5 ?? '',
+      size: patch.game_pkgs[0]?.size ?? '0',
+      voicePacks: [],
     }))
 
-    console.log(`[hoyo-api] ${biz} version: ${info.version}, mode: ${info.downloadMode}`)
-
-    // Warn if zip mode but no zip URL (shouldn't happen but log for debugging)
-    if (downloadMode === 'zip' && !latest.path) {
-      console.warn(`[hoyo-api] ${biz} - zip mode detected but no zip URL available`)
+    const info: HoyoVersionInfo = {
+      version: major.version,
+      downloadMode: 'zip',
+      segments: major.game_pkgs.map((pkg) => ({
+        url: pkg.url,
+        md5: pkg.md5,
+        size: parseInt(pkg.size, 10) || 0,
+      })),
+      voicePacks: [],
+      diffs,
     }
 
+    console.log(`[hoyo-api] ${biz} version: ${info.version}, segments: ${info.segments?.length}`)
     return info
   } catch (err) {
     if (err instanceof HoyoApiError) {
       console.error(`[hoyo-api] Failed to fetch ${biz}: ${err.message}`)
-      if (err.statusCode) {
-        console.error(`[hoyo-api] HTTP Status: ${err.statusCode}`)
-      }
-      if (err.responseBody) {
-        console.error(`[hoyo-api] Response preview: ${err.responseBody.substring(0, 200)}`)
-      }
+      if (err.statusCode) console.error(`[hoyo-api] HTTP Status: ${err.statusCode}`)
     } else {
       console.error(`[hoyo-api] Failed to fetch ${biz} resource:`, err)
     }

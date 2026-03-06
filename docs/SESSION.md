@@ -4,6 +4,110 @@
 
 ---
 
+### 2026-03-05 (Session 15) - HSR & ZZZ Version Info Fixed ✅
+
+#### Achievement
+**All three games (Genshin, HSR, ZZZ) now correctly fetch version info via Twintail manifests with proper Sophon URLs.**
+
+#### Root Cause Analysis
+
+**1. Wrong Twintail Repository Name**
+```
+# Code had:
+TwintailTeam/twintail-manifests  ← doesn't exist → 404
+
+# Actual repo:
+TwintailTeam/game-manifests
+```
+All three games were 404-ing on Twintail. Genshin only "worked" because the old MDK fallback API still responded for it (HSR/ZZZ MDK endpoints were stale/deprecated).
+
+**2. Wrong Field Mapping (introduced and reverted this session)**
+Mistakenly tried `metadata.index_file` as the Sophon manifest URL — but that field is always empty. Reverted to correct mapping:
+```
+game.full[0].file_url  → sophonManifestUrl  (Sophon manifest protobuf)
+game.full[0].file_path → sophonChunkBaseUrl (chunk CDN base URL)
+```
+
+**3. Old MDK API Fallback Was Stale**
+The three per-game MDK endpoints in `hoyo-api.ts` no longer return current data for HSR/ZZZ — HoYoverse migrated to HYP.
+
+#### The Fix
+
+**1. Fixed Twintail URLs** (`twintail-api.ts`)
+```typescript
+// Before (404):
+'TwintailTeam/twintail-manifests/main/main/game-manifests/hk4e_global.json'
+
+// After (works):
+'TwintailTeam/game-manifests/main/hk4e_global.json'
+```
+
+**2. Updated Twintail Interface to Match Real Schema**
+```typescript
+metadata: {
+  versioned_name: string  // added
+  version: string
+  download_mode: string   // "DOWNLOAD_MODE_CHUNK" | "DOWNLOAD_MODE_FILE"
+  game_hash: string       // added
+  index_file: string      // always empty in practice — not used
+  res_list_url: string    // fallback chunk base URL
+}
+game.full[]: {
+  file_url: string        // Sophon manifest URL ← use this
+  file_path?: string      // Chunk base CDN URL ← use this
+  compressed_size: string
+  decompressed_size: string
+  file_hash: string
+}
+```
+
+**3. Replaced Old MDK API with HYP API** (`hoyo-api.ts`)
+```typescript
+// Before — stale per-game MDK endpoints (dead for HSR/ZZZ)
+// After — unified HoYoPlay API:
+const HYP_API_BASE = 'https://sg-hyp-api.hoyoverse.com/hyp/hyp-connect/api/getGamePackages'
+const HYP_LAUNCHER_ID = 'VYTpXlbWo8'
+const HYP_GAME_IDS = {
+  genshin:  'gopR6Cufr3',
+  starrail: '4ziysqXOQ8',
+  zzz:      'U5hbdsT9W7',
+}
+```
+HYP returns `data.game_packages[].main.major.game_pkgs[]` (segmented zip/7z). Mapped to `HoyoVersionInfo.segments`.
+
+#### Verified Current Versions (from local Twintail install)
+
+| Game | Version | Download Mode | CDN |
+|------|---------|---------------|-----|
+| Genshin Impact | **6.4.0** | DOWNLOAD_MODE_CHUNK | autopatchhk.yuanshen.com |
+| Honkai: Star Rail | **4.0.0** | DOWNLOAD_MODE_CHUNK | autopatchos.starrails.com |
+| Zenless Zone Zero | **2.6.0** | DOWNLOAD_MODE_CHUNK | autopatchos.zenlesszonezero.com |
+
+ZZZ has 111 entries in `game.full[]` — all identical, `full[0]` is safe to use.
+
+#### Important Finding: HYP Launcher ID is Stale
+`launcher_id=VYTpXlbWo8` returns outdated versions (e.g. Genshin 5.5.0 instead of 6.4.0). Correct ID would need extracting from the HoYoPlay binary. Since Twintail is primary and returns correct versions, HYP fallback is last-resort only.
+
+#### Download Flow
+
+```
+1. Twintail (primary — Sophon, Linux-native)
+   ├─ game.full[0].file_url  → Sophon manifest URL
+   ├─ game.full[0].file_path → Chunk base CDN URL
+   └─ metadata.download_mode → "DOWNLOAD_MODE_CHUNK" = sophon
+
+2. HYP API (fallback — segmented zip/7z)
+   ├─ main.major.game_pkgs[] → segments[]
+   └─ Always 'zip' mode (no Sophon from official API)
+```
+
+#### Files Modified
+
+- `src/main/services/download/twintail-api.ts` — Fixed repo URL, updated interface schema
+- `src/main/services/download/hoyo-api.ts` — Replaced MDK endpoints with HYP API + new parser
+
+---
+
 ### 2026-03-04 (Session 14) - Game Download Fixed! ✅
 
 #### Achievement
