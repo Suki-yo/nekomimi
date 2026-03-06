@@ -328,8 +328,17 @@ function Library() {
     setInstallModalOpen(true)
   }
 
+  const BIZ_SLUG_HINTS: Record<string, string[]> = {
+    genshin: ['genshin'],
+    starrail: ['star-rail', 'starrail', 'star rail'],
+    zzz: ['zenless'],
+  }
+
   const checkGameInstalled = (biz: string) => {
-    return games.some(g => g.slug.toLowerCase().includes(biz) || g.name.toLowerCase().includes(biz.replace('starrail', 'star rail')))
+    const hints = BIZ_SLUG_HINTS[biz] ?? [biz]
+    return games.some(g =>
+      hints.some(h => g.slug.toLowerCase().includes(h) || g.name.toLowerCase().includes(h))
+    )
   }
 
   if (loading) {
@@ -374,6 +383,7 @@ function Library() {
         gameBiz={selectedHoyoGame?.biz || 'genshin'}
         latestVersion={hoyoVersionInfo[selectedHoyoGame?.biz || '']?.version || 'Unknown'}
         downloadSize={selectedHoyoGame?.estimatedSize}
+        onGameAdded={loadGames}
       />
 
       <GameConfigModal

@@ -57,6 +57,9 @@ function buildLaunchCommand(game: Game, useXXMI: boolean): { command: string; ar
   if (game.runner.type === 'proton') {
     command = 'umu-run'
     env.PROTONPATH = game.runner.path
+    env.GAMEID = game.launch.env?.GAMEID || '0'
+    // umu-run uses STEAM_COMPAT_DATA_PATH (parent of pfx), not WINEPREFIX directly
+    env.STEAM_COMPAT_DATA_PATH = game.runner.prefix.replace(/\/pfx\/?$/, '')
     args = [game.executable]
   } else if (game.runner.type === 'wine') {
     command = 'wine'
@@ -159,6 +162,7 @@ export async function launchGame(gameId: string): Promise<{ success: boolean; pi
 
   const proc = spawn(command, args, {
     env: { ...process.env, ...env },
+    cwd: game.directory,
     detached: true,
     stdio: 'ignore',
   })

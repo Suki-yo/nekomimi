@@ -17,6 +17,13 @@ const GAME_TO_XXMI_IMPORTER: Record<string, string> = {
   'client-win64-shipping.exe': 'WWMI',
 }
 
+// HoYo games need umu-run (for UMU_USE_STEAM=1 anti-cheat fix)
+const GAME_TO_UMU_GAMEID: Record<string, string> = {
+  'genshinimpact.exe': 'umu-genshin',
+  'zenlesszonezero.exe': 'umu-zenlesszonezero',
+  'starrail.exe': '0',
+}
+
 export function shouldUseXXMI(executablePath: string): boolean {
   const exeName = path.basename(executablePath).toLowerCase()
   return !!GAME_TO_XXMI_IMPORTER[exeName]
@@ -368,7 +375,7 @@ function ensureLinuxCompatibility(importer: string): void {
 export async function launchGameWithXXMI(
   executablePath: string,
   _gameDirectory: string,
-  _runnerPath: string,
+  runnerPath: string,
   winePrefix: string
 ): Promise<{ success: boolean; error?: string }> {
   const importer = getXXMIImporter(executablePath)
@@ -387,22 +394,24 @@ export async function launchGameWithXXMI(
     }
   }
 
-  const runner = findInstalledRunner()
-  if (!runner) {
-    return {
-      success: false,
-      error: 'No Proton runner found. Please install a runner first.',
+  const exeName = path.basename(executablePath).toLowerCase()
+  const gameId = GAME_TO_UMU_GAMEID[exeName]
+  const useUmu = !!gameId
+
+  // For non-HoYo games (e.g. Endfield), still need the bundled wine runner
+  if (!useUmu) {
+    const runner = findInstalledRunner()
+    if (!runner) {
+      return { success: false, error: 'No Proton runner found. Please install a runner first.' }
     }
   }
 
   const gameFolder = path.dirname(executablePath)
-
   configureImporterGameFolder(importer, gameFolder)
   ensureLinuxCompatibility(importer)
 
   console.log(`[xxmi] Using XXMI Launcher inject mode for ${importer}`)
 
-  // Kill any existing zombie processes
   try {
     execSync('pkill -9 -f "Endfield" 2>/dev/null || true')
     execSync('pkill -9 -f "umu-run" 2>/dev/null || true')
@@ -413,25 +422,45 @@ export async function launchGameWithXXMI(
   return new Promise((resolve) => {
     const { launcherExe } = getXXMIPaths()
 
-    console.log(`[xxmi] Launching ${path.basename(executablePath)} with ${importer}`)
+    console.log(`[xxmi] Launching ${path.basename(executablePath)} with ${importer} (umu=${useUmu})`)
 
-    const env = {
-      ...process.env,
-      WINEPREFIX: winePrefix,
-      WINEARCH: 'win64',
-      DISABLE_WAYLAND: '1',
-      GDK_BACKEND: 'x11',
-      QT_QPA_PLATFORM: 'xcb',
-      DXVK_STATE_CACHE_PATH: winePrefix,
-      WINEDLLOVERRIDES: 'd3d11=n,b;dxgi=n,b',
+    let proc
+    if (useUmu) {
+      // HoYo games: use umu-run so ProtonFixes applies UMU_USE_STEAM=1 for anti-cheat
+      const env = {
+        ...process.env,
+        GAMEID: gameId,
+        PROTONPATH: runnerPath,
+        WINEPREFIX: winePrefix,
+        STEAM_COMPAT_DATA_PATH: winePrefix.replace(/\/pfx\/?$/, ''),
+        WINEDLLOVERRIDES: 'd3d11=n,b;dxgi=n,b',
+      }
+      proc = spawn('umu-run', [launcherExe, '--nogui', '--xxmi', importer], {
+        env,
+        detached: true,
+        stdio: 'ignore',
+        cwd: path.dirname(launcherExe),
+      })
+    } else {
+      // Non-HoYo games: use wine directly (Endfield etc.)
+      const runner = findInstalledRunner()!
+      const env = {
+        ...process.env,
+        WINEPREFIX: winePrefix,
+        WINEARCH: 'win64',
+        DISABLE_WAYLAND: '1',
+        GDK_BACKEND: 'x11',
+        QT_QPA_PLATFORM: 'xcb',
+        DXVK_STATE_CACHE_PATH: winePrefix,
+        WINEDLLOVERRIDES: 'd3d11=n,b;dxgi=n,b',
+      }
+      proc = spawn(runner.wine, [launcherExe, '--nogui', '--xxmi', importer], {
+        env,
+        detached: true,
+        stdio: 'ignore',
+        cwd: path.dirname(launcherExe),
+      })
     }
-
-    const proc = spawn(runner.wine, [launcherExe, '--nogui', '--xxmi', importer], {
-      env,
-      detached: true,
-      stdio: 'ignore',
-      cwd: path.dirname(launcherExe),
-    })
 
     proc.on('error', (err) => {
       console.error(`[xxmi] Failed to start:`, err)
