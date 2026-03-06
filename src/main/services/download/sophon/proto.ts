@@ -28,7 +28,8 @@ message FileChunk {
   int64 chunk_on_file_offset = 3;
   int64 chunk_size = 4;
   int64 chunk_decompressed_size = 5;
-  string chunk_md5 = 6;
+  int64 something = 6;
+  string chunk_md5 = 7;
 }
 `
 
@@ -38,7 +39,7 @@ let _root: protobuf.Root | null = null
 // Get or create protobuf root
 function getRoot(): protobuf.Root {
   if (!_root) {
-    _root = protobuf.parse(SOPHON_PROTO, { keepCase: true }).root
+    _root = protobuf.parse(SOPHON_PROTO).root
   }
   return _root
 }
@@ -78,5 +79,6 @@ export interface SophonFileChunkProto {
   chunkOnFileOffset: number
   chunkSize: number
   chunkDecompressedSize: number
+  something: number
   chunkMd5: string
 }

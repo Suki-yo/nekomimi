@@ -4,7 +4,7 @@
 import * as crypto from 'crypto'
 import * as fs from 'fs'
 import * as path from 'path'
-import { ZstdCodec } from 'zstd-codec'
+import { spawn } from 'child_process'
 
 // Configurable user agent
 export const USER_AGENT = 'NekomimiLauncher/0.1.0'
@@ -20,18 +20,25 @@ export async function streamingMd5(filePath: string): Promise<string> {
   })
 }
 
-// Shared zstd decompression - single implementation used across modules
+// Shared zstd decompression - uses system zstd binary to avoid WASM memory limits
 export async function decompressZstd(compressed: Buffer): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    ZstdCodec.run((zstd) => {
-      try {
-        const simple = new zstd.Simple()
-        const decompressed = simple.decompress(compressed)
-        resolve(Buffer.from(decompressed))
-      } catch (err) {
-        reject(err)
+    const proc = spawn('zstd', ['-d', '--stdout'], { stdio: ['pipe', 'pipe', 'pipe'] })
+    const chunks: Buffer[] = []
+
+    proc.stdout.on('data', (chunk: Buffer) => chunks.push(chunk))
+    proc.stderr.on('data', (data: Buffer) => console.error('[zstd]', data.toString().trim()))
+    proc.on('error', (err) => reject(new Error(`zstd not found: ${err.message}`)))
+    proc.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(`zstd exited with code ${code}`))
+      } else {
+        resolve(Buffer.concat(chunks))
       }
     })
+
+    proc.stdin.write(compressed)
+    proc.stdin.end()
   })
 }
 

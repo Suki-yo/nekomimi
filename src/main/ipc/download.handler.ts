@@ -48,7 +48,11 @@ export const registerDownloadHandlers = () => {
         useTwintail,
         preferVersion,
         onProgress: (progress: DownloadProgress) => {
-          win?.webContents.send('download:progress', progress)
+          try {
+            if (!win?.isDestroyed()) {
+              win?.webContents.send('download:progress', progress)
+            }
+          } catch { /* window closed during download */ }
         },
       })
 
