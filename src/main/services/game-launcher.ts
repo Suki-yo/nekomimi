@@ -4,7 +4,7 @@ import { join } from 'path'
 import { getGame, updateGame } from './database'
 import { loadGameConfig, saveGameConfig } from './config'
 import { shouldUseXXMI, launchGameWithXXMI } from './mod-manager'
-import { findSteamrt } from './steamrt'
+import { findSteamrt, downloadSteamrt } from './steamrt'
 import type { Game } from '../../shared/types/game'
 
 function shellSplit(input: string): string[] {
@@ -133,7 +133,10 @@ function buildLaunchCommand(game: Game, useXXMI: boolean): { command: string; ar
   return { command, args, env }
 }
 
-export async function launchGame(gameId: string): Promise<{ success: boolean; pid?: number; error?: string }> {
+export async function launchGame(
+  gameId: string,
+  onProgress?: (step: string, percent: number) => void
+): Promise<{ success: boolean; pid?: number; error?: string }> {
   startPolling()
   cleanupStaleEntries()
 
@@ -205,6 +208,16 @@ export async function launchGame(gameId: string): Promise<{ success: boolean; pi
     })
 
     return { success: true }
+  }
+
+  // Auto-install Steam Runtime if needed for proton games
+  if (game.runner.type === 'proton' && !findSteamrt()) {
+    console.log('[launch] Steam Runtime not found, downloading...')
+    onProgress?.('Installing Steam Runtime', 0)
+    const result = await downloadSteamrt((percent) => onProgress?.('Installing Steam Runtime', percent))
+    if (!result.success) {
+      return { success: false, error: `Failed to install Steam Runtime: ${result.error}` }
+    }
   }
 
   const { command, args, env } = buildLaunchCommand(game, false)

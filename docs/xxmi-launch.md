@@ -1,24 +1,55 @@
 # XXMI Launch Notes
 
-## Importer Auto-Install (TODO)
+## Importer Auto-Install — SOLVED
 
-Currently, if an importer (e.g. GIMI for Genshin) is not installed, XXMI shows an
-error dialog and fails. The fix should live in `launchGameWithXXMI` in
-`src/main/services/mod-manager.ts`, mirroring the existing XXMI auto-download logic:
+When an importer (e.g. ZZMI) is not installed, XXMI shows a blocking damage/restore dialog
+even with `--nogui --xxmi ZZMI`. The fix is to pre-download and extract the importer package
+files before launching XXMI, so `d3dx.ini` is already on disk and the damage check passes silently.
 
-```typescript
-// Around line 388 — after XXMI itself is checked:
-if (!isImporterInstalled(importer)) {
-  // Run XXMI in GUI mode once to trigger auto-download of the importer
-  // OR: download the importer package directly from GitHub
+**Implementation in `mod-manager.ts` — `downloadImporter(importer, onProgress)`:**
+
+Two GitHub packages are needed per importer:
+
+1. **`{IMPORTER}-Package`** — provides `d3dx.ini`, `Core/`, `Mods/`, `ShaderFixes/`
+2. **`XXMI-Libs-Package`** (SpectrumQT) — provides `d3d11.dll`, `d3dcompiler_47.dll`
+
+**Correct GitHub repos** (not all under SpectrumQT):
+| Importer | Repo |
+|----------|------|
+| GIMI | `SilentNightSound/GIMI-Package` |
+| SRMI | `SpectrumQT/SRMI-Package` |
+| ZZMI | `leotorrez/ZZMI-Package` |
+| EFMI | `SpectrumQT/EFMI-Package` |
+| HIMI | `leotorrez/HIMI-Package` |
+| WWMI | `SpectrumQT/WWMI-Package` |
+
+**Zip structure:** all `{IMPORTER}-Package` zips are **flat** — `d3dx.ini` is at the root with
+no `IMPORTER/` wrapper folder. Extract to `xxmiDir/{IMPORTER}/`, not `xxmiDir/`.
+
+**XXMI-Libs zip structure:** DLLs (`d3d11.dll`, `d3dcompiler_47.dll`) are at the root.
+Extract to `xxmiDir/{IMPORTER}/`. If another importer is already installed, copy DLLs from
+there instead of re-downloading.
+
+**Flow in `launchGameWithXXMI`:**
+1. Download XXMI if not installed
+2. If `!isImporterInstalled(importer)` (checks for `xxmiDir/{IMPORTER}/d3d11.dll`):
+   - Call `downloadImporter(importer)` — Phase 1 (importer package) + Phase 2 (libs)
+3. `configureImporterGameFolder` — sets `game_folder`, `process_start_method: 'Shell'`,
+   `custom_launch_inject_mode`, and seeds `Importers[importer]` stub if section is missing
+4. `ensureLinuxCompatibility` — enforces Shell + Hook/Inject on every launch
+
+**Config stub seeded when importer is freshly installed:**
+```json
+"Importers": {
+  "ZZMI": {
+    "Importer": {
+      "game_folder": "Z:/path/to/game",
+      "process_start_method": "Shell",
+      "custom_launch_inject_mode": "Hook"
+    }
+  }
 }
 ```
-
-`isImporterInstalled(importer)` should check that the importer directory has its
-critical file (e.g. `GIMI/d3dx.ini`, `SRMI/d3dx.ini`).
-
-Workaround: manually run XXMI Launcher in GUI mode (without `--nogui`) with the
-correct env vars — XXMI will auto-download the missing importer on startup.
 
 ---
 
@@ -34,7 +65,6 @@ SRMI (Star Rail / Unreal Engine) works fine with Hook mode — its window is det
 
 **Fix applied in `mod-manager.ts`:**
 ```typescript
-// EFMI and GIMI require Inject mode
 const useHookMode = importer !== 'EFMI' && importer !== 'GIMI'
 const targetMode = useHookMode ? 'Hook' : 'Inject'
 ```
@@ -51,29 +81,3 @@ Star Rail (Unreal Engine) does not have this issue.
 
 Root cause: unknown — likely Unity 2017's X11 window creation is not being surfaced
 by the Wayland compositor correctly.
-
-**Working config** (`dev-data/games/genshinimpact.yml`):
-```yaml
-runner:
-  type: proton
-  path: dev-data/runners/proton-cachyos
-  prefix: /path/to/prefixes/genshin/pfx
-launch:
-  env:
-    STEAM_COMPAT_CONFIG: noxalia
-    WINEDLLOVERRIDES: wintrust=b;dbghelp=n,b
-    STUB_WINTRUST: "1"
-    BLOCK_FIRST_REQ: "1"
-  args: -screen-fullscreen 0
-mods:
-  enabled: true
-  importer: GIMI
-```
-
-**Required:** Genshin game directory must contain a patched `dbghelp.dll` that stubs
-`wine_get_version`, stubs wintrust, and blocks the first network request. The existing
-`dbghelp.dll` shipped with the game install handles this.
-
-Note: Twintail manifest (`hk4e_global.json`) sets `stub_wintrust: false` and
-`block_first_req: false` — those compat_overrides apply at the Twintail layer, not
-the DLL layer. The DLL reads `STUB_WINTRUST`/`BLOCK_FIRST_REQ` env vars directly.

@@ -7,6 +7,16 @@ import type { Mod } from '../../shared/types/game'
 
 const XXMI_RELEASES_API = 'https://api.github.com/repos/SpectrumQT/XXMI-Launcher/releases/latest'
 const PROTON_GE_RELEASES_API = 'https://api.github.com/repos/GloriousEggroll/proton-ge-custom/releases/latest'
+const XXMI_LIBS_RELEASES_API = 'https://api.github.com/repos/SpectrumQT/XXMI-Libs-Package/releases/latest'
+
+const IMPORTER_RELEASES_API: Record<string, string> = {
+  GIMI: 'https://api.github.com/repos/SilentNightSound/GIMI-Package/releases/latest',
+  SRMI: 'https://api.github.com/repos/SpectrumQT/SRMI-Package/releases/latest',
+  ZZMI: 'https://api.github.com/repos/leotorrez/ZZMI-Package/releases/latest',
+  EFMI: 'https://api.github.com/repos/SpectrumQT/EFMI-Package/releases/latest',
+  HIMI: 'https://api.github.com/repos/leotorrez/HIMI-Package/releases/latest',
+  WWMI: 'https://api.github.com/repos/SpectrumQT/WWMI-Package/releases/latest',
+}
 
 const GAME_TO_XXMI_IMPORTER: Record<string, string> = {
   'endfield.exe': 'EFMI',
@@ -98,9 +108,15 @@ async function fetchGitHubRelease(apiUrl: string): Promise<GitHubRelease | null>
         response.on('data', (chunk) => (data += chunk))
         response.on('end', () => {
           try {
-            resolve(JSON.parse(data))
+            const parsed = JSON.parse(data)
+            if (response.statusCode !== 200 || parsed.message) {
+              console.error(`[github] API error (HTTP ${response.statusCode}): ${parsed.message || data.slice(0, 200)}`)
+              resolve(null)
+              return
+            }
+            resolve(parsed)
           } catch {
-            console.error('[github] Failed to parse API response')
+            console.error('[github] Failed to parse API response:', data.slice(0, 200))
             resolve(null)
           }
         })
@@ -301,8 +317,84 @@ export async function downloadRunner(onProgress?: (percent: number) => void): Pr
   return extractResult
 }
 
+function findInstalledImporterLibs(xxmiDir: string, excludeImporter: string): string | null {
+  for (const imp of Object.keys(IMPORTER_RELEASES_API)) {
+    if (imp === excludeImporter) continue
+    const dll = path.join(xxmiDir, imp, 'd3d11.dll')
+    if (fs.existsSync(dll)) return path.join(xxmiDir, imp)
+  }
+  return null
+}
+
+export async function downloadImporter(
+  importer: string,
+  onProgress?: (percent: number) => void
+): Promise<DownloadResult> {
+  const apiUrl = IMPORTER_RELEASES_API[importer]
+  if (!apiUrl) return { success: false, error: `Unknown importer: ${importer}` }
+
+  const { xxmiDir } = getXXMIPaths()
+  if (!fs.existsSync(xxmiDir)) fs.mkdirSync(xxmiDir, { recursive: true })
+
+  // Phase 1: Download importer package (provides d3dx.ini and Core/)
+  // The zip has flat structure (d3dx.ini at root, no IMPORTER/ wrapper), so extract to importerDir
+  const importerRelease = await fetchGitHubRelease(apiUrl)
+  if (!importerRelease) return { success: false, error: 'Failed to fetch importer release' }
+  console.log(`[xxmi] ${importer} release assets:`, importerRelease.assets?.map(a => a.name))
+  const importerAsset = importerRelease.assets?.find(a => a.name.toLowerCase().endsWith('.zip'))
+  if (!importerAsset) return { success: false, error: `No zip asset in importer release (tag: ${importerRelease.tag_name}, assets: ${JSON.stringify(importerRelease.assets?.map(a => a.name))})` }
+
+  console.log(`[xxmi] Downloading ${importer} package ${importerRelease.tag_name}`)
+  const importerZip = path.join(xxmiDir, `${importer}-temp.zip`)
+  const dl1 = await downloadFile(importerAsset.browser_download_url, importerZip,
+    onProgress ? p => onProgress(Math.round(p * 0.7)) : undefined)
+  if (!dl1.success) return dl1
+
+  const importerDir = path.join(xxmiDir, importer)
+  if (!fs.existsSync(importerDir)) fs.mkdirSync(importerDir, { recursive: true })
+  const ex1 = await extractArchive(importerZip, importerDir, 'zip')
+  if (!ex1.success) return ex1
+
+  // Phase 2: Deploy XXMI Libs DLLs (d3d11.dll + d3dcompiler_47.dll)
+  const dllDest = path.join(importerDir, 'd3d11.dll')
+
+  if (!fs.existsSync(dllDest)) {
+    // Try copying from another already-installed importer to avoid re-download
+    const libsSource = findInstalledImporterLibs(xxmiDir, importer)
+    if (libsSource) {
+      console.log(`[xxmi] Copying libs from ${path.basename(libsSource)}`)
+      fs.copyFileSync(path.join(libsSource, 'd3d11.dll'), dllDest)
+      const compilerSrc = path.join(libsSource, 'd3dcompiler_47.dll')
+      if (fs.existsSync(compilerSrc))
+        fs.copyFileSync(compilerSrc, path.join(importerDir, 'd3dcompiler_47.dll'))
+    } else {
+      // Download XXMI-Libs-Package; its zip has DLLs at root → extract to importerDir
+      const libsRelease = await fetchGitHubRelease(XXMI_LIBS_RELEASES_API)
+      if (!libsRelease) return { success: false, error: 'Failed to fetch XXMI libs release' }
+      const libsAsset = libsRelease.assets?.find(a => a.name.toLowerCase().endsWith('.zip'))
+      if (!libsAsset) return { success: false, error: `No zip asset in XXMI libs release (assets: ${JSON.stringify(libsRelease.assets?.map(a => a.name))})` }
+
+      console.log(`[xxmi] Downloading XXMI-Libs ${libsRelease.tag_name}`)
+      const libsZip = path.join(xxmiDir, 'xxmi-libs-temp.zip')
+      const dl2 = await downloadFile(libsAsset.browser_download_url, libsZip,
+        onProgress ? p => onProgress(70 + Math.round(p * 0.3)) : undefined)
+      if (!dl2.success) return dl2
+      const ex2 = await extractArchive(libsZip, importerDir, 'zip')
+      if (!ex2.success) return ex2
+    }
+  }
+
+  console.log(`[xxmi] ${importer} installed successfully`)
+  return { success: true }
+}
+
 function linuxToWinePath(linuxPath: string): string {
   return 'Z:' + linuxPath.replace(/\/+/g, '/')
+}
+
+export function isImporterInstalled(importer: string): boolean {
+  const { xxmiDir } = getXXMIPaths()
+  return fs.existsSync(path.join(xxmiDir, importer, 'd3d11.dll'))
 }
 
 function configureImporterGameFolder(importer: string, gameDirectory: string): boolean {
@@ -315,23 +407,36 @@ function configureImporterGameFolder(importer: string, gameDirectory: string): b
     const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
     const winePath = linuxToWinePath(gameDirectory)
 
+    // Always update Launcher section regardless of whether importer is installed yet
+    if (config?.Launcher) {
+      config.Launcher.active_importer = importer
+      if (!config.Launcher.enabled_importers.includes(importer)) {
+        config.Launcher.enabled_importers.push(importer)
+      }
+    }
+
     if (config?.Importers?.[importer]?.Importer) {
+      // Importer already installed — update game folder and mode
       config.Importers[importer].Importer.game_folder = winePath
       config.Importers[importer].Importer.process_start_method = 'Shell'
       config.Importers[importer].Importer.custom_launch_inject_mode = 'Hook'
-
-      if (config?.Launcher) {
-        config.Launcher.active_importer = importer
-        if (!config.Launcher.enabled_importers.includes(importer)) {
-          config.Launcher.enabled_importers.push(importer)
+    } else {
+      // Importer just installed via downloadImporter — seed a minimal config stub so
+      // XXMI finds a valid Importers section and doesn't show its own install dialog.
+      const useHookMode = importer !== 'EFMI' && importer !== 'GIMI'
+      if (!config.Importers) config.Importers = {}
+      config.Importers[importer] = {
+        Importer: {
+          game_folder: winePath,
+          process_start_method: 'Shell',
+          custom_launch_inject_mode: useHookMode ? 'Hook' : 'Inject',
         }
       }
-
-      fs.writeFileSync(configPath, JSON.stringify(config, null, 4))
-      console.log(`[xxmi] Configured ${importer} with game folder: ${winePath}`)
-      return true
     }
-    return false
+
+    fs.writeFileSync(configPath, JSON.stringify(config, null, 4))
+    console.log(`[xxmi] Configured ${importer} with game folder: ${winePath}`)
+    return true
   } catch (err) {
     console.error('[xxmi] Failed to configure importer:', err)
     return false
@@ -409,6 +514,12 @@ export async function launchGameWithXXMI(
     }
   }
 
+  if (!isImporterInstalled(importer)) {
+    console.log(`[xxmi] ${importer} not installed, downloading...`)
+    const result = await downloadImporter(importer, (p) => console.log(`[xxmi] ${importer} download: ${p}%`))
+    if (!result.success) return result
+  }
+
   const gameFolder = path.dirname(executablePath)
   configureImporterGameFolder(importer, gameFolder)
   ensureLinuxCompatibility(importer)
@@ -478,7 +589,11 @@ export async function launchGameWithXXMI(
 
     setTimeout(() => {
       if (proc.pid) {
-        console.log(`[xxmi] XXMI started with PID ${proc.pid}`)
+        if (!isImporterInstalled(importer)) {
+          console.log(`[xxmi] XXMI started (PID ${proc.pid}) — ${importer} not yet installed, XXMI will download and install it before launching the game`)
+        } else {
+          console.log(`[xxmi] XXMI started with PID ${proc.pid}`)
+        }
         resolve({ success: true })
       } else {
         resolve({ success: false, error: 'XXMI failed to start' })

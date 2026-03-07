@@ -1,6 +1,6 @@
 // IPC handlers for game operations
 
-import { ipcMain } from 'electron'
+import { ipcMain, BrowserWindow } from 'electron'
 import * as crypto from 'crypto'
 import {
   getGames,
@@ -127,8 +127,11 @@ export const registerGamesHandlers = () => {
   // Launch a game
   ipcMain.handle(
     'game:launch',
-    async (_event, { id }: { id: string }): Promise<{ success: boolean; pid?: number; error?: string }> => {
-      return launchGame(id)
+    async (event, { id }: { id: string }): Promise<{ success: boolean; pid?: number; error?: string }> => {
+      const win = BrowserWindow.fromWebContents(event.sender)
+      return launchGame(id, (step, percent) => {
+        win?.webContents.send('game:launch-progress', { step, percent })
+      })
     }
   )
 

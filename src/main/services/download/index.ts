@@ -8,6 +8,7 @@ import { spawn } from 'child_process'
 import { fetchGameResource } from './hoyo-api'
 import { fetchEndfieldGame, fetchEndfieldVersionInfo } from './endfield-api'
 import { downloadSophonGame } from './sophon'
+import { streamingMd5 } from './utils'
 import type {
   HoyoGameBiz,
   HoyoVersionInfo,
@@ -66,17 +67,15 @@ async function isUrlAccessible(url: string): Promise<boolean> {
   })
 }
 
-// Download file with progress
+// Download file with progress (streams directly to disk — no in-memory buffering)
 async function downloadFile(
   url: string,
   destPath: string,
   onProgress?: (percent: number, speed: number) => void
 ): Promise<{ success: boolean; error?: string }> {
   return new Promise((resolve) => {
-    const chunks: Buffer[] = []
     let downloaded = 0
-    let startTime = Date.now()
-    let lastReportTime = startTime
+    let lastReportTime = Date.now()
     let lastReportBytes = 0
 
     const followRedirect = (currentUrl: string, redirectCount = 0) => {
@@ -108,9 +107,9 @@ async function downloadFile(
             }
 
             const totalSize = parseInt(response.headers['content-length'] || '0', 10)
+            const fileStream = fs.createWriteStream(destPath)
 
             response.on('data', (chunk: Buffer) => {
-              chunks.push(chunk)
               downloaded += chunk.length
 
               const now = Date.now()
@@ -128,13 +127,19 @@ async function downloadFile(
               }
             })
 
-            response.on('end', () => {
-              const buffer = Buffer.concat(chunks)
-              fs.writeFileSync(destPath, buffer)
+            response.pipe(fileStream)
+
+            fileStream.on('finish', () => {
+              fileStream.close()
               resolve({ success: true })
             })
 
+            fileStream.on('error', (err) => {
+              resolve({ success: false, error: err.message })
+            })
+
             response.on('error', (err) => {
+              fileStream.destroy()
               resolve({ success: false, error: err.message })
             })
           }
@@ -202,6 +207,16 @@ async function downloadSegmentedZip(
       currentFile: `Downloading ${segmentName} (${i + 1}/${segments.length})...`,
     })
 
+    if (fs.existsSync(segmentPath)) {
+      const existingMd5 = await streamingMd5(segmentPath)
+      if (existingMd5 === segment.md5) {
+        console.log(`[download] Segment ${i + 1}/${segments.length} already downloaded, skipping`)
+        downloadedTotal += segment.size
+        continue
+      }
+      console.log(`[download] Segment ${i + 1}/${segments.length} MD5 mismatch, re-downloading`)
+    }
+
     console.log(`[download] Downloading segment ${i + 1}/${segments.length}: ${segment.url}`)
     const downloadResult = await downloadFile(segment.url, segmentPath, (percent, speed) => {
       const segmentDownloaded = (percent / 100) * segment.size
@@ -239,8 +254,12 @@ async function downloadSegmentedZip(
   const writeStream = fs.createWriteStream(mergedZipPath)
   for (let i = 0; i < segments.length; i++) {
     const segmentPath = path.join(destDir, `game.zip.${String(i + 1).padStart(3, '0')}`)
-    const segmentData = fs.readFileSync(segmentPath)
-    writeStream.write(segmentData)
+    await new Promise<void>((resolve, reject) => {
+      const readStream = fs.createReadStream(segmentPath)
+      readStream.on('error', reject)
+      readStream.on('end', resolve)
+      readStream.pipe(writeStream, { end: false })
+    })
   }
   writeStream.end()
   await new Promise<void>((resolve) => writeStream.on('finish', () => resolve()))

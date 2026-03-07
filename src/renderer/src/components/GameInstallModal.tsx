@@ -194,7 +194,7 @@ export function GameInstallModal({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="w-full sm:max-w-md">
         <DialogHeader>
           <DialogTitle>
             {status === 'idle' && `Install ${gameName}`}
@@ -324,7 +324,7 @@ export function GameInstallModal({
           )}
 
           {status === 'downloading' && progress && (
-            <>
+            <div className="min-h-[160px] flex flex-col gap-4">
               {/* Progress bar */}
               <div className="w-full bg-muted rounded-full h-4 overflow-hidden">
                 <div
@@ -356,11 +356,9 @@ export function GameInstallModal({
               </div>
 
               {/* Current file */}
-              {progress.currentFile && (
-                <div className="text-xs text-muted-foreground truncate">
-                  {progress.currentFile}
-                </div>
-              )}
+              <div className="min-w-0 text-xs text-muted-foreground truncate">
+                {progress.currentFile || <>&nbsp;</>}
+              </div>
 
               {/* Cancel button */}
               <div className="flex justify-end">
@@ -369,7 +367,7 @@ export function GameInstallModal({
                   Cancel Download
                 </Button>
               </div>
-            </>
+            </div>
           )}
 
           {status === 'complete' && (

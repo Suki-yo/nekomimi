@@ -72,6 +72,7 @@ function Library() {
   const [detecting, setDetecting] = useState(false)
   const [runningGames, setRunningGames] = useState<Set<string>>(new Set())
   const [toast, setToast] = useState<{ message: string; type: 'info' | 'warning' } | null>(null)
+  const [launchStatus, setLaunchStatus] = useState<string | null>(null)
   const [downloadModalOpen, setDownloadModalOpen] = useState(false)
   const [pendingGameId, setPendingGameId] = useState<string | null>(null)
   const [needsXXMI, setNeedsXXMI] = useState(false)
@@ -310,7 +311,15 @@ function Library() {
       return
     }
 
+    const unsubProgress = window.api.on('game:launch-progress', (data) => {
+      const p = data as { step: string; percent: number }
+      setLaunchStatus(`${p.step} (${p.percent}%)`)
+    })
+
     const result = await window.api.invoke('game:launch', { id })
+    unsubProgress()
+    setLaunchStatus(null)
+
     if (!result.success) {
       showToast(`Failed to launch: ${result.error}`, 'warning')
     }
@@ -318,7 +327,13 @@ function Library() {
 
   const handleDownloadComplete = async () => {
     if (pendingGameId) {
+      const unsubProgress = window.api.on('game:launch-progress', (data) => {
+        const p = data as { step: string; percent: number }
+        setLaunchStatus(`${p.step} (${p.percent}%)`)
+      })
       const result = await window.api.invoke('game:launch', { id: pendingGameId })
+      unsubProgress()
+      setLaunchStatus(null)
       if (!result.success) {
         showToast(`Failed to launch: ${result.error}`, 'warning')
       }
@@ -379,7 +394,12 @@ function Library() {
 
   return (
     <div className="p-6">
-      {toast && (
+      {launchStatus && (
+        <div className="fixed top-4 right-4 z-50 px-4 py-2 rounded shadow-lg bg-blue-500 text-white">
+          {launchStatus}
+        </div>
+      )}
+      {!launchStatus && toast && (
         <div className={`fixed top-4 right-4 z-50 px-4 py-2 rounded shadow-lg ${
           toast.type === 'warning' ? 'bg-yellow-500' : 'bg-blue-500'
         } text-white`}>
