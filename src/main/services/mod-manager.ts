@@ -356,9 +356,11 @@ function ensureLinuxCompatibility(importer: string): void {
         needsSave = true
       }
 
-      // Don't force Hook mode for EFMI - it has anti-cheat and requires Inject mode
-      if (importer !== 'EFMI' && importerConfig.custom_launch_inject_mode !== 'Hook') {
-        importerConfig.custom_launch_inject_mode = 'Hook'
+      // EFMI and GIMI require Inject mode - Hook mode waits for window which fails on Wayland for Genshin
+      const useHookMode = importer !== 'EFMI' && importer !== 'GIMI'
+      const targetMode = useHookMode ? 'Hook' : 'Inject'
+      if (importerConfig.custom_launch_inject_mode !== targetMode) {
+        importerConfig.custom_launch_inject_mode = targetMode
         needsSave = true
       }
 
@@ -376,7 +378,8 @@ export async function launchGameWithXXMI(
   executablePath: string,
   _gameDirectory: string,
   runnerPath: string,
-  winePrefix: string
+  winePrefix: string,
+  gameEnv: Record<string, string> = {}
 ): Promise<{ success: boolean; error?: string }> {
   const importer = getXXMIImporter(executablePath)
 
@@ -427,14 +430,20 @@ export async function launchGameWithXXMI(
     let proc
     if (useUmu) {
       // HoYo games: use umu-run so ProtonFixes applies UMU_USE_STEAM=1 for anti-cheat
+      // Merge game-specific env vars (e.g. MHYPBase bypass), combining WINEDLLOVERRIDES
+      const xxmiOverrides = 'd3d11=n,b;dxgi=n,b'
+      const gameOverrides = gameEnv.WINEDLLOVERRIDES || ''
+      const mergedOverrides = gameOverrides ? `${gameOverrides};${xxmiOverrides}` : xxmiOverrides
       const env = {
         ...process.env,
+        ...gameEnv,
         GAMEID: gameId,
         PROTONPATH: runnerPath,
         WINEPREFIX: winePrefix,
         STEAM_COMPAT_DATA_PATH: winePrefix.replace(/\/pfx\/?$/, ''),
-        WINEDLLOVERRIDES: 'd3d11=n,b;dxgi=n,b',
+        WINEDLLOVERRIDES: mergedOverrides,
       }
+      console.log(`[xxmi] umu-run env: WINEDLLOVERRIDES=${env.WINEDLLOVERRIDES} STUB_WINTRUST=${gameEnv.STUB_WINTRUST} BLOCK_FIRST_REQ=${gameEnv.BLOCK_FIRST_REQ} STEAM_COMPAT_CONFIG=${gameEnv.STEAM_COMPAT_CONFIG}`)
       proc = spawn('umu-run', [launcherExe, '--nogui', '--xxmi', importer], {
         env,
         detached: true,

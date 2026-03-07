@@ -216,11 +216,27 @@ export function twintailToHoyoVersionInfo(
     }
   }
 
+  // Collect all valid Sophon manifests from game.full (games like ZZZ have multiple)
+  const sophonManifests: Array<{ manifestUrl: string; chunkBaseUrl: string }> = []
+  if (downloadMode === 'sophon') {
+    for (const pkg of gameVersion.game.full) {
+      try {
+        new URL(pkg.file_url)
+        new URL(pkg.file_path ?? '')
+        sophonManifests.push({ manifestUrl: pkg.file_url, chunkBaseUrl: pkg.file_path! })
+      } catch {
+        // Skip entries with invalid URLs
+      }
+    }
+    console.log(`[twintail] Found ${sophonManifests.length} Sophon manifests for ${metadata.version}`)
+  }
+
   const info: HoyoVersionInfo = {
     version: metadata.version,
     downloadMode,
     sophonManifestUrl: fullPackage.file_url,
     sophonChunkBaseUrl: fullPackage.file_path ?? metadata.res_list_url,
+    sophonManifests: sophonManifests.length > 1 ? sophonManifests : undefined,
     zipUrl: downloadMode === 'zip' ? fullPackage.file_url : undefined,
     voicePacks: [],
     diffs: [],

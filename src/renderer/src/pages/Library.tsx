@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { DownloadModal } from '@/components/DownloadModal'
 import { GameInstallModal } from '@/components/GameInstallModal'
+import { EndfieldInstallModal } from '@/components/EndfieldInstallModal'
 import GameConfigModal from '@/components/GameConfigModal'
 import CoverImage from '@/components/CoverImage'
 import type { Game, DetectedRunner } from '../../../shared/types/game'
@@ -84,6 +85,9 @@ function Library() {
   const [hoyoVersionInfo, setHoyoVersionInfo] = useState<Record<string, HoyoVersionInfo>>({})
   const [hoyoVersionErrors, setHoyoVersionErrors] = useState<Record<string, string>>({})
   const [loadingVersions, setLoadingVersions] = useState(false)
+  const [endfieldInfo, setEndfieldInfo] = useState<{ version: string; totalSize: number } | null>(null)
+  const [endfieldInfoError, setEndfieldInfoError] = useState<string | null>(null)
+  const [endfieldInstallOpen, setEndfieldInstallOpen] = useState(false)
 
   const [formName, setFormName] = useState('')
   const [formDirectory, setFormDirectory] = useState('')
@@ -132,6 +136,21 @@ function Library() {
 
       setHoyoVersionInfo(versions)
       setHoyoVersionErrors(errors)
+
+      // Load Endfield info
+      try {
+        const endfieldData = await window.api.invoke('download:fetch-endfield-info', {})
+        if (endfieldData) {
+          setEndfieldInfo(endfieldData)
+          setEndfieldInfoError(null)
+        } else {
+          setEndfieldInfoError('Unable to fetch version info')
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to load Endfield info'
+        setEndfieldInfoError(message)
+        console.error('Failed to load Endfield version:', err)
+      }
 
       // Show warning if all games failed to load
       if (Object.keys(errors).length === HOYO_GAMES.length) {
@@ -609,77 +628,158 @@ function Library() {
 
       {/* Explore Tab */}
       {activeTab === 'explore' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {HOYO_GAMES.map((hoyoGame) => {
-            const versionInfo = hoyoVersionInfo[hoyoGame.biz]
-            const versionError = hoyoVersionErrors[hoyoGame.biz]
-            const isInstalled = checkGameInstalled(hoyoGame.biz)
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {HOYO_GAMES.map((hoyoGame) => {
+              const versionInfo = hoyoVersionInfo[hoyoGame.biz]
+              const versionError = hoyoVersionErrors[hoyoGame.biz]
+              const isInstalled = checkGameInstalled(hoyoGame.biz)
 
-            return (
-              <Card key={hoyoGame.biz} className="overflow-hidden">
-                <div
-                  className="aspect-video bg-gradient-to-br from-muted to-muted/50 flex items-center justify-center relative"
-                  style={{
-                    background: `linear-gradient(135deg, ${hoyoGame.color}20, ${hoyoGame.color}10)`,
-                  }}
-                >
+              return (
+                <Card key={hoyoGame.biz} className="overflow-hidden">
                   <div
-                    className="text-4xl font-bold opacity-20"
-                    style={{ color: hoyoGame.color }}
+                    className="aspect-video bg-gradient-to-br from-muted to-muted/50 flex items-center justify-center relative"
+                    style={{
+                      background: `linear-gradient(135deg, ${hoyoGame.color}20, ${hoyoGame.color}10)`,
+                    }}
                   >
-                    {hoyoGame.name.split(' ').map(w => w[0]).join('')}
-                  </div>
-
-                  {isInstalled && (
-                    <div className="absolute top-2 right-2 bg-green-500 text-white text-xs px-2 py-1 rounded">
-                      Installed
+                    <div
+                      className="text-4xl font-bold opacity-20"
+                      style={{ color: hoyoGame.color }}
+                    >
+                      {hoyoGame.name.split(' ').map(w => w[0]).join('')}
                     </div>
-                  )}
-                </div>
 
-                <CardContent className="p-4">
-                  <h3 className="font-semibold text-lg mb-1">{hoyoGame.name}</h3>
-                  <div className="flex items-center gap-4 text-sm text-muted-foreground mb-4">
-                    {versionInfo ? (
-                      <>
-                        <span>v{versionInfo.version}</span>
-                        <span>•</span>
-                        <span>{hoyoGame.estimatedSize}</span>
-                      </>
-                    ) : versionError ? (
-                      <span className="text-destructive" title={versionError}>
-                        Error loading version
-                      </span>
-                    ) : loadingVersions ? (
-                      <span>Loading version info...</span>
-                    ) : (
-                      <span className="text-muted-foreground">Version unavailable</span>
+                    {isInstalled && (
+                      <div className="absolute top-2 right-2 bg-green-500 text-white text-xs px-2 py-1 rounded">
+                        Installed
+                      </div>
                     )}
                   </div>
 
-                  {versionError && (
-                    <p className="text-xs text-muted-foreground mb-3 truncate" title={versionError}>
-                      {versionError}
-                    </p>
-                  )}
+                  <CardContent className="p-4">
+                    <h3 className="font-semibold text-lg mb-1">{hoyoGame.name}</h3>
+                    <div className="flex items-center gap-4 text-sm text-muted-foreground mb-4">
+                      {versionInfo ? (
+                        <>
+                          <span>v{versionInfo.version}</span>
+                          <span>•</span>
+                          <span>{hoyoGame.estimatedSize}</span>
+                        </>
+                      ) : versionError ? (
+                        <span className="text-destructive" title={versionError}>
+                          Error loading version
+                        </span>
+                      ) : loadingVersions ? (
+                        <span>Loading version info...</span>
+                      ) : (
+                        <span className="text-muted-foreground">Version unavailable</span>
+                      )}
+                    </div>
 
-                  <Button
-                    className="w-full"
-                    onClick={() => handleInstallGame(hoyoGame)}
-                    disabled={isInstalled || !versionInfo}
-                    title={!versionInfo ? 'Version info required to install' : undefined}
-                  >
-                    <Download className="h-4 w-4 mr-2" />
-                    {isInstalled ? 'Already Installed' : !versionInfo ? 'Unavailable' : 'Install'}
-                  </Button>
-                </CardContent>
-              </Card>
-            )
-          })}
-        </div>
+                    {versionError && (
+                      <p className="text-xs text-muted-foreground mb-3 truncate" title={versionError}>
+                        {versionError}
+                      </p>
+                    )}
+
+                    <Button
+                      className="w-full"
+                      onClick={() => handleInstallGame(hoyoGame)}
+                      disabled={isInstalled || !versionInfo}
+                      title={!versionInfo ? 'Version info required to install' : undefined}
+                    >
+                      <Download className="h-4 w-4 mr-2" />
+                      {isInstalled ? 'Already Installed' : !versionInfo ? 'Unavailable' : 'Install'}
+                    </Button>
+                  </CardContent>
+                </Card>
+              )
+            })}
+
+          {/* Endfield Card */}
+          <Card className="overflow-hidden">
+            <div
+              className="aspect-video bg-gradient-to-br flex items-center justify-center relative"
+              style={{
+                background: `linear-gradient(135deg, #00b4cc20, #00b4cc10)`,
+              }}
+            >
+              <div
+                className="text-4xl font-bold opacity-20"
+                style={{ color: '#00b4cc' }}
+              >
+                AE
+              </div>
+
+              {checkGameInstalled('endfield') && (
+                <div className="absolute top-2 right-2 bg-green-500 text-white text-xs px-2 py-1 rounded">
+                  Installed
+                </div>
+              )}
+            </div>
+
+            <CardContent className="p-4">
+              <h3 className="font-semibold text-lg mb-1">Arknights: Endfield</h3>
+              <div className="flex items-center gap-4 text-sm text-muted-foreground mb-4">
+                <span className="text-xs text-muted-foreground">HyperGryph</span>
+                {endfieldInfo ? (
+                  <>
+                    <span>v{endfieldInfo.version}</span>
+                    <span>•</span>
+                    <span>{formatBytes(endfieldInfo.totalSize)}</span>
+                  </>
+                ) : endfieldInfoError ? (
+                  <span className="text-destructive text-xs" title={endfieldInfoError}>
+                    Error loading version
+                  </span>
+                ) : loadingVersions ? (
+                  <span className="text-xs">Loading version info...</span>
+                ) : (
+                  <span className="text-xs text-muted-foreground">Version unavailable</span>
+                )}
+              </div>
+
+              {endfieldInfoError && (
+                <p className="text-xs text-muted-foreground mb-3 truncate" title={endfieldInfoError}>
+                  {endfieldInfoError}
+                </p>
+              )}
+
+              <Button
+                className="w-full"
+                onClick={() => setEndfieldInstallOpen(true)}
+                disabled={checkGameInstalled('endfield') || !endfieldInfo}
+                title={!endfieldInfo ? 'Version info required to install' : undefined}
+              >
+                <Download className="h-4 w-4 mr-2" />
+                {checkGameInstalled('endfield') ? 'Already Installed' : !endfieldInfo ? 'Unavailable' : 'Install'}
+              </Button>
+            </CardContent>
+          </Card>
+          </div>
+
+          {/* Endfield Install Modal */}
+          <EndfieldInstallModal
+            open={endfieldInstallOpen}
+            onClose={() => setEndfieldInstallOpen(false)}
+            latestVersion={endfieldInfo?.version ?? ''}
+            totalSize={endfieldInfo?.totalSize ?? 0}
+            onGameAdded={loadGames}
+          />
+        </>
       )}
     </div>
   )
+}
+
+// Helper function to format bytes
+function formatBytes(bytes: number): string {
+  if (bytes === 0) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
 }
 
 export default Library

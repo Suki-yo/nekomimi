@@ -6,12 +6,16 @@ import * as path from 'path'
 import * as https from 'https'
 import { spawn } from 'child_process'
 import { fetchGameResource } from './hoyo-api'
+import { fetchEndfieldGame, fetchEndfieldVersionInfo } from './endfield-api'
 import { downloadSophonGame } from './sophon'
 import type {
   HoyoGameBiz,
   HoyoVersionInfo,
   DownloadOptions,
+  DownloadProgress,
 } from '../../../shared/types/download'
+
+export { fetchEndfieldVersionInfo }
 
 // Active downloads tracking
 const activeDownloads = new Map<string, AbortController>()
@@ -19,6 +23,11 @@ const activeDownloads = new Map<string, AbortController>()
 // Check if a download is in progress
 export function isDownloadInProgress(gameId: string): boolean {
   return activeDownloads.has(gameId)
+}
+
+// Check if any downloads are active
+export function hasActiveDownloads(): boolean {
+  return activeDownloads.size > 0
 }
 
 // Cancel an active download
@@ -166,6 +175,120 @@ async function extractZip(
   })
 }
 
+// Download and extract a segmented zip (shared between HoYo zip mode and Endfield)
+async function downloadSegmentedZip(
+  gameId: string,
+  destDir: string,
+  versionInfo: HoyoVersionInfo,
+  onProgress?: (progress: DownloadProgress) => void
+): Promise<{ success: boolean; error?: string }> {
+  const segments = versionInfo.segments!
+  const totalSize = segments.reduce((sum, seg) => sum + seg.size, 0)
+  let downloadedTotal = 0
+
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i]
+    const segmentName = `game.zip.${String(i + 1).padStart(3, '0')}`
+    const segmentPath = path.join(destDir, segmentName)
+
+    onProgress?.({
+      gameId,
+      status: 'downloading',
+      percent: Math.round((downloadedTotal / totalSize) * 100),
+      bytesDownloaded: downloadedTotal,
+      bytesTotal: totalSize,
+      downloadSpeed: 0,
+      timeRemaining: 0,
+      currentFile: `Downloading ${segmentName} (${i + 1}/${segments.length})...`,
+    })
+
+    console.log(`[download] Downloading segment ${i + 1}/${segments.length}: ${segment.url}`)
+    const downloadResult = await downloadFile(segment.url, segmentPath, (percent, speed) => {
+      const segmentDownloaded = (percent / 100) * segment.size
+      onProgress?.({
+        gameId,
+        status: 'downloading',
+        percent: Math.round(((downloadedTotal + segmentDownloaded) / totalSize) * 100),
+        bytesDownloaded: downloadedTotal + segmentDownloaded,
+        bytesTotal: totalSize,
+        downloadSpeed: speed,
+        timeRemaining: 0,
+        currentFile: `Downloading ${segmentName}...`,
+      })
+    })
+
+    if (!downloadResult.success) {
+      return { success: false, error: `Failed to download ${segmentName}: ${downloadResult.error}` }
+    }
+
+    downloadedTotal += segment.size
+  }
+
+  onProgress?.({
+    gameId,
+    status: 'extracting',
+    percent: 90,
+    bytesDownloaded: totalSize,
+    bytesTotal: totalSize,
+    downloadSpeed: 0,
+    timeRemaining: 0,
+    currentFile: 'Merging zip segments...',
+  })
+
+  const mergedZipPath = path.join(destDir, 'game.zip')
+  const writeStream = fs.createWriteStream(mergedZipPath)
+  for (let i = 0; i < segments.length; i++) {
+    const segmentPath = path.join(destDir, `game.zip.${String(i + 1).padStart(3, '0')}`)
+    const segmentData = fs.readFileSync(segmentPath)
+    writeStream.write(segmentData)
+  }
+  writeStream.end()
+  await new Promise<void>((resolve) => writeStream.on('finish', () => resolve()))
+
+  onProgress?.({
+    gameId,
+    status: 'extracting',
+    percent: 92,
+    bytesDownloaded: totalSize,
+    bytesTotal: totalSize,
+    downloadSpeed: 0,
+    timeRemaining: 0,
+    currentFile: 'Extracting game files...',
+  })
+
+  const extractResult = await extractZip(mergedZipPath, destDir, (percent) => {
+    onProgress?.({
+      gameId,
+      status: 'extracting',
+      percent: 92 + percent * 0.08,
+      bytesDownloaded: totalSize,
+      bytesTotal: totalSize,
+      downloadSpeed: 0,
+      timeRemaining: 0,
+    })
+  })
+
+  if (fs.existsSync(mergedZipPath)) fs.unlinkSync(mergedZipPath)
+  for (let i = 0; i < segments.length; i++) {
+    const segmentPath = path.join(destDir, `game.zip.${String(i + 1).padStart(3, '0')}`)
+    if (fs.existsSync(segmentPath)) fs.unlinkSync(segmentPath)
+  }
+
+  if (extractResult.success) {
+    onProgress?.({
+      gameId,
+      status: 'installed',
+      percent: 100,
+      bytesDownloaded: totalSize,
+      bytesTotal: totalSize,
+      downloadSpeed: 0,
+      timeRemaining: 0,
+    })
+  }
+
+  return extractResult
+}
+
 // Start a game download
 export async function startGameDownload(
   options: DownloadOptions
@@ -225,8 +348,9 @@ export async function startGameDownload(
           }
 
           const result = await downloadSophonGame({
-            manifestUrl: url,
-            chunkBaseUrl: versionInfo.sophonChunkBaseUrl, // May be undefined, downloader will derive
+            ...(versionInfo.sophonManifests
+              ? { manifests: versionInfo.sophonManifests }
+              : { manifestUrl: url, chunkBaseUrl: versionInfo.sophonChunkBaseUrl }),
             destDir,
             concurrency: 6,
             onProgress: (progress) => {
@@ -257,127 +381,7 @@ export async function startGameDownload(
       // Check for segmented downloads first (multiple zip parts)
       if (versionInfo.segments && versionInfo.segments.length > 0) {
         console.log(`[download] Using segmented zip download (${versionInfo.segments.length} parts)`)
-
-        const totalSize = versionInfo.segments.reduce((sum, seg) => sum + seg.size, 0)
-        let downloadedTotal = 0
-
-        for (let i = 0; i < versionInfo.segments.length; i++) {
-          const segment = versionInfo.segments[i]
-          const segmentName = `game.zip.${String(i + 1).padStart(3, '0')}`
-          const segmentPath = path.join(destDir, segmentName)
-
-          onProgress?.({
-            gameId,
-            status: 'downloading',
-            percent: Math.round((downloadedTotal / totalSize) * 100),
-            bytesDownloaded: downloadedTotal,
-            bytesTotal: totalSize,
-            downloadSpeed: 0,
-            timeRemaining: 0,
-            currentFile: `Downloading ${segmentName} (${i + 1}/${versionInfo.segments.length})...`,
-          })
-
-          console.log(`[download] Downloading segment ${i + 1}/${versionInfo.segments.length}: ${segment.url}`)
-          const downloadResult = await downloadFile(
-            segment.url,
-            segmentPath,
-            (percent, speed) => {
-              const segmentDownloaded = (percent / 100) * segment.size
-              onProgress?.({
-                gameId,
-                status: 'downloading',
-                percent: Math.round(((downloadedTotal + segmentDownloaded) / totalSize) * 100),
-                bytesDownloaded: downloadedTotal + segmentDownloaded,
-                bytesTotal: totalSize,
-                downloadSpeed: speed,
-                timeRemaining: 0,
-                currentFile: `Downloading ${segmentName}...`,
-              })
-            }
-          )
-
-          if (!downloadResult.success) {
-            return { success: false, error: `Failed to download ${segmentName}: ${downloadResult.error}` }
-          }
-
-          downloadedTotal += segment.size
-        }
-
-        // Extract all segments (need to concatenate first for standard unzip)
-        onProgress?.({
-          gameId,
-          status: 'extracting',
-          percent: 90,
-          bytesDownloaded: totalSize,
-          bytesTotal: totalSize,
-          downloadSpeed: 0,
-          timeRemaining: 0,
-          currentFile: 'Merging zip segments...',
-        })
-
-        // Concatenate segments into a single zip file
-        const mergedZipPath = path.join(destDir, 'game.zip')
-        const writeStream = fs.createWriteStream(mergedZipPath)
-
-        for (let i = 0; i < versionInfo.segments.length; i++) {
-          const segmentPath = path.join(destDir, `game.zip.${String(i + 1).padStart(3, '0')}`)
-          const segmentData = fs.readFileSync(segmentPath)
-          writeStream.write(segmentData)
-        }
-        writeStream.end()
-
-        // Wait for write to complete
-        await new Promise<void>((resolve) => writeStream.on('finish', () => resolve()))
-
-        onProgress?.({
-          gameId,
-          status: 'extracting',
-          percent: 92,
-          bytesDownloaded: totalSize,
-          bytesTotal: totalSize,
-          downloadSpeed: 0,
-          timeRemaining: 0,
-          currentFile: 'Extracting game files...',
-        })
-
-        const extractResult = await extractZip(mergedZipPath, destDir, (percent) => {
-          onProgress?.({
-            gameId,
-            status: 'extracting',
-            percent: 92 + percent * 0.08, // 8% for extraction
-            bytesDownloaded: totalSize,
-            bytesTotal: totalSize,
-            downloadSpeed: 0,
-            timeRemaining: 0,
-          })
-        })
-
-        // Clean up merged zip
-        if (fs.existsSync(mergedZipPath)) {
-          fs.unlinkSync(mergedZipPath)
-        }
-
-        // Clean up segment files
-        for (let i = 0; i < versionInfo.segments.length; i++) {
-          const segmentPath = path.join(destDir, `game.zip.${String(i + 1).padStart(3, '0')}`)
-          if (fs.existsSync(segmentPath)) {
-            fs.unlinkSync(segmentPath)
-          }
-        }
-
-        if (extractResult.success) {
-          onProgress?.({
-            gameId,
-            status: 'installed',
-            percent: 100,
-            bytesDownloaded: totalSize,
-            bytesTotal: totalSize,
-            downloadSpeed: 0,
-            timeRemaining: 0,
-          })
-        }
-
-        return extractResult
+        return downloadSegmentedZip(gameId, destDir, versionInfo, onProgress)
       }
 
       // Single zip file
@@ -463,6 +467,65 @@ export async function startGameDownload(
     }
   } catch (err) {
     console.error(`[download] Failed:`, err)
+    onProgress?.({
+      gameId,
+      status: 'error',
+      percent: 0,
+      bytesDownloaded: 0,
+      bytesTotal: 0,
+      downloadSpeed: 0,
+      timeRemaining: 0,
+      error: String(err),
+    })
+    return { success: false, error: String(err) }
+  } finally {
+    activeDownloads.delete(gameId)
+  }
+}
+
+export interface EndfieldDownloadOptions {
+  gameId: string
+  destDir: string
+  onProgress?: (progress: DownloadProgress) => void
+}
+
+// Start an Arknights: Endfield download
+export async function startEndfieldDownload(
+  options: EndfieldDownloadOptions
+): Promise<{ success: boolean; error?: string }> {
+  const { gameId, destDir, onProgress } = options
+
+  if (activeDownloads.has(gameId)) {
+    return { success: false, error: 'Download already in progress' }
+  }
+
+  const controller = new AbortController()
+  activeDownloads.set(gameId, controller)
+
+  try {
+    onProgress?.({
+      gameId,
+      status: 'downloading',
+      percent: 0,
+      bytesDownloaded: 0,
+      bytesTotal: 0,
+      downloadSpeed: 0,
+      timeRemaining: 0,
+      currentFile: 'Fetching version info...',
+    })
+
+    const versionInfo = await fetchEndfieldGame()
+    if (!versionInfo) {
+      return { success: false, error: 'Failed to fetch Endfield version info from API' }
+    }
+
+    if (!fs.existsSync(destDir)) {
+      fs.mkdirSync(destDir, { recursive: true })
+    }
+
+    return await downloadSegmentedZip(gameId, destDir, versionInfo, onProgress)
+  } catch (err) {
+    console.error('[endfield] Download failed:', err)
     onProgress?.({
       gameId,
       status: 'error',

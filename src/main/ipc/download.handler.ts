@@ -8,6 +8,8 @@ import {
   startGameDownload,
   cancelDownload,
   isDownloadInProgress,
+  fetchEndfieldVersionInfo,
+  startEndfieldDownload,
 } from '../services/download'
 import type { HoyoGameBiz, DownloadProgress } from '../../shared/types/download'
 
@@ -48,18 +50,18 @@ export const registerDownloadHandlers = () => {
         useTwintail,
         preferVersion,
         onProgress: (progress: DownloadProgress) => {
-          try {
-            if (!win?.isDestroyed()) {
-              win?.webContents.send('download:progress', progress)
-            }
-          } catch { /* window closed during download */ }
+          if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+            win.webContents.send('download:progress', progress)
+          }
         },
       })
 
-      if (result.success) {
-        win?.webContents.send('download:complete', { gameId })
-      } else {
-        win?.webContents.send('download:error', { gameId, error: result.error })
+      if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+        if (result.success) {
+          win.webContents.send('download:complete', { gameId })
+        } else {
+          win.webContents.send('download:error', { gameId, error: result.error })
+        }
       }
 
       return result
@@ -111,6 +113,43 @@ export const registerDownloadHandlers = () => {
         latestVersion: latest.version,
         downloadMode: latest.downloadMode,
       }
+    }
+  )
+
+  // Fetch Endfield version info
+  ipcMain.handle('download:fetch-endfield-info', async () => {
+    return await fetchEndfieldVersionInfo()
+  })
+
+  // Start Endfield download
+  ipcMain.handle(
+    'download:start-endfield',
+    async (event, { gameId, destDir }: { gameId: string; destDir: string }) => {
+      console.log(`[download] Starting Endfield download to ${destDir}`)
+      const win = BrowserWindow.fromWebContents(event.sender)
+      const resolvedDestDir = destDir.startsWith('~')
+        ? path.join(os.homedir(), destDir.slice(1))
+        : destDir
+
+      const result = await startEndfieldDownload({
+        gameId,
+        destDir: resolvedDestDir,
+        onProgress: (progress: DownloadProgress) => {
+          if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+            win.webContents.send('download:progress', progress)
+          }
+        },
+      })
+
+      if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+        if (result.success) {
+          win.webContents.send('download:complete', { gameId })
+        } else {
+          win.webContents.send('download:error', { gameId, error: result.error })
+        }
+      }
+
+      return result
     }
   )
 }

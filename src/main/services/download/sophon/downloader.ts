@@ -17,8 +17,9 @@ import type { SophonManifestFile, SophonFileChunk, DownloadProgress } from '../.
 
 // Download options
 export interface SophonDownloadOptions {
-  manifestUrl: string
+  manifestUrl?: string
   chunkBaseUrl?: string // Optional explicit chunk base URL (from Twintail's file_path)
+  manifests?: Array<{ manifestUrl: string; chunkBaseUrl?: string }> // Multiple manifests (e.g. ZZZ)
   destDir: string
   onProgress?: (progress: Partial<DownloadProgress>) => void
   concurrency?: number
@@ -177,6 +178,15 @@ async function processFile(
 ): Promise<void> {
   const filePath = sanitizePath(destDir, file.name)
 
+  // Skip if already complete (resume support)
+  if (fs.existsSync(filePath) && fs.statSync(filePath).size === file.size) {
+    const existingMd5 = await streamingMd5(filePath)
+    if (existingMd5 === file.md5) {
+      state.downloadedBytes += file.chunks.reduce((sum, c) => sum + c.chunkSize, 0)
+      return
+    }
+  }
+
   // Create directory structure
   const dir = path.dirname(filePath)
   if (!fs.existsSync(dir)) {
@@ -208,14 +218,92 @@ async function processFile(
   }
 }
 
+// Resolve the list of manifests to download from options
+function resolveManifestEntries(
+  options: SophonDownloadOptions
+): Array<{ manifestUrl: string; chunkBaseUrl?: string }> {
+  if (options.manifests && options.manifests.length > 0) {
+    return options.manifests
+  }
+  if (options.manifestUrl) {
+    return [{ manifestUrl: options.manifestUrl, chunkBaseUrl: options.chunkBaseUrl }]
+  }
+  return []
+}
+
+// Download all files from a single manifest into stagingDir
+async function downloadManifestFiles(
+  manifestUrl: string,
+  explicitChunkBaseUrl: string | undefined,
+  stagingDir: string,
+  state: DownloadState,
+  concurrency: number,
+  manifestIndex: number,
+  manifestTotal: number,
+  onProgress?: (progress: Partial<DownloadProgress>) => void
+): Promise<void> {
+  console.log(`[sophon] Manifest ${manifestIndex + 1}/${manifestTotal}: ${manifestUrl}`)
+
+  onProgress?.({ status: 'downloading', currentFile: `manifest ${manifestIndex + 1}/${manifestTotal}` })
+  const manifest = await fetchManifest(manifestUrl)
+
+  const files = getFilesOnly(manifest)
+  const totalChunkSize = calculateChunkDownloadSize(manifest)
+
+  console.log(`[sophon] Manifest ${manifestIndex + 1}: ${files.length} files, ${(totalChunkSize / 1024 / 1024 / 1024).toFixed(2)} GB`)
+
+  // Add this manifest's chunk size to the total
+  state.totalBytes += totalChunkSize
+
+  // Resolve chunk base URL
+  let chunkBaseUrl: string
+  if (explicitChunkBaseUrl) {
+    chunkBaseUrl = explicitChunkBaseUrl
+    console.log(`[sophon] Using explicit chunk base URL: ${chunkBaseUrl}`)
+  } else {
+    const manifestUrlObj = new URL(manifestUrl)
+    const pathParts = manifestUrlObj.pathname.split('/')
+    pathParts.pop()
+    chunkBaseUrl = `${manifestUrlObj.origin}${pathParts.join('/')}`
+    console.log(`[sophon] Derived chunk base URL from manifest: ${chunkBaseUrl}`)
+  }
+
+  // Process files in parallel batches
+  const batches: SophonManifestFile[][] = []
+  for (let i = 0; i < files.length; i += concurrency) {
+    batches.push(files.slice(i, i + concurrency))
+  }
+
+  let processedFiles = 0
+  for (const batch of batches) {
+    await Promise.all(
+      batch.map(async (file) => {
+        try {
+          onProgress?.({ currentFile: file.name })
+          await processFile(file, chunkBaseUrl, stagingDir, state, onProgress)
+          processedFiles++
+          console.log(`[sophon] Manifest ${manifestIndex + 1} - Processed ${processedFiles}/${files.length}: ${file.name}`)
+        } catch (err) {
+          throw new Error(`Failed to process ${file.name}: ${err}`)
+        }
+      })
+    )
+  }
+}
+
 // Main download function
 export async function downloadSophonGame(
   options: SophonDownloadOptions
 ): Promise<{ success: boolean; error?: string }> {
-  const { manifestUrl, chunkBaseUrl: explicitChunkBaseUrl, destDir, onProgress, concurrency = 6 } = options
+  const { destDir, onProgress, concurrency = 6 } = options
+
+  const manifestEntries = resolveManifestEntries(options)
+  if (manifestEntries.length === 0) {
+    return { success: false, error: 'No manifest URL provided' }
+  }
 
   console.log(`[sophon] Starting download to ${destDir}`)
-  console.log(`[sophon] Manifest URL: ${manifestUrl}`)
+  console.log(`[sophon] ${manifestEntries.length} manifest(s) to process`)
   console.log(`[sophon] Concurrency: ${concurrency}`)
 
   // Clear chunk cache
@@ -226,67 +314,33 @@ export async function downloadSophonGame(
     fs.mkdirSync(destDir, { recursive: true })
   }
 
-  // Create staging directory
+  // Create staging directory (shared across all manifests for resume support)
   const stagingDir = `${destDir}.staging`
-  if (fs.existsSync(stagingDir)) {
-    fs.rmSync(stagingDir, { recursive: true, force: true })
+  if (!fs.existsSync(stagingDir)) {
+    fs.mkdirSync(stagingDir, { recursive: true })
   }
-  fs.mkdirSync(stagingDir, { recursive: true })
+
+  // Initialize download state (totalBytes will be accumulated as manifests are fetched)
+  const state: DownloadState = {
+    totalBytes: 0,
+    downloadedBytes: 0,
+    startTime: Date.now(),
+    speed: 0,
+    speedSamples: [],
+  }
 
   try {
-    // Fetch and parse manifest
-    onProgress?.({ status: 'downloading', currentFile: 'manifest' })
-    const manifest = await fetchManifest(manifestUrl)
-
-    // Get files only (exclude directories)
-    const files = getFilesOnly(manifest)
-    const totalChunkSize = calculateChunkDownloadSize(manifest)
-
-    console.log(`[sophon] ${files.length} files to download`)
-    console.log(`[sophon] Total chunk size: ${(totalChunkSize / 1024 / 1024 / 1024).toFixed(2)} GB`)
-
-    // Use explicit chunk base URL if provided, otherwise derive from manifest URL
-    let chunkBaseUrl: string
-    if (explicitChunkBaseUrl) {
-      chunkBaseUrl = explicitChunkBaseUrl
-      console.log(`[sophon] Using explicit chunk base URL: ${chunkBaseUrl}`)
-    } else {
-      // Extract chunk base URL from manifest URL
-      const manifestUrlObj = new URL(manifestUrl)
-      const pathParts = manifestUrlObj.pathname.split('/')
-      pathParts.pop() // Remove manifest filename
-      chunkBaseUrl = `${manifestUrlObj.origin}${pathParts.join('/')}`
-      console.log(`[sophon] Derived chunk base URL from manifest: ${chunkBaseUrl}`)
-    }
-
-    // Initialize download state
-    const state: DownloadState = {
-      totalBytes: totalChunkSize,
-      downloadedBytes: 0,
-      startTime: Date.now(),
-      speed: 0,
-      speedSamples: [],
-    }
-
-    // Process files in parallel batches
-    const batches: SophonManifestFile[][] = []
-    for (let i = 0; i < files.length; i += concurrency) {
-      batches.push(files.slice(i, i + concurrency))
-    }
-
-    let processedFiles = 0
-    for (const batch of batches) {
-      await Promise.all(
-        batch.map(async (file) => {
-          try {
-            onProgress?.({ currentFile: file.name })
-            await processFile(file, chunkBaseUrl, stagingDir, state, onProgress)
-            processedFiles++
-            console.log(`[sophon] Processed ${processedFiles}/${files.length}: ${file.name}`)
-          } catch (err) {
-            throw new Error(`Failed to process ${file.name}: ${err}`)
-          }
-        })
+    for (let i = 0; i < manifestEntries.length; i++) {
+      const entry = manifestEntries[i]
+      await downloadManifestFiles(
+        entry.manifestUrl,
+        entry.chunkBaseUrl,
+        stagingDir,
+        state,
+        concurrency,
+        i,
+        manifestEntries.length,
+        onProgress
       )
     }
 

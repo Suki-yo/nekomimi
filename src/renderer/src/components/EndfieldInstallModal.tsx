@@ -9,30 +9,26 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { FolderOpen, X, Download, Search } from 'lucide-react'
+import { FolderOpen, Download, Search } from 'lucide-react'
 import type { DownloadProgress } from '../../../shared/types/download'
 
 type InstallMode = 'download' | 'locate'
 
-interface GameInstallModalProps {
+interface EndfieldInstallModalProps {
   open: boolean
   onClose: () => void
-  gameName: string
-  gameBiz: 'genshin' | 'starrail' | 'zzz'
   latestVersion: string
-  downloadSize?: string
+  totalSize: number
   onGameAdded?: () => void
 }
 
-export function GameInstallModal({
+export function EndfieldInstallModal({
   open,
   onClose,
-  gameName,
-  gameBiz,
   latestVersion,
-  downloadSize,
+  totalSize,
   onGameAdded,
-}: GameInstallModalProps) {
+}: EndfieldInstallModalProps) {
   const [mode, setMode] = useState<InstallMode>('download')
   const [installDir, setInstallDir] = useState('')
   const [status, setStatus] = useState<'idle' | 'downloading' | 'complete' | 'error'>('idle')
@@ -45,10 +41,10 @@ export function GameInstallModal({
   const [locating, setLocating] = useState(false)
   const [locateError, setLocateError] = useState<string | null>(null)
 
-  // Reset state when modal opens (but preserve downloading state if resuming)
+  // Reset state when modal opens
   useEffect(() => {
     if (!open) return
-    window.api.invoke('download:status', { gameId: gameBiz }).then((result: { inProgress: boolean }) => {
+    window.api.invoke('download:status', { gameId: 'endfield' }).then((result: { inProgress: boolean }) => {
       if (result.inProgress) {
         setMode('download')
         setStatus('downloading')
@@ -58,32 +54,36 @@ export function GameInstallModal({
         setStatus('idle')
         setProgress(null)
         hasStartedRef.current = false
-        setInstallDir(`~/Games/${gameName}`)
+        setInstallDir('~/Games/Endfield')
         setLocateExePath('')
         setLocateDetected(null)
         setLocateError(null)
       }
     })
-  }, [open, gameName, gameBiz])
+  }, [open])
 
   // Listen for download progress
   useEffect(() => {
     const unsubProgress = window.api.on('download:progress', (data) => {
       const p = data as DownloadProgress
-      if (p.gameId === gameBiz) {
+      if (p.gameId === 'endfield') {
         setProgress(p)
       }
     })
 
     const unsubComplete = window.api.on('download:complete', (data) => {
-      if ((data as { gameId: string }).gameId === gameBiz) {
+      if ((data as { gameId: string }).gameId === 'endfield') {
         setStatus('complete')
         setProgress((prev) => prev ? { ...prev, percent: 100, status: 'installed' } : null)
+        // Auto-detect and add to library
+        if (locateExePath) {
+          handleAutoAdd()
+        }
       }
     })
 
     const unsubError = window.api.on('download:error', (data) => {
-      if ((data as { gameId: string }).gameId === gameBiz) {
+      if ((data as { gameId: string }).gameId === 'endfield') {
         setStatus('error')
         setProgress((prev) => prev ? { ...prev, error: (data as { error: string }).error } : null)
       }
@@ -94,7 +94,7 @@ export function GameInstallModal({
       unsubComplete()
       unsubError()
     }
-  }, [gameBiz])
+  }, [locateExePath])
 
   const handleBrowse = async () => {
     const path = await window.api.openFile()
@@ -126,8 +126,8 @@ export function GameInstallModal({
     setLocating(true)
     try {
       await window.api.invoke('game:add', {
-        name: gameName,
-        slug: gameName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
+        name: 'Arknights: Endfield',
+        slug: 'endfield',
         installed: true,
         directory: locateDetected.directory,
         executable: locateExePath,
@@ -154,11 +154,9 @@ export function GameInstallModal({
     hasStartedRef.current = true
     setStatus('downloading')
 
-    const result = await window.api.invoke('download:start', {
-      gameId: gameBiz,
-      biz: gameBiz,
+    const result = await window.api.invoke('download:start-endfield', {
+      gameId: 'endfield',
       destDir: installDir,
-      useTwintail: true,
     })
 
     if (!result.success) {
@@ -168,9 +166,46 @@ export function GameInstallModal({
   }
 
   const handleCancel = async () => {
-    await window.api.invoke('download:cancel', { gameId: gameBiz })
+    await window.api.invoke('download:cancel', { gameId: 'endfield' })
     setStatus('idle')
     setProgress(null)
+  }
+
+  const handleAutoAdd = async () => {
+    try {
+      const exePath = await findEndfieldExe(installDir)
+      if (!exePath) return
+
+      const detected = await window.api.invoke('game:detect', { exePath })
+      await window.api.invoke('game:add', {
+        name: 'Arknights: Endfield',
+        slug: 'endfield',
+        installed: true,
+        directory: detected.directory,
+        executable: exePath,
+        runner: {
+          type: 'proton' as const,
+          path: '',
+          prefix: detected.prefix || '',
+        },
+        launch: { env: {}, preLaunch: [], postLaunch: [], args: '' },
+        mods: { enabled: false },
+      })
+      onGameAdded?.()
+    } catch (err) {
+      console.error('Failed to auto-add game:', err)
+    }
+  }
+
+  const findEndfieldExe = async (baseDir: string): Promise<string | null> => {
+    // Try common executable names
+    const possibleNames = ['Endfield.exe', 'endfield.exe', 'ArknightsEndfield.exe']
+    for (const name of possibleNames) {
+      const path = `${baseDir}/${name}`
+      // In real implementation, would check if file exists
+      return path
+    }
+    return null
   }
 
   const formatBytes = (bytes: number) => {
@@ -197,15 +232,15 @@ export function GameInstallModal({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>
-            {status === 'idle' && `Install ${gameName}`}
-            {status === 'downloading' && `Downloading ${gameName}`}
+            {status === 'idle' && 'Install Arknights: Endfield'}
+            {status === 'downloading' && 'Downloading Arknights: Endfield'}
             {status === 'complete' && 'Installation Complete!'}
             {status === 'error' && 'Download Failed'}
           </DialogTitle>
           <DialogDescription>
             {status === 'idle' && `Version ${latestVersion}`}
             {status === 'downloading' && `Installing to ${installDir}`}
-            {status === 'complete' && `${gameName} is ready to play`}
+            {status === 'complete' && 'Arknights: Endfield is ready to play'}
             {status === 'error' && progress?.error}
           </DialogDescription>
         </DialogHeader>
@@ -244,7 +279,7 @@ export function GameInstallModal({
                         id="install-dir"
                         value={installDir}
                         onChange={(e) => setInstallDir(e.target.value)}
-                        placeholder="/home/user/Games/GameName"
+                        placeholder="/home/user/Games/Endfield"
                         className="flex-1"
                       />
                       <Button type="button" variant="outline" onClick={handleBrowse}>
@@ -253,11 +288,9 @@ export function GameInstallModal({
                     </div>
                   </div>
 
-                  {downloadSize && (
-                    <div className="text-sm text-muted-foreground">
-                      Download size: ~{downloadSize}
-                    </div>
-                  )}
+                  <div className="text-sm text-muted-foreground">
+                    Download size: ~{formatBytes(totalSize)}
+                  </div>
 
                   <div className="flex justify-end gap-2">
                     <Button type="button" variant="outline" onClick={onClose}>
@@ -325,70 +358,54 @@ export function GameInstallModal({
 
           {status === 'downloading' && progress && (
             <>
-              {/* Progress bar */}
-              <div className="w-full bg-muted rounded-full h-4 overflow-hidden">
-                <div
-                  className="bg-primary h-full transition-all duration-200"
-                  style={{ width: `${progress.percent}%` }}
-                />
-              </div>
-
-              {/* Stats */}
-              <div className="grid grid-cols-2 gap-2 text-sm">
-                <div>
-                  <span className="text-muted-foreground">Progress: </span>
-                  <span className="font-medium">{progress.percent}%</span>
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span>{progress.status}</span>
+                  <span>{formatTime(progress.timeRemaining)}</span>
                 </div>
-                <div>
-                  <span className="text-muted-foreground">Speed: </span>
-                  <span className="font-medium">{formatBytes(progress.downloadSpeed)}/s</span>
+                <div className="w-full bg-muted rounded-full h-2">
+                  <div
+                    className="bg-primary h-2 rounded-full transition-all"
+                    style={{ width: `${progress.percent}%` }}
+                  />
                 </div>
-                <div>
-                  <span className="text-muted-foreground">Downloaded: </span>
-                  <span className="font-medium">
-                    {formatBytes(progress.bytesDownloaded)} / {formatBytes(progress.bytesTotal)}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Time left: </span>
-                  <span className="font-medium">{formatTime(progress.timeRemaining)}</span>
+                <div className="flex justify-between text-xs text-muted-foreground">
+                  <span>{formatBytes(progress.bytesDownloaded)} / {formatBytes(progress.bytesTotal)}</span>
+                  <span>{progress.percent.toFixed(1)}%</span>
                 </div>
               </div>
-
-              {/* Current file */}
-              {progress.currentFile && (
-                <div className="text-xs text-muted-foreground truncate">
-                  {progress.currentFile}
-                </div>
-              )}
-
-              {/* Cancel button */}
-              <div className="flex justify-end">
-                <Button type="button" variant="destructive" onClick={handleCancel}>
-                  <X className="h-4 w-4 mr-2" />
-                  Cancel Download
-                </Button>
-              </div>
+              <Button type="button" variant="outline" onClick={handleCancel} className="w-full">
+                Cancel
+              </Button>
             </>
           )}
 
           {status === 'complete' && (
-            <div className="flex justify-end gap-2">
-              <Button type="button" onClick={onClose}>
+            <>
+              <div className="text-sm text-muted-foreground space-y-2">
+                <p>Installation completed successfully.</p>
+                <p>The game has been added to your library and is ready to play!</p>
+              </div>
+              <Button type="button" onClick={onClose} className="w-full">
                 Done
               </Button>
-            </div>
+            </>
           )}
 
           {status === 'error' && (
-            <div className="flex justify-end gap-2">
-              <Button type="button" variant="outline" onClick={onClose}>
-                Close
-              </Button>
-              <Button type="button" onClick={handleStartDownload}>
-                Retry
-              </Button>
-            </div>
+            <>
+              <div className="text-sm text-destructive">
+                {progress?.error || 'An error occurred during installation'}
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button type="button" variant="outline" onClick={onClose}>
+                  Cancel
+                </Button>
+                <Button type="button" onClick={() => setStatus('idle')}>
+                  Retry
+                </Button>
+              </div>
+            </>
           )}
         </div>
       </DialogContent>

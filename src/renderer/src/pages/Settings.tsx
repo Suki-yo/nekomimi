@@ -1,13 +1,42 @@
 import { useEffect, useState } from 'react'
+import { Button } from '@/components/ui/button'
 import type { AppConfig } from '../../../shared/types/config'
 
 function Settings() {
   const [config, setConfig] = useState<AppConfig | null>(null)
   const [loading, setLoading] = useState(true)
+  const [installedRunner, setInstalledRunner] = useState<{ name: string } | null>(null)
+  const [runnerDownloading, setRunnerDownloading] = useState(false)
+  const [runnerProgress, setRunnerProgress] = useState(0)
+  const [runnerError, setRunnerError] = useState<string | null>(null)
 
   useEffect(() => {
     loadConfig()
+    loadRunnerInfo()
+
+    const unsub = window.api.on('mods:runner-progress', (percent) => {
+      setRunnerProgress(percent as number)
+    })
+    return () => unsub()
   }, [])
+
+  const loadRunnerInfo = async () => {
+    const info = await window.api.invoke('mods:runner-info')
+    setInstalledRunner(info)
+  }
+
+  const handleDownloadRunner = async () => {
+    setRunnerDownloading(true)
+    setRunnerProgress(0)
+    setRunnerError(null)
+    const result = await window.api.invoke('mods:runner-download')
+    if (result.success) {
+      await loadRunnerInfo()
+    } else {
+      setRunnerError(result.error || 'Download failed')
+    }
+    setRunnerDownloading(false)
+  }
 
   const loadConfig = async () => {
     try {
@@ -100,6 +129,36 @@ function Settings() {
               <option value="native">Native</option>
             </select>
           </div>
+
+          <div className="flex items-center justify-between">
+            <div>
+              <div>Proton-GE</div>
+              <div className="text-sm text-zinc-400">
+                {installedRunner ? installedRunner.name : 'Not installed'}
+              </div>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleDownloadRunner}
+              disabled={runnerDownloading}
+            >
+              {runnerDownloading ? `${runnerProgress}%` : installedRunner ? 'Update' : 'Download'}
+            </Button>
+          </div>
+
+          {runnerDownloading && (
+            <div className="w-full bg-zinc-700 rounded-full h-2 overflow-hidden">
+              <div
+                className="bg-primary h-full transition-all duration-200"
+                style={{ width: `${runnerProgress}%` }}
+              />
+            </div>
+          )}
+
+          {runnerError && (
+            <div className="text-sm text-destructive">{runnerError}</div>
+          )}
         </div>
       </section>
 

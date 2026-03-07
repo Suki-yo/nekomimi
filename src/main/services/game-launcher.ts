@@ -4,6 +4,26 @@ import { loadGameConfig, saveGameConfig } from './config'
 import { shouldUseXXMI, launchGameWithXXMI } from './mod-manager'
 import type { Game } from '../../shared/types/game'
 
+function shellSplit(input: string): string[] {
+  const args: string[] = []
+  let current = ''
+  let quote: string | null = null
+  for (const ch of input) {
+    if (quote) {
+      if (ch === quote) quote = null
+      else current += ch
+    } else if (ch === '"' || ch === "'") {
+      quote = ch
+    } else if (ch === ' ') {
+      if (current) { args.push(current); current = '' }
+    } else {
+      current += ch
+    }
+  }
+  if (current) args.push(current)
+  return args
+}
+
 interface RunningGame {
   exeName: string
   launcherPid?: number
@@ -77,7 +97,7 @@ function buildLaunchCommand(game: Game, useXXMI: boolean): { command: string; ar
   }
 
   if (game.launch.args) {
-    args = args.concat(game.launch.args.split(' ').filter(Boolean))
+    args = args.concat(shellSplit(game.launch.args))
   }
 
   return { command, args, env }
@@ -140,7 +160,8 @@ export async function launchGame(gameId: string): Promise<{ success: boolean; pi
       game.executable,
       game.directory,
       game.runner.path,
-      game.runner.prefix
+      game.runner.prefix,
+      game.launch.env || {}
     )
 
     if (!loaderResult.success) {
@@ -166,6 +187,10 @@ export async function launchGame(gameId: string): Promise<{ success: boolean; pi
     detached: true,
     stdio: 'ignore',
   })
+
+  // Unref the process so the parent doesn't wait for it and can exit cleanly
+  // This prevents the launcher process from becoming a zombie
+  proc.unref()
 
   runningProcesses.set(gameId, {
     exeName,

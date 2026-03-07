@@ -57,6 +57,7 @@ export interface HoyoVersionInfo {
   }>
   sophonManifestUrl?: string
   sophonChunkBaseUrl?: string // Base URL for downloading chunks (from Twintail's file_path)
+  sophonManifests?: Array<{ manifestUrl: string; chunkBaseUrl: string }> // All manifests (multi-part games like ZZZ)
   voicePacks: VoicePack[]
   diffs: DiffPatch[]
 }

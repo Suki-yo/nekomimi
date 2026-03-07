@@ -165,6 +165,14 @@ export interface IPCChannels {
       downloadMode: 'zip' | 'sophon' | undefined
     }
   }
+  'download:fetch-endfield-info': {
+    request: Record<string, never>
+    response: { version: string; totalSize: number } | null
+  }
+  'download:start-endfield': {
+    request: { gameId: string; destDir: string }
+    response: { success: boolean; error?: string }
+  }
 }
 
 // Utility type - extracts request type for a channel
