@@ -138,6 +138,18 @@ export interface IPCChannels {
   }
 
   // ─────────────────────────────────────────────
+  // Steam Runtime
+  // ─────────────────────────────────────────────
+  'steamrt:status': {
+    request: void
+    response: { installed: boolean; path: string | null }
+  }
+  'steamrt:install': {
+    request: void
+    response: { success: boolean; error?: string }
+  }
+
+  // ─────────────────────────────────────────────
   // Downloads
   // ─────────────────────────────────────────────
   'download:fetch-info': {

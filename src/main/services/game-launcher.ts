@@ -1,7 +1,10 @@
 import { spawn, execSync } from 'child_process'
+import { mkdirSync } from 'fs'
+import { join } from 'path'
 import { getGame, updateGame } from './database'
 import { loadGameConfig, saveGameConfig } from './config'
 import { shouldUseXXMI, launchGameWithXXMI } from './mod-manager'
+import { findSteamrt } from './steamrt'
 import type { Game } from '../../shared/types/game'
 
 function shellSplit(input: string): string[] {
@@ -75,12 +78,39 @@ function buildLaunchCommand(game: Game, useXXMI: boolean): { command: string; ar
   let args: string[]
 
   if (game.runner.type === 'proton') {
-    command = 'umu-run'
-    env.PROTONPATH = game.runner.path
-    env.GAMEID = game.launch.env?.GAMEID || '0'
-    // umu-run uses STEAM_COMPAT_DATA_PATH (parent of pfx), not WINEPREFIX directly
-    env.STEAM_COMPAT_DATA_PATH = game.runner.prefix.replace(/\/pfx\/?$/, '')
-    args = [game.executable]
+    const steamrt = findSteamrt()
+    const prefixParent = game.runner.prefix.replace(/\/pfx\/?$/, '')
+    const shaderCache = join(prefixParent, 'shadercache')
+    mkdirSync(shaderCache, { recursive: true })
+
+    if (steamrt) {
+      // Use Steam Runtime (pressure-vessel) + proton script directly — matches Twintail's approach
+      command = join(steamrt, '_v2-entry-point')
+      args = [
+        '--verb=waitforexitandrun', '--',
+        join(game.runner.path, 'proton'),
+        'waitforexitandrun',
+        'z:\\' + game.executable,
+      ]
+      env.PROTONFIXES_DISABLE = '1'
+      env.STEAM_COMPAT_APP_ID = '0'
+      env.STEAM_COMPAT_CLIENT_INSTALL_PATH = ''
+      env.STEAM_COMPAT_DATA_PATH = prefixParent
+      env.STEAM_COMPAT_INSTALL_PATH = game.directory
+      env.STEAM_COMPAT_LIBRARY_PATHS = `${game.directory}:${game.runner.prefix}`
+      env.STEAM_COMPAT_SHADER_PATH = shaderCache
+      env.STEAM_COMPAT_TOOL_PATHS = game.runner.path
+      env.STEAM_ZENITY = '/usr/bin/zenity'
+      env.WINEARCH = 'win64'
+      env.WINEPREFIX = game.runner.prefix
+    } else {
+      // Fallback to umu-run if Steam Runtime not found
+      command = 'umu-run'
+      env.PROTONPATH = game.runner.path
+      env.GAMEID = game.launch.env?.GAMEID || '0'
+      env.STEAM_COMPAT_DATA_PATH = prefixParent
+      args = [game.executable]
+    }
   } else if (game.runner.type === 'wine') {
     command = 'wine'
     args = [game.executable]

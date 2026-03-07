@@ -9,33 +9,19 @@ function Settings() {
   const [runnerDownloading, setRunnerDownloading] = useState(false)
   const [runnerProgress, setRunnerProgress] = useState(0)
   const [runnerError, setRunnerError] = useState<string | null>(null)
-
-  useEffect(() => {
-    loadConfig()
-    loadRunnerInfo()
-
-    const unsub = window.api.on('mods:runner-progress', (percent) => {
-      setRunnerProgress(percent as number)
-    })
-    return () => unsub()
-  }, [])
+  const [steamrtStatus, setSteamrtStatus] = useState<{ installed: boolean; path: string | null } | null>(null)
+  const [steamrtDownloading, setSteamrtDownloading] = useState(false)
+  const [steamrtProgress, setSteamrtProgress] = useState(0)
+  const [steamrtError, setSteamrtError] = useState<string | null>(null)
 
   const loadRunnerInfo = async () => {
     const info = await window.api.invoke('mods:runner-info')
     setInstalledRunner(info)
   }
 
-  const handleDownloadRunner = async () => {
-    setRunnerDownloading(true)
-    setRunnerProgress(0)
-    setRunnerError(null)
-    const result = await window.api.invoke('mods:runner-download')
-    if (result.success) {
-      await loadRunnerInfo()
-    } else {
-      setRunnerError(result.error || 'Download failed')
-    }
-    setRunnerDownloading(false)
+  const loadSteamrtStatus = async () => {
+    const status = await window.api.invoke('steamrt:status')
+    setSteamrtStatus(status)
   }
 
   const loadConfig = async () => {
@@ -52,6 +38,46 @@ function Settings() {
     const updated = await window.api.invoke('config:update', updates)
     setConfig(updated)
   }
+
+  const handleDownloadRunner = async () => {
+    setRunnerDownloading(true)
+    setRunnerProgress(0)
+    setRunnerError(null)
+    const result = await window.api.invoke('mods:runner-download')
+    if (result.success) {
+      await loadRunnerInfo()
+    } else {
+      setRunnerError(result.error || 'Download failed')
+    }
+    setRunnerDownloading(false)
+  }
+
+  const handleInstallSteamrt = async () => {
+    setSteamrtDownloading(true)
+    setSteamrtProgress(0)
+    setSteamrtError(null)
+    const result = await window.api.invoke('steamrt:install')
+    if (result.success) {
+      await loadSteamrtStatus()
+    } else {
+      setSteamrtError(result.error || 'Download failed')
+    }
+    setSteamrtDownloading(false)
+  }
+
+  useEffect(() => {
+    loadConfig()
+    loadRunnerInfo()
+    loadSteamrtStatus()
+
+    const unsubRunner = window.api.on('mods:runner-progress', (percent) => {
+      setRunnerProgress(percent as number)
+    })
+    const unsubSteamrt = window.api.on('steamrt:progress', (percent) => {
+      setSteamrtProgress(percent as number)
+    })
+    return () => { unsubRunner(); unsubSteamrt() }
+  }, [])
 
   if (loading || !config) {
     return (
@@ -158,6 +184,54 @@ function Settings() {
 
           {runnerError && (
             <div className="text-sm text-destructive">{runnerError}</div>
+          )}
+        </div>
+      </section>
+
+      {/* Steam Runtime */}
+      <section className="mb-8">
+        <h2 className="text-lg font-medium mb-4 text-zinc-300">Steam Runtime</h2>
+        <p className="text-sm text-zinc-400 mb-4">
+          Required for launching Proton games (pressure-vessel container). ~700 MB.
+        </p>
+
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <div>Steam Linux Runtime (sniper)</div>
+              <div className="text-sm text-zinc-400">
+                {steamrtStatus === null
+                  ? 'Checking...'
+                  : steamrtStatus.installed
+                    ? steamrtStatus.path
+                    : 'Not installed'}
+              </div>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleInstallSteamrt}
+              disabled={steamrtDownloading}
+            >
+              {steamrtDownloading
+                ? `${steamrtProgress}%`
+                : steamrtStatus?.installed
+                  ? 'Reinstall'
+                  : 'Download'}
+            </Button>
+          </div>
+
+          {steamrtDownloading && (
+            <div className="w-full bg-zinc-700 rounded-full h-2 overflow-hidden">
+              <div
+                className="bg-primary h-full transition-all duration-200"
+                style={{ width: `${steamrtProgress}%` }}
+              />
+            </div>
+          )}
+
+          {steamrtError && (
+            <div className="text-sm text-destructive">{steamrtError}</div>
           )}
         </div>
       </section>
