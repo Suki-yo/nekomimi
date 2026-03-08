@@ -384,6 +384,21 @@ export async function downloadImporter(
     }
   }
 
+  // Phase 3: Register importer in XXMI config
+  const configPath = path.join(xxmiDir, 'XXMI Launcher Config.json')
+  if (fs.existsSync(configPath)) {
+    try {
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
+      if (config?.Launcher && !config.Launcher.enabled_importers.includes(importer)) {
+        config.Launcher.enabled_importers.push(importer)
+        fs.writeFileSync(configPath, JSON.stringify(config, null, 4))
+        console.log(`[xxmi] Added ${importer} to enabled_importers`)
+      }
+    } catch (err) {
+      console.error('[xxmi] Failed to register importer in config:', err)
+    }
+  }
+
   console.log(`[xxmi] ${importer} installed successfully`)
   return { success: true }
 }
@@ -423,13 +438,13 @@ function configureImporterGameFolder(importer: string, gameDirectory: string): b
     } else {
       // Importer just installed via downloadImporter — seed a minimal config stub so
       // XXMI finds a valid Importers section and doesn't show its own install dialog.
-      const useHookMode = importer !== 'EFMI' && importer !== 'GIMI'
+      const useInjectMode = importer === 'EFMI' || importer === 'GIMI' || importer === 'WWMI'
       if (!config.Importers) config.Importers = {}
       config.Importers[importer] = {
         Importer: {
           game_folder: winePath,
           process_start_method: 'Shell',
-          custom_launch_inject_mode: useHookMode ? 'Hook' : 'Inject',
+          custom_launch_inject_mode: useInjectMode ? 'Inject' : 'Hook',
         }
       }
     }
@@ -461,9 +476,9 @@ function ensureLinuxCompatibility(importer: string): void {
         needsSave = true
       }
 
-      // EFMI and GIMI require Inject mode - Hook mode waits for window which fails on Wayland for Genshin
-      const useHookMode = importer !== 'EFMI' && importer !== 'GIMI'
-      const targetMode = useHookMode ? 'Hook' : 'Inject'
+      // EFMI, GIMI, and WWMI require Inject mode - Hook mode waits for window which fails on Wayland
+      const useInjectMode = importer === 'EFMI' || importer === 'GIMI' || importer === 'WWMI'
+      const targetMode = useInjectMode ? 'Inject' : 'Hook'
       if (importerConfig.custom_launch_inject_mode !== targetMode) {
         importerConfig.custom_launch_inject_mode = targetMode
         needsSave = true
