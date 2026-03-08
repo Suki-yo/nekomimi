@@ -351,8 +351,8 @@ export async function downloadImporter(
   const sharedDll = path.join(xxmiDir, 'd3d11.dll')
   const sharedCompiler = path.join(xxmiDir, 'd3dcompiler_47.dll')
 
-  if (!fs.existsSync(sharedDll)) {
-    // Download XXMI-Libs-Package; its zip has DLLs at root → extract to xxmiDir root
+  if (!fs.existsSync(sharedDll) || !fs.existsSync(sharedCompiler)) {
+    // Download XXMI-Libs-Package; extract and move DLLs to xxmiDir root
     const libsRelease = await fetchGitHubRelease(XXMI_LIBS_RELEASES_API)
     if (!libsRelease) return { success: false, error: 'Failed to fetch XXMI libs release' }
     const libsAsset = libsRelease.assets?.find(a => a.name.toLowerCase().endsWith('.zip'))
@@ -363,9 +363,54 @@ export async function downloadImporter(
     const dl2 = await downloadFile(libsAsset.browser_download_url, libsZip,
       onProgress ? p => onProgress(70 + Math.round(p * 0.3)) : undefined)
     if (!dl2.success) return dl2
-    // Extract to xxmiDir root, not to importerDir
-    const ex2 = await extractArchive(libsZip, xxmiDir, 'zip')
+
+    // Extract to temp folder first to find DLLs (zip may have them at root or in subdir)
+    const tempDir = path.join(xxmiDir, 'xxmi-libs-temp')
+    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true })
+    const ex2 = await extractArchive(libsZip, tempDir, 'zip')
     if (!ex2.success) return ex2
+
+    // Find and move d3d11.dll and d3dcompiler_47.dll to root
+    const findAndMove = (filename: string, dest: string) => {
+      // First check in root of extraction
+      let src = path.join(tempDir, filename)
+      if (fs.existsSync(src)) {
+        fs.renameSync(src, dest)
+        console.log(`[xxmi] Moved ${filename} to root`)
+        return true
+      }
+      // Otherwise search subdirs
+      const entries = fs.readdirSync(tempDir, { withFileTypes: true })
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          const subpath = path.join(tempDir, entry.name, filename)
+          if (fs.existsSync(subpath)) {
+            fs.copyFileSync(subpath, dest)
+            console.log(`[xxmi] Copied ${filename} to root`)
+            return true
+          }
+        }
+      }
+      return false
+    }
+
+    if (!fs.existsSync(sharedDll)) {
+      if (!findAndMove('d3d11.dll', sharedDll)) {
+        console.warn('[xxmi] Could not find d3d11.dll in XXMI-Libs package')
+      }
+    }
+    if (!fs.existsSync(sharedCompiler)) {
+      if (!findAndMove('d3dcompiler_47.dll', sharedCompiler)) {
+        console.warn('[xxmi] Could not find d3dcompiler_47.dll in XXMI-Libs package')
+      }
+    }
+
+    // Cleanup temp folder
+    try {
+      fs.rmSync(tempDir, { recursive: true, force: true })
+    } catch (err) {
+      console.warn('[xxmi] Failed to clean up temp folder:', err)
+    }
   }
 
   // Phase 2b: Create symlinks from importer folder to shared DLLs (Twintail style)
@@ -373,23 +418,19 @@ export async function downloadImporter(
   const compilerLink = path.join(importerDir, 'd3dcompiler_47.dll')
 
   try {
-    // Remove old copies if they exist
-    if (fs.existsSync(dllLink) && fs.lstatSync(dllLink).isFile()) {
+    // Remove old files/links if they exist
+    if (fs.existsSync(dllLink)) {
       fs.unlinkSync(dllLink)
     }
-    if (fs.existsSync(compilerLink) && fs.lstatSync(compilerLink).isFile()) {
+    if (fs.existsSync(compilerLink)) {
       fs.unlinkSync(compilerLink)
     }
 
-    // Create symlinks
-    if (!fs.existsSync(dllLink)) {
-      fs.symlinkSync(sharedDll, dllLink, 'file')
-      console.log(`[xxmi] Created symlink for d3d11.dll`)
-    }
-    if (!fs.existsSync(compilerLink)) {
-      fs.symlinkSync(sharedCompiler, compilerLink, 'file')
-      console.log(`[xxmi] Created symlink for d3dcompiler_47.dll`)
-    }
+    // Create symlinks to shared DLLs
+    fs.symlinkSync(sharedDll, dllLink, 'file')
+    console.log(`[xxmi] Created symlink for d3d11.dll`)
+    fs.symlinkSync(sharedCompiler, compilerLink, 'file')
+    console.log(`[xxmi] Created symlink for d3dcompiler_47.dll`)
   } catch (err) {
     console.error('[xxmi] Failed to create symlinks:', err)
     return { success: false, error: `Failed to create symlinks: ${err}` }
