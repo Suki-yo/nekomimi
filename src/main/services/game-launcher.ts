@@ -1,11 +1,16 @@
 import { spawn, execSync } from 'child_process'
 import { mkdirSync } from 'fs'
 import { join } from 'path'
+import { homedir } from 'os'
 import { getGame, updateGame } from './database'
 import { loadGameConfig, saveGameConfig } from './config'
 import { shouldUseXXMI, launchGameWithXXMI } from './mod-manager'
 import { findSteamrt, downloadSteamrt } from './steamrt'
 import type { Game } from '../../shared/types/game'
+
+function expandHome(p: string): string {
+  return p.startsWith('~/') ? join(homedir(), p.slice(2)) : p
+}
 
 function shellSplit(input: string): string[] {
   const args: string[] = []
@@ -38,8 +43,9 @@ const runningProcesses = new Map<string, RunningGame>()
 const POLL_INTERVAL = 5000
 
 function isProcessRunning(exeName: string): boolean {
+  if (!exeName) return false
   try {
-    const result = execSync(`pgrep -f "${exeName}"`, { stdio: 'pipe' })
+    const result = execSync(`pgrep -fi "${exeName}"`, { stdio: 'pipe' })
     return result.toString().trim().length > 0
   } catch {
     return false
@@ -69,8 +75,17 @@ function startPolling() {
 startPolling()
 
 function buildLaunchCommand(game: Game, useXXMI: boolean): { command: string; args: string[]; env: Record<string, string> } {
+  // Resolve prefix: expand ~ and auto-generate if empty
+  let prefix = expandHome(game.runner.prefix)
+  if (!prefix) {
+    prefix = join(homedir(), '.local', 'share', 'nekomimi', 'prefixes', game.slug, 'pfx')
+    mkdirSync(prefix, { recursive: true })
+  }
+
+  const runnerPath = expandHome(game.runner.path)
+
   const env: Record<string, string> = {
-    WINEPREFIX: game.runner.prefix,
+    WINEPREFIX: prefix,
     ...game.launch.env,
   }
 
@@ -79,7 +94,7 @@ function buildLaunchCommand(game: Game, useXXMI: boolean): { command: string; ar
 
   if (game.runner.type === 'proton') {
     const steamrt = findSteamrt()
-    const prefixParent = game.runner.prefix.replace(/\/pfx\/?$/, '')
+    const prefixParent = prefix.replace(/\/pfx\/?$/, '')
     const shaderCache = join(prefixParent, 'shadercache')
     mkdirSync(shaderCache, { recursive: true })
 
@@ -88,7 +103,7 @@ function buildLaunchCommand(game: Game, useXXMI: boolean): { command: string; ar
       command = join(steamrt, '_v2-entry-point')
       args = [
         '--verb=waitforexitandrun', '--',
-        join(game.runner.path, 'proton'),
+        join(runnerPath, 'proton'),
         'waitforexitandrun',
         'z:\\' + game.executable,
       ]
@@ -97,16 +112,16 @@ function buildLaunchCommand(game: Game, useXXMI: boolean): { command: string; ar
       env.STEAM_COMPAT_CLIENT_INSTALL_PATH = ''
       env.STEAM_COMPAT_DATA_PATH = prefixParent
       env.STEAM_COMPAT_INSTALL_PATH = game.directory
-      env.STEAM_COMPAT_LIBRARY_PATHS = `${game.directory}:${game.runner.prefix}`
+      env.STEAM_COMPAT_LIBRARY_PATHS = `${game.directory}:${prefix}`
       env.STEAM_COMPAT_SHADER_PATH = shaderCache
-      env.STEAM_COMPAT_TOOL_PATHS = game.runner.path
+      env.STEAM_COMPAT_TOOL_PATHS = runnerPath
       env.STEAM_ZENITY = '/usr/bin/zenity'
       env.WINEARCH = 'win64'
-      env.WINEPREFIX = game.runner.prefix
+      env.WINEPREFIX = prefix
     } else {
       // Fallback to umu-run if Steam Runtime not found
       command = 'umu-run'
-      env.PROTONPATH = game.runner.path
+      env.PROTONPATH = runnerPath
       env.GAMEID = game.launch.env?.GAMEID || '0'
       env.STEAM_COMPAT_DATA_PATH = prefixParent
       args = [game.executable]
@@ -163,9 +178,19 @@ export async function launchGame(
     runningProcesses.delete(gameId)
   }
 
-  if (!game.executable || !game.runner?.path || !game.runner?.prefix) {
-    return { success: false, error: 'Game is missing required launch fields' }
+  if (!game.executable || !game.runner?.path) {
+    return { success: false, error: 'Game is missing required launch fields (executable or runner)' }
   }
+
+  // Resolve prefix: expand ~ and auto-generate if not set
+  const resolvedPrefix = (() => {
+    const p = expandHome(game.runner.prefix)
+    if (p) return p
+    const auto = join(homedir(), '.local', 'share', 'nekomimi', 'prefixes', game.slug, 'pfx')
+    mkdirSync(auto, { recursive: true })
+    return auto
+  })()
+  const resolvedRunnerPath = expandHome(game.runner.path)
 
   const gameSupportsXXMI = shouldUseXXMI(game.executable)
   const modsEnabled = game.mods?.enabled ?? false
@@ -192,8 +217,8 @@ export async function launchGame(
     const loaderResult = await launchGameWithXXMI(
       game.executable,
       game.directory,
-      game.runner.path,
-      game.runner.prefix,
+      resolvedRunnerPath,
+      resolvedPrefix,
       game.launch.env || {}
     )
 

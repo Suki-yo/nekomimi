@@ -133,10 +133,15 @@ export function EndfieldInstallModal({
         runner: {
           type: 'proton' as const,
           path: '',
-          prefix: locateDetected.prefix || '',
+          prefix: locateDetected.prefix || '~/Games/prefixes/endfield/pfx',
         },
-        launch: { env: {}, preLaunch: [], postLaunch: [], args: '' },
-        mods: { enabled: false },
+        launch: {
+          env: { STEAM_COMPAT_CONFIG: 'noxalia', WINEDLLOVERRIDES: 'lsteamclient=d;KRSDKExternal.exe=d' },
+          preLaunch: [],
+          postLaunch: [],
+          args: '-force-d3d11',
+        },
+        mods: { enabled: true, importer: 'EFMI' },
       })
       onGameAdded?.()
       onClose()
@@ -171,6 +176,8 @@ export function EndfieldInstallModal({
   }
 
   const handleAutoAdd = async () => {
+    const runners: { path: string }[] = await window.api.invoke('runner:list')
+    const runnerPath = runners.length > 0 ? runners[0].path : ''
     try {
       await window.api.invoke('game:add', {
         name: 'Arknights: Endfield',
@@ -178,9 +185,14 @@ export function EndfieldInstallModal({
         installed: true,
         directory: installDir,
         executable: `${installDir}/Endfield.exe`,
-        runner: { type: 'proton' as const, path: '', prefix: '' },
-        launch: { env: {}, preLaunch: [], postLaunch: [], args: '' },
-        mods: { enabled: false },
+        runner: { type: 'proton' as const, path: runnerPath, prefix: '~/Games/prefixes/endfield/pfx' },
+        launch: {
+          env: { STEAM_COMPAT_CONFIG: 'noxalia', WINEDLLOVERRIDES: 'lsteamclient=d;KRSDKExternal.exe=d' },
+          preLaunch: [],
+          postLaunch: [],
+          args: '-force-d3d11',
+        },
+        mods: { enabled: true, importer: 'EFMI' },
       })
       onGameAdded?.()
     } catch (err) {

@@ -134,10 +134,15 @@ export function WuwaInstallModal({
         runner: {
           type: 'proton' as const,
           path: '',
-          prefix: locateDetected.prefix || '',
+          prefix: locateDetected.prefix || '~/Games/prefixes/wuwa/pfx',
         },
-        launch: { env: {}, preLaunch: [], postLaunch: [], args: '' },
-        mods: { enabled: false },
+        launch: {
+          env: { STEAM_COMPAT_CONFIG: 'noopwr,noxalia' },
+          preLaunch: [],
+          postLaunch: [],
+          args: '',
+        },
+        mods: { enabled: false, importer: 'WWMI' },
       })
       onGameAdded?.()
       onClose()
@@ -172,6 +177,8 @@ export function WuwaInstallModal({
   }
 
   const handleAutoAdd = async () => {
+    const runners: { path: string }[] = await window.api.invoke('runner:list')
+    const runnerPath = runners.length > 0 ? runners[0].path : ''
     try {
       await window.api.invoke('game:add', {
         name: 'Wuthering Waves',
@@ -179,9 +186,14 @@ export function WuwaInstallModal({
         installed: true,
         directory: installDir,
         executable: `${installDir}/Client/Binaries/Win64/Client-Win64-Shipping.exe`,
-        runner: { type: 'proton' as const, path: '', prefix: '' },
-        launch: { env: {}, preLaunch: [], postLaunch: [], args: '' },
-        mods: { enabled: false },
+        runner: { type: 'proton' as const, path: runnerPath, prefix: '~/Games/prefixes/wuwa/pfx' },
+        launch: {
+          env: { STEAM_COMPAT_CONFIG: 'noopwr,noxalia' },
+          preLaunch: [],
+          postLaunch: [],
+          args: '',
+        },
+        mods: { enabled: false, importer: 'WWMI' },
       })
       onGameAdded?.()
     } catch (err) {

@@ -14,6 +14,41 @@ import type { DownloadProgress } from '../../../shared/types/download'
 
 type InstallMode = 'download' | 'locate'
 
+const BIZ_CONFIG = {
+  genshin: {
+    slug: 'genshinimpact',
+    exe: 'GenshinImpact.exe',
+    env: {
+      STEAM_COMPAT_CONFIG: 'noxalia',
+      WINEDLLOVERRIDES: 'lsteamclient=d;KRSDKExternal.exe=d',
+    },
+    mods: { enabled: true, importer: 'GIMI' },
+    args: '',
+  },
+  starrail: {
+    slug: 'starrail',
+    exe: 'StarRail.exe',
+    env: {
+      STEAM_COMPAT_CONFIG: 'noxalia',
+      WINEDLLOVERRIDES: 'wintrust=b;dbghelp=n,b',
+      STUB_WINTRUST: '1',
+      BLOCK_FIRST_REQ: '1',
+    },
+    mods: { enabled: true, importer: 'SRMI' },
+    args: '',
+  },
+  zzz: {
+    slug: 'zenlesszonezero',
+    exe: 'ZenlessZoneZero.exe',
+    env: {
+      STEAM_COMPAT_CONFIG: 'noxalia,gamedrive',
+      WINEDLLOVERRIDES: 'lsteamclient=d;KRSDKExternal.exe=d;jsproxy=n,b',
+    },
+    mods: { enabled: true, importer: 'ZZMI' },
+    args: '',
+  },
+} as const
+
 interface GameInstallModalProps {
   open: boolean
   onClose: () => void
@@ -79,6 +114,7 @@ export function GameInstallModal({
       if ((data as { gameId: string }).gameId === gameBiz) {
         setStatus('complete')
         setProgress((prev) => prev ? { ...prev, percent: 100, status: 'installed' } : null)
+        handleAutoAdd()
       }
     })
 
@@ -124,20 +160,21 @@ export function GameInstallModal({
   const handleLocateConfirm = async () => {
     if (!locateDetected) return
     setLocating(true)
+    const config = BIZ_CONFIG[gameBiz]
     try {
       await window.api.invoke('game:add', {
         name: gameName,
-        slug: gameName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
+        slug: config.slug,
         installed: true,
         directory: locateDetected.directory,
         executable: locateExePath,
         runner: {
           type: 'proton' as const,
           path: '',
-          prefix: locateDetected.prefix || '',
+          prefix: locateDetected.prefix || `~/Games/prefixes/${config.slug}/pfx`,
         },
-        launch: { env: {}, preLaunch: [], postLaunch: [], args: '' },
-        mods: { enabled: false },
+        launch: { env: config.env, preLaunch: [], postLaunch: [], args: config.args },
+        mods: config.mods,
       })
       onGameAdded?.()
       onClose()
@@ -145,6 +182,31 @@ export function GameInstallModal({
       setLocateError(err instanceof Error ? err.message : 'Failed to add game')
     } finally {
       setLocating(false)
+    }
+  }
+
+  const handleAutoAdd = async () => {
+    const config = BIZ_CONFIG[gameBiz]
+    const runners: { path: string }[] = await window.api.invoke('runner:list')
+    const runnerPath = runners.length > 0 ? runners[0].path : ''
+    try {
+      await window.api.invoke('game:add', {
+        name: gameName,
+        slug: config.slug,
+        installed: true,
+        directory: installDir,
+        executable: `${installDir}/${config.exe}`,
+        runner: {
+          type: 'proton' as const,
+          path: runnerPath,
+          prefix: `~/Games/prefixes/${config.slug}/pfx`,
+        },
+        launch: { env: config.env, preLaunch: [], postLaunch: [], args: config.args },
+        mods: config.mods,
+      })
+      onGameAdded?.()
+    } catch (err) {
+      console.error('Failed to auto-add game:', err)
     }
   }
 

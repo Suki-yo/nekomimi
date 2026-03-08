@@ -3,6 +3,8 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import * as crypto from 'crypto'
 import * as os from 'os'
+import * as path from 'path'
+import { mkdirSync } from 'fs'
 import {
   getGames,
   getGame as dbGetGame,
@@ -51,7 +53,7 @@ export const registerGamesHandlers = () => {
   ipcMain.handle(
     'game:add',
     (_event, input: Omit<Game, 'id' | 'playtime' | 'lastPlayed'>): Game => {
-      const expandTilde = (p: string) => (p.startsWith('~/') ? os.homedir() + p.slice(1) : p)
+      const expandTilde = (p: string) => (p.startsWith('~/') ? path.join(os.homedir(), p.slice(2)) : p)
 
       const slug = input.slug || generateSlug(input.name)
 
@@ -65,11 +67,21 @@ export const registerGamesHandlers = () => {
       const id = crypto.randomUUID()
       const configPath = getGameConfigPath(slug)
 
+      // Auto-generate prefix if not provided
+      const resolvedPrefix = expandTilde(input.runner.prefix) ||
+        path.join(os.homedir(), 'Games', 'prefixes', slug, 'pfx')
+      mkdirSync(resolvedPrefix, { recursive: true })
+
       // Create the full Game object
       const game: Game = {
         ...input,
         directory: expandTilde(input.directory),
         executable: expandTilde(input.executable),
+        runner: {
+          ...input.runner,
+          path: expandTilde(input.runner.path),
+          prefix: resolvedPrefix,
+        },
         id,
         slug,
         playtime: 0,

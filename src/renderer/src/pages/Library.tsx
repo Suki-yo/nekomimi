@@ -677,7 +677,7 @@ function Library() {
               const isInstalled = checkGameInstalled(hoyoGame.biz)
 
               return (
-                <Card key={hoyoGame.biz} className="overflow-hidden">
+                <Card key={hoyoGame.biz} className="overflow-hidden flex flex-col">
                   <div
                     className="aspect-video bg-gradient-to-br from-muted to-muted/50 flex items-center justify-center relative"
                     style={{
@@ -698,7 +698,7 @@ function Library() {
                     )}
                   </div>
 
-                  <CardContent className="p-4">
+                  <CardContent className="p-4 flex flex-col flex-1">
                     <h3 className="font-semibold text-lg mb-1">{hoyoGame.name}</h3>
                     <div className="flex items-center gap-4 text-sm text-muted-foreground mb-4">
                       {versionInfo ? (
@@ -725,7 +725,7 @@ function Library() {
                     )}
 
                     <Button
-                      className="w-full"
+                      className="w-full mt-auto"
                       onClick={() => handleInstallGame(hoyoGame)}
                       disabled={isInstalled || !versionInfo}
                       title={!versionInfo ? 'Version info required to install' : undefined}
@@ -739,7 +739,7 @@ function Library() {
             })}
 
           {/* Endfield Card */}
-          <Card className="overflow-hidden">
+          <Card className="overflow-hidden flex flex-col">
             <div
               className="aspect-video bg-gradient-to-br flex items-center justify-center relative"
               style={{
@@ -760,7 +760,7 @@ function Library() {
               )}
             </div>
 
-            <CardContent className="p-4">
+            <CardContent className="p-4 flex flex-col flex-1">
               <h3 className="font-semibold text-lg mb-1">Arknights: Endfield</h3>
               <div className="flex items-center gap-4 text-sm text-muted-foreground mb-4">
                 <span className="text-xs text-muted-foreground">HyperGryph</span>
@@ -790,7 +790,7 @@ function Library() {
               )}
 
               <Button
-                className="w-full"
+                className="w-full mt-auto"
                 onClick={() => setEndfieldInstallOpen(true)}
                 disabled={checkGameInstalled('endfield') || !endfieldInfo}
                 title={!endfieldInfo ? 'Version info required to install' : undefined}
@@ -802,7 +802,7 @@ function Library() {
           </Card>
 
           {/* Wuthering Waves Card */}
-          <Card className="overflow-hidden">
+          <Card className="overflow-hidden flex flex-col">
             <div
               className="aspect-video bg-gradient-to-br flex items-center justify-center relative"
               style={{
@@ -823,7 +823,7 @@ function Library() {
               )}
             </div>
 
-            <CardContent className="p-4">
+            <CardContent className="p-4 flex flex-col flex-1">
               <h3 className="font-semibold text-lg mb-1">Wuthering Waves</h3>
               <div className="flex items-center gap-4 text-sm text-muted-foreground mb-4">
                 <span className="text-xs text-muted-foreground">Kuro Games</span>
@@ -851,7 +851,7 @@ function Library() {
               )}
 
               <Button
-                className="w-full"
+                className="w-full mt-auto"
                 onClick={() => setWuwaInstallOpen(true)}
                 disabled={checkGameInstalled('wuwa') || !wuwaInfo}
                 title={!wuwaInfo ? 'Version info required to install' : undefined}

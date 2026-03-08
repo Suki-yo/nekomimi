@@ -317,15 +317,6 @@ export async function downloadRunner(onProgress?: (percent: number) => void): Pr
   return extractResult
 }
 
-function findInstalledImporterLibs(xxmiDir: string, excludeImporter: string): string | null {
-  for (const imp of Object.keys(IMPORTER_RELEASES_API)) {
-    if (imp === excludeImporter) continue
-    const dll = path.join(xxmiDir, imp, 'd3d11.dll')
-    if (fs.existsSync(dll)) return path.join(xxmiDir, imp)
-  }
-  return null
-}
-
 export async function downloadImporter(
   importer: string,
   onProgress?: (percent: number) => void
@@ -355,33 +346,53 @@ export async function downloadImporter(
   const ex1 = await extractArchive(importerZip, importerDir, 'zip')
   if (!ex1.success) return ex1
 
-  // Phase 2: Deploy XXMI Libs DLLs (d3d11.dll + d3dcompiler_47.dll)
-  const dllDest = path.join(importerDir, 'd3d11.dll')
+  // Phase 2: Deploy shared XXMI Libs DLLs (d3d11.dll + d3dcompiler_47.dll) at root
+  // Use symlinks like Twintail does, so DLLs are shared across all importers
+  const sharedDll = path.join(xxmiDir, 'd3d11.dll')
+  const sharedCompiler = path.join(xxmiDir, 'd3dcompiler_47.dll')
 
-  if (!fs.existsSync(dllDest)) {
-    // Try copying from another already-installed importer to avoid re-download
-    const libsSource = findInstalledImporterLibs(xxmiDir, importer)
-    if (libsSource) {
-      console.log(`[xxmi] Copying libs from ${path.basename(libsSource)}`)
-      fs.copyFileSync(path.join(libsSource, 'd3d11.dll'), dllDest)
-      const compilerSrc = path.join(libsSource, 'd3dcompiler_47.dll')
-      if (fs.existsSync(compilerSrc))
-        fs.copyFileSync(compilerSrc, path.join(importerDir, 'd3dcompiler_47.dll'))
-    } else {
-      // Download XXMI-Libs-Package; its zip has DLLs at root → extract to importerDir
-      const libsRelease = await fetchGitHubRelease(XXMI_LIBS_RELEASES_API)
-      if (!libsRelease) return { success: false, error: 'Failed to fetch XXMI libs release' }
-      const libsAsset = libsRelease.assets?.find(a => a.name.toLowerCase().endsWith('.zip'))
-      if (!libsAsset) return { success: false, error: `No zip asset in XXMI libs release (assets: ${JSON.stringify(libsRelease.assets?.map(a => a.name))})` }
+  if (!fs.existsSync(sharedDll)) {
+    // Download XXMI-Libs-Package; its zip has DLLs at root → extract to xxmiDir root
+    const libsRelease = await fetchGitHubRelease(XXMI_LIBS_RELEASES_API)
+    if (!libsRelease) return { success: false, error: 'Failed to fetch XXMI libs release' }
+    const libsAsset = libsRelease.assets?.find(a => a.name.toLowerCase().endsWith('.zip'))
+    if (!libsAsset) return { success: false, error: `No zip asset in XXMI libs release (assets: ${JSON.stringify(libsRelease.assets?.map(a => a.name))})` }
 
-      console.log(`[xxmi] Downloading XXMI-Libs ${libsRelease.tag_name}`)
-      const libsZip = path.join(xxmiDir, 'xxmi-libs-temp.zip')
-      const dl2 = await downloadFile(libsAsset.browser_download_url, libsZip,
-        onProgress ? p => onProgress(70 + Math.round(p * 0.3)) : undefined)
-      if (!dl2.success) return dl2
-      const ex2 = await extractArchive(libsZip, importerDir, 'zip')
-      if (!ex2.success) return ex2
+    console.log(`[xxmi] Downloading XXMI-Libs ${libsRelease.tag_name}`)
+    const libsZip = path.join(xxmiDir, 'xxmi-libs-temp.zip')
+    const dl2 = await downloadFile(libsAsset.browser_download_url, libsZip,
+      onProgress ? p => onProgress(70 + Math.round(p * 0.3)) : undefined)
+    if (!dl2.success) return dl2
+    // Extract to xxmiDir root, not to importerDir
+    const ex2 = await extractArchive(libsZip, xxmiDir, 'zip')
+    if (!ex2.success) return ex2
+  }
+
+  // Phase 2b: Create symlinks from importer folder to shared DLLs (Twintail style)
+  const dllLink = path.join(importerDir, 'd3d11.dll')
+  const compilerLink = path.join(importerDir, 'd3dcompiler_47.dll')
+
+  try {
+    // Remove old copies if they exist
+    if (fs.existsSync(dllLink) && fs.lstatSync(dllLink).isFile()) {
+      fs.unlinkSync(dllLink)
     }
+    if (fs.existsSync(compilerLink) && fs.lstatSync(compilerLink).isFile()) {
+      fs.unlinkSync(compilerLink)
+    }
+
+    // Create symlinks
+    if (!fs.existsSync(dllLink)) {
+      fs.symlinkSync(sharedDll, dllLink, 'file')
+      console.log(`[xxmi] Created symlink for d3d11.dll`)
+    }
+    if (!fs.existsSync(compilerLink)) {
+      fs.symlinkSync(sharedCompiler, compilerLink, 'file')
+      console.log(`[xxmi] Created symlink for d3dcompiler_47.dll`)
+    }
+  } catch (err) {
+    console.error('[xxmi] Failed to create symlinks:', err)
+    return { success: false, error: `Failed to create symlinks: ${err}` }
   }
 
   // Phase 3: Register importer in XXMI config
