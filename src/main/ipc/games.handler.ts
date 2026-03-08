@@ -2,9 +2,11 @@
 
 import { ipcMain, BrowserWindow } from 'electron'
 import * as crypto from 'crypto'
+import * as os from 'os'
 import {
   getGames,
   getGame as dbGetGame,
+  getGameBySlug as dbGetGameBySlug,
   createGame as dbCreateGame,
   updateGame as dbUpdateGame,
   deleteGame as dbDeleteGame,
@@ -49,13 +51,25 @@ export const registerGamesHandlers = () => {
   ipcMain.handle(
     'game:add',
     (_event, input: Omit<Game, 'id' | 'playtime' | 'lastPlayed'>): Game => {
-      const id = crypto.randomUUID()
+      const expandTilde = (p: string) => (p.startsWith('~/') ? os.homedir() + p.slice(1) : p)
+
       const slug = input.slug || generateSlug(input.name)
+
+      // Return existing game if slug already taken
+      const existing = dbGetGameBySlug(slug)
+      if (existing) {
+        const existingConfig = loadGameConfig(existing.config_path)
+        if (existingConfig) return existingConfig
+      }
+
+      const id = crypto.randomUUID()
       const configPath = getGameConfigPath(slug)
 
       // Create the full Game object
       const game: Game = {
         ...input,
+        directory: expandTilde(input.directory),
+        executable: expandTilde(input.executable),
         id,
         slug,
         playtime: 0,

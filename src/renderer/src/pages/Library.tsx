@@ -16,10 +16,11 @@ import { Label } from '@/components/ui/label'
 import { DownloadModal } from '@/components/DownloadModal'
 import { GameInstallModal } from '@/components/GameInstallModal'
 import { EndfieldInstallModal } from '@/components/EndfieldInstallModal'
+import { WuwaInstallModal } from '@/components/WuwaInstallModal'
 import GameConfigModal from '@/components/GameConfigModal'
 import CoverImage from '@/components/CoverImage'
 import type { Game, DetectedRunner } from '../../../shared/types/game'
-import type { HoyoVersionInfo } from '../../../shared/types/download'
+import type { HoyoVersionInfo, WuwaVersionInfo } from '../../../shared/types/download'
 
 const DEFAULT_LAUNCH = {
   env: {},
@@ -86,9 +87,12 @@ function Library() {
   const [hoyoVersionInfo, setHoyoVersionInfo] = useState<Record<string, HoyoVersionInfo>>({})
   const [hoyoVersionErrors, setHoyoVersionErrors] = useState<Record<string, string>>({})
   const [loadingVersions, setLoadingVersions] = useState(false)
-  const [endfieldInfo, setEndfieldInfo] = useState<{ version: string; totalSize: number } | null>(null)
+  const [endfieldInfo, setEndfieldInfo] = useState<{ version: string; totalSize: number; installedSize: number } | null>(null)
   const [endfieldInfoError, setEndfieldInfoError] = useState<string | null>(null)
   const [endfieldInstallOpen, setEndfieldInstallOpen] = useState(false)
+  const [wuwaInfo, setWuwaInfo] = useState<WuwaVersionInfo | null>(null)
+  const [wuwaInfoError, setWuwaInfoError] = useState<string | null>(null)
+  const [wuwaInstallOpen, setWuwaInstallOpen] = useState(false)
 
   const [formName, setFormName] = useState('')
   const [formDirectory, setFormDirectory] = useState('')
@@ -151,6 +155,21 @@ function Library() {
         const message = err instanceof Error ? err.message : 'Failed to load Endfield info'
         setEndfieldInfoError(message)
         console.error('Failed to load Endfield version:', err)
+      }
+
+      // Load Wuthering Waves info
+      try {
+        const wuwaData = await window.api.invoke('download:fetch-wuwa-info', {})
+        if (wuwaData) {
+          setWuwaInfo(wuwaData)
+          setWuwaInfoError(null)
+        } else {
+          setWuwaInfoError('Unable to fetch version info')
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to load Wuthering Waves info'
+        setWuwaInfoError(message)
+        console.error('Failed to load Wuthering Waves version:', err)
       }
 
       // Show warning if all games failed to load
@@ -366,6 +385,8 @@ function Library() {
     genshin: ['genshin'],
     starrail: ['star-rail', 'starrail', 'star rail'],
     zzz: ['zenless'],
+    wuwa: ['wuwa', 'wuthering'],
+    endfield: ['endfield'],
   }
 
   const checkGameInstalled = (biz: string) => {
@@ -747,7 +768,9 @@ function Library() {
                   <>
                     <span>v{endfieldInfo.version}</span>
                     <span>•</span>
-                    <span>{formatBytes(endfieldInfo.totalSize)}</span>
+                    <span>{formatBytes(endfieldInfo.totalSize)} download</span>
+                    <span>•</span>
+                    <span>{formatBytes(endfieldInfo.installedSize)} installed</span>
                   </>
                 ) : endfieldInfoError ? (
                   <span className="text-destructive text-xs" title={endfieldInfoError}>
@@ -777,6 +800,67 @@ function Library() {
               </Button>
             </CardContent>
           </Card>
+
+          {/* Wuthering Waves Card */}
+          <Card className="overflow-hidden">
+            <div
+              className="aspect-video bg-gradient-to-br flex items-center justify-center relative"
+              style={{
+                background: `linear-gradient(135deg, #3d7ebf20, #3d7ebf10)`,
+              }}
+            >
+              <div
+                className="text-4xl font-bold opacity-20"
+                style={{ color: '#3d7ebf' }}
+              >
+                WW
+              </div>
+
+              {checkGameInstalled('wuwa') && (
+                <div className="absolute top-2 right-2 bg-green-500 text-white text-xs px-2 py-1 rounded">
+                  Installed
+                </div>
+              )}
+            </div>
+
+            <CardContent className="p-4">
+              <h3 className="font-semibold text-lg mb-1">Wuthering Waves</h3>
+              <div className="flex items-center gap-4 text-sm text-muted-foreground mb-4">
+                <span className="text-xs text-muted-foreground">Kuro Games</span>
+                {wuwaInfo ? (
+                  <>
+                    <span>v{wuwaInfo.version}</span>
+                    <span>•</span>
+                    <span>{formatBytes(wuwaInfo.totalSize)} download</span>
+                  </>
+                ) : wuwaInfoError ? (
+                  <span className="text-destructive text-xs" title={wuwaInfoError}>
+                    Error loading version
+                  </span>
+                ) : loadingVersions ? (
+                  <span className="text-xs">Loading version info...</span>
+                ) : (
+                  <span className="text-xs text-muted-foreground">Version unavailable</span>
+                )}
+              </div>
+
+              {wuwaInfoError && (
+                <p className="text-xs text-muted-foreground mb-3 truncate" title={wuwaInfoError}>
+                  {wuwaInfoError}
+                </p>
+              )}
+
+              <Button
+                className="w-full"
+                onClick={() => setWuwaInstallOpen(true)}
+                disabled={checkGameInstalled('wuwa') || !wuwaInfo}
+                title={!wuwaInfo ? 'Version info required to install' : undefined}
+              >
+                <Download className="h-4 w-4 mr-2" />
+                {checkGameInstalled('wuwa') ? 'Already Installed' : !wuwaInfo ? 'Unavailable' : 'Install'}
+              </Button>
+            </CardContent>
+          </Card>
           </div>
 
           {/* Endfield Install Modal */}
@@ -785,6 +869,16 @@ function Library() {
             onClose={() => setEndfieldInstallOpen(false)}
             latestVersion={endfieldInfo?.version ?? ''}
             totalSize={endfieldInfo?.totalSize ?? 0}
+            installedSize={endfieldInfo?.installedSize ?? 0}
+            onGameAdded={loadGames}
+          />
+
+          {/* Wuthering Waves Install Modal */}
+          <WuwaInstallModal
+            open={wuwaInstallOpen}
+            onClose={() => setWuwaInstallOpen(false)}
+            latestVersion={wuwaInfo?.version ?? ''}
+            totalSize={wuwaInfo?.totalSize ?? 0}
             onGameAdded={loadGames}
           />
         </>

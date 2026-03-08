@@ -14,23 +14,21 @@ import type { DownloadProgress } from '../../../shared/types/download'
 
 type InstallMode = 'download' | 'locate'
 
-interface EndfieldInstallModalProps {
+interface WuwaInstallModalProps {
   open: boolean
   onClose: () => void
   latestVersion: string
   totalSize: number
-  installedSize: number
   onGameAdded?: () => void
 }
 
-export function EndfieldInstallModal({
+export function WuwaInstallModal({
   open,
   onClose,
   latestVersion,
   totalSize,
-  installedSize,
   onGameAdded,
-}: EndfieldInstallModalProps) {
+}: WuwaInstallModalProps) {
   const [mode, setMode] = useState<InstallMode>('download')
   const [installDir, setInstallDir] = useState('')
   const [status, setStatus] = useState<'idle' | 'downloading' | 'complete' | 'error'>('idle')
@@ -46,7 +44,7 @@ export function EndfieldInstallModal({
   // Reset state when modal opens
   useEffect(() => {
     if (!open) return
-    window.api.invoke('download:status', { gameId: 'endfield' }).then((result: { inProgress: boolean }) => {
+    window.api.invoke('download:status', { gameId: 'wuwa' }).then((result: { inProgress: boolean }) => {
       if (result.inProgress) {
         setMode('download')
         setStatus('downloading')
@@ -56,7 +54,7 @@ export function EndfieldInstallModal({
         setStatus('idle')
         setProgress(null)
         hasStartedRef.current = false
-        setInstallDir('~/Games/Endfield')
+        setInstallDir('~/Games/WutheringWaves')
         setLocateExePath('')
         setLocateDetected(null)
         setLocateError(null)
@@ -68,13 +66,16 @@ export function EndfieldInstallModal({
   useEffect(() => {
     const unsubProgress = window.api.on('download:progress', (data) => {
       const p = data as DownloadProgress
-      if (p.gameId === 'endfield') {
+      if (p.gameId === 'wuwa') {
         setProgress(p)
+        if (p.status === 'downloading' || p.status === 'verifying') {
+          setStatus('downloading')
+        }
       }
     })
 
     const unsubComplete = window.api.on('download:complete', (data) => {
-      if ((data as { gameId: string }).gameId === 'endfield') {
+      if ((data as { gameId: string }).gameId === 'wuwa') {
         setStatus('complete')
         setProgress((prev) => prev ? { ...prev, percent: 100, status: 'installed' } : null)
         handleAutoAdd()
@@ -82,7 +83,7 @@ export function EndfieldInstallModal({
     })
 
     const unsubError = window.api.on('download:error', (data) => {
-      if ((data as { gameId: string }).gameId === 'endfield') {
+      if ((data as { gameId: string }).gameId === 'wuwa') {
         setStatus('error')
         setProgress((prev) => prev ? { ...prev, error: (data as { error: string }).error } : null)
       }
@@ -96,9 +97,9 @@ export function EndfieldInstallModal({
   }, [locateExePath])
 
   const handleBrowse = async () => {
-    const path = await window.api.openFile()
-    if (path) {
-      const dir = path.substring(0, path.lastIndexOf('/'))
+    const filePath = await window.api.openFile()
+    if (filePath) {
+      const dir = filePath.substring(0, filePath.lastIndexOf('/'))
       setInstallDir(dir)
     }
   }
@@ -125,8 +126,8 @@ export function EndfieldInstallModal({
     setLocating(true)
     try {
       await window.api.invoke('game:add', {
-        name: 'Arknights: Endfield',
-        slug: 'endfield',
+        name: 'Wuthering Waves',
+        slug: 'wuwa',
         installed: true,
         directory: locateDetected.directory,
         executable: locateExePath,
@@ -153,8 +154,8 @@ export function EndfieldInstallModal({
     hasStartedRef.current = true
     setStatus('downloading')
 
-    const result = await window.api.invoke('download:start-endfield', {
-      gameId: 'endfield',
+    const result = await window.api.invoke('download:start-wuwa', {
+      gameId: 'wuwa',
       destDir: installDir,
     })
 
@@ -165,7 +166,7 @@ export function EndfieldInstallModal({
   }
 
   const handleCancel = async () => {
-    await window.api.invoke('download:cancel', { gameId: 'endfield' })
+    await window.api.invoke('download:cancel', { gameId: 'wuwa' })
     setStatus('idle')
     setProgress(null)
   }
@@ -173,11 +174,11 @@ export function EndfieldInstallModal({
   const handleAutoAdd = async () => {
     try {
       await window.api.invoke('game:add', {
-        name: 'Arknights: Endfield',
-        slug: 'endfield',
+        name: 'Wuthering Waves',
+        slug: 'wuwa',
         installed: true,
         directory: installDir,
-        executable: `${installDir}/Endfield.exe`,
+        executable: `${installDir}/Client/Binaries/Win64/Client-Win64-Shipping.exe`,
         runner: { type: 'proton' as const, path: '', prefix: '' },
         launch: { env: {}, preLaunch: [], postLaunch: [], args: '' },
         mods: { enabled: false },
@@ -212,15 +213,15 @@ export function EndfieldInstallModal({
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>
-            {status === 'idle' && 'Install Arknights: Endfield'}
-            {status === 'downloading' && 'Downloading Arknights: Endfield'}
+            {status === 'idle' && 'Install Wuthering Waves'}
+            {status === 'downloading' && 'Downloading Wuthering Waves'}
             {status === 'complete' && 'Installation Complete!'}
             {status === 'error' && 'Download Failed'}
           </DialogTitle>
           <DialogDescription>
             {status === 'idle' && `Version ${latestVersion}`}
             {status === 'downloading' && `Installing to ${installDir}`}
-            {status === 'complete' && 'Arknights: Endfield is ready to play'}
+            {status === 'complete' && 'Wuthering Waves is ready to play'}
             {status === 'error' && progress?.error}
           </DialogDescription>
         </DialogHeader>
@@ -259,7 +260,7 @@ export function EndfieldInstallModal({
                         id="install-dir"
                         value={installDir}
                         onChange={(e) => setInstallDir(e.target.value)}
-                        placeholder="/home/user/Games/Endfield"
+                        placeholder="/home/user/Games/WutheringWaves"
                         className="flex-1"
                       />
                       <Button type="button" variant="outline" onClick={handleBrowse}>
@@ -269,7 +270,7 @@ export function EndfieldInstallModal({
                   </div>
 
                   <div className="text-sm text-muted-foreground">
-                    Download: ~{formatBytes(totalSize)} &nbsp;·&nbsp; Installed: ~{formatBytes(installedSize)}
+                    Download: ~{formatBytes(totalSize)}
                   </div>
 
                   <div className="flex justify-end gap-2">
@@ -291,7 +292,7 @@ export function EndfieldInstallModal({
                       <Input
                         value={locateExePath}
                         readOnly
-                        placeholder="Browse to the game .exe file..."
+                        placeholder="Browse to Client-Win64-Shipping.exe..."
                         className="flex-1"
                       />
                       <Button type="button" variant="outline" onClick={handleBrowseLocate} disabled={locating}>
@@ -340,7 +341,7 @@ export function EndfieldInstallModal({
             <>
               <div className="space-y-2">
                 <div className="flex justify-between text-sm">
-                  <span>{progress.status}</span>
+                  <span>{progress.currentFile ? progress.currentFile.split('/').pop() : progress.status}</span>
                   <span>{formatTime(progress.timeRemaining)}</span>
                 </div>
                 <div className="w-full bg-muted rounded-full h-2">
@@ -353,6 +354,11 @@ export function EndfieldInstallModal({
                   <span>{formatBytes(progress.bytesDownloaded)} / {formatBytes(progress.bytesTotal)}</span>
                   <span>{progress.percent.toFixed(1)}%</span>
                 </div>
+                {progress.downloadSpeed > 0 && (
+                  <div className="text-xs text-muted-foreground">
+                    {formatBytes(progress.downloadSpeed)}/s
+                  </div>
+                )}
               </div>
               <Button type="button" variant="outline" onClick={handleCancel} className="w-full">
                 Cancel
@@ -364,7 +370,7 @@ export function EndfieldInstallModal({
             <>
               <div className="text-sm text-muted-foreground space-y-2">
                 <p>Installation completed successfully.</p>
-                <p>The game has been added to your library and is ready to play!</p>
+                <p>Wuthering Waves has been added to your library and is ready to play!</p>
               </div>
               <Button type="button" onClick={onClose} className="w-full">
                 Done

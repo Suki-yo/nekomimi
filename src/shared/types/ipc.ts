@@ -4,7 +4,7 @@
 import type { AppConfig } from './config'
 import type { Game, DetectedGameInfo, DetectedRunner, Mod } from './game'
 import type { Runner } from './runner'
-import type { HoyoVersionInfo } from './download'
+import type { HoyoVersionInfo, WuwaVersionInfo } from './download'
 
 // All IPC channels - this is the contract between frontend and backend
 export interface IPCChannels {
@@ -179,9 +179,17 @@ export interface IPCChannels {
   }
   'download:fetch-endfield-info': {
     request: Record<string, never>
-    response: { version: string; totalSize: number } | null
+    response: { version: string; totalSize: number; installedSize: number } | null
   }
   'download:start-endfield': {
+    request: { gameId: string; destDir: string }
+    response: { success: boolean; error?: string }
+  }
+  'download:fetch-wuwa-info': {
+    request: Record<string, never>
+    response: WuwaVersionInfo | null
+  }
+  'download:start-wuwa': {
     request: { gameId: string; destDir: string }
     response: { success: boolean; error?: string }
   }

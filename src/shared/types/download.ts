@@ -43,6 +43,22 @@ export interface GameDownloadState {
 // HoYoverse API game identifiers
 export type HoyoGameBiz = 'genshin' | 'starrail' | 'zzz'
 
+// Wuthering Waves version info from official launcher API
+export interface WuwaVersionInfo {
+  version: string
+  cdnUrl: string         // best CDN URL (selected by lowest P value)
+  resources: string      // path to resources manifest (relative to cdnUrl)
+  resourcesBasePath: string // base path for file downloads (relative to cdnUrl)
+  totalSize: number      // sum of all file sizes (bytes)
+}
+
+// A single file entry from the WuWa resources.json manifest
+export interface WuwaFileEntry {
+  dest: string  // relative file path within the install directory
+  md5: string
+  size: number
+}
+
 // Game version info from official API
 export interface HoyoVersionInfo {
   version: string

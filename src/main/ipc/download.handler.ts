@@ -10,6 +10,8 @@ import {
   isDownloadInProgress,
   fetchEndfieldVersionInfo,
   startEndfieldDownload,
+  fetchWuwaVersionInfo,
+  startWuwaDownload,
 } from '../services/download'
 import type { HoyoGameBiz, DownloadProgress } from '../../shared/types/download'
 
@@ -132,6 +134,43 @@ export const registerDownloadHandlers = () => {
         : destDir
 
       const result = await startEndfieldDownload({
+        gameId,
+        destDir: resolvedDestDir,
+        onProgress: (progress: DownloadProgress) => {
+          if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+            win.webContents.send('download:progress', progress)
+          }
+        },
+      })
+
+      if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
+        if (result.success) {
+          win.webContents.send('download:complete', { gameId })
+        } else {
+          win.webContents.send('download:error', { gameId, error: result.error })
+        }
+      }
+
+      return result
+    }
+  )
+
+  // Fetch Wuthering Waves version info
+  ipcMain.handle('download:fetch-wuwa-info', async () => {
+    return await fetchWuwaVersionInfo()
+  })
+
+  // Start Wuthering Waves download
+  ipcMain.handle(
+    'download:start-wuwa',
+    async (event, { gameId, destDir }: { gameId: string; destDir: string }) => {
+      console.log(`[download] Starting Wuthering Waves download to ${destDir}`)
+      const win = BrowserWindow.fromWebContents(event.sender)
+      const resolvedDestDir = destDir.startsWith('~')
+        ? path.join(os.homedir(), destDir.slice(1))
+        : destDir
+
+      const result = await startWuwaDownload({
         gameId,
         destDir: resolvedDestDir,
         onProgress: (progress: DownloadProgress) => {

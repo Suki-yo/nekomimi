@@ -91,7 +91,7 @@ function fetchJSON<T>(url: string): Promise<T> {
 }
 
 // Fetch Endfield game version info (for Explore tab display)
-export async function fetchEndfieldVersionInfo(): Promise<{ version: string; totalSize: number } | null> {
+export async function fetchEndfieldVersionInfo(): Promise<{ version: string; totalSize: number; installedSize: number } | null> {
   const url =
     `${ENDFIELD_API_BASE}/game/get_latest` +
     `?appcode=${ENDFIELD_GAME_APP_CODE}` +
@@ -103,9 +103,11 @@ export async function fetchEndfieldVersionInfo(): Promise<{ version: string; tot
   try {
     console.log('[endfield-api] Fetching version info...')
     const rsp = await fetchJSON<EndfieldGameResponse>(url)
+    const downloadSize = rsp.pkg.packs.reduce((sum, p) => sum + (parseInt(p.package_size, 10) || 0), 0)
     return {
       version: rsp.version,
-      totalSize: parseInt(rsp.pkg.total_size, 10) || 0,
+      totalSize: downloadSize,
+      installedSize: parseInt(rsp.pkg.total_size, 10) || 0,
     }
   } catch (err) {
     console.error('[endfield-api] Failed to fetch version info:', err)

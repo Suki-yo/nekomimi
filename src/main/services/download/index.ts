@@ -7,6 +7,8 @@ import * as https from 'https'
 import { spawn } from 'child_process'
 import { fetchGameResource } from './hoyo-api'
 import { fetchEndfieldGame, fetchEndfieldVersionInfo } from './endfield-api'
+import { fetchWuwaVersionInfo, fetchWuwaManifest } from './wuwa-api'
+import { startWuwaDownload as _startWuwaDownload } from './wuwa-download'
 import { downloadSophonGame } from './sophon'
 import { streamingMd5 } from './utils'
 import type {
@@ -16,7 +18,7 @@ import type {
   DownloadProgress,
 } from '../../../shared/types/download'
 
-export { fetchEndfieldVersionInfo }
+export { fetchEndfieldVersionInfo, fetchWuwaVersionInfo, fetchWuwaManifest }
 
 // Active downloads tracking
 const activeDownloads = new Map<string, AbortController>()
@@ -153,16 +155,21 @@ async function downloadFile(
   })
 }
 
-// Extract zip file
+// Extract zip file (uses 7z for split-archive support, falls back to unzip)
 async function extractZip(
   zipPath: string,
   destDir: string,
   onProgress?: (percent: number) => void
 ): Promise<{ success: boolean; error?: string }> {
   return new Promise((resolve) => {
-    // Use unzip command for now
-    const proc = spawn('unzip', ['-o', zipPath, '-d', destDir], {
+    // 7z handles split archives natively (no pre-merge needed)
+    const proc = spawn('7z', ['x', zipPath, `-o${destDir}`, '-aoa', '-bsp1'], {
       stdio: 'pipe',
+    })
+
+    proc.stdout?.on('data', (data: Buffer) => {
+      const match = data.toString().match(/(\d+)%/)
+      if (match) onProgress?.(parseInt(match[1], 10))
     })
 
     proc.on('close', (code) => {
@@ -247,39 +254,16 @@ async function downloadSegmentedZip(
     bytesTotal: totalSize,
     downloadSpeed: 0,
     timeRemaining: 0,
-    currentFile: 'Merging zip segments...',
-  })
-
-  const mergedZipPath = path.join(destDir, 'game.zip')
-  const writeStream = fs.createWriteStream(mergedZipPath)
-  for (let i = 0; i < segments.length; i++) {
-    const segmentPath = path.join(destDir, `game.zip.${String(i + 1).padStart(3, '0')}`)
-    await new Promise<void>((resolve, reject) => {
-      const readStream = fs.createReadStream(segmentPath)
-      readStream.on('error', reject)
-      readStream.on('end', resolve)
-      readStream.pipe(writeStream, { end: false })
-    })
-  }
-  writeStream.end()
-  await new Promise<void>((resolve) => writeStream.on('finish', () => resolve()))
-
-  onProgress?.({
-    gameId,
-    status: 'extracting',
-    percent: 92,
-    bytesDownloaded: totalSize,
-    bytesTotal: totalSize,
-    downloadSpeed: 0,
-    timeRemaining: 0,
     currentFile: 'Extracting game files...',
   })
 
-  const extractResult = await extractZip(mergedZipPath, destDir, (percent) => {
+  // 7z extracts directly from the first split part without merging
+  const firstSegment = path.join(destDir, 'game.zip.001')
+  const extractResult = await extractZip(firstSegment, destDir, (percent) => {
     onProgress?.({
       gameId,
       status: 'extracting',
-      percent: 92 + percent * 0.08,
+      percent: 90 + percent * 0.1,
       bytesDownloaded: totalSize,
       bytesTotal: totalSize,
       downloadSpeed: 0,
@@ -287,7 +271,6 @@ async function downloadSegmentedZip(
     })
   })
 
-  if (fs.existsSync(mergedZipPath)) fs.unlinkSync(mergedZipPath)
   for (let i = 0; i < segments.length; i++) {
     const segmentPath = path.join(destDir, `game.zip.${String(i + 1).padStart(3, '0')}`)
     if (fs.existsSync(segmentPath)) fs.unlinkSync(segmentPath)
@@ -556,6 +539,32 @@ export async function startEndfieldDownload(
       error: String(err),
     })
     return { success: false, error: String(err) }
+  } finally {
+    activeDownloads.delete(gameId)
+  }
+}
+
+export interface WuwaDownloadOptions {
+  gameId: string
+  destDir: string
+  onProgress?: (progress: DownloadProgress) => void
+}
+
+// Start a Wuthering Waves download
+export async function startWuwaDownload(
+  options: WuwaDownloadOptions
+): Promise<{ success: boolean; error?: string }> {
+  const { gameId, destDir, onProgress } = options
+
+  if (activeDownloads.has(gameId)) {
+    return { success: false, error: 'Download already in progress' }
+  }
+
+  const controller = new AbortController()
+  activeDownloads.set(gameId, controller)
+
+  try {
+    return await _startWuwaDownload({ gameId, destDir, onProgress, signal: controller.signal })
   } finally {
     activeDownloads.delete(gameId)
   }
