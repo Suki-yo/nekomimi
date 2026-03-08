@@ -582,8 +582,7 @@ export async function launchGameWithXXMI(
         WINEDLLOVERRIDES: mergedOverrides,
       }
       console.log(`[xxmi] umu-run env: WINEDLLOVERRIDES=${env.WINEDLLOVERRIDES} STUB_WINTRUST=${gameEnv.STUB_WINTRUST} BLOCK_FIRST_REQ=${gameEnv.BLOCK_FIRST_REQ} STEAM_COMPAT_CONFIG=${gameEnv.STEAM_COMPAT_CONFIG}`)
-      const exeWinePath = 'Z:' + executablePath.replace(/\//g, '\\')
-      proc = spawn('umu-run', [launcherExe, '--nogui', '--xxmi', importer, '--exe_path', exeWinePath], {
+      proc = spawn('umu-run', [launcherExe, '--nogui', '--xxmi', importer], {
         env,
         detached: true,
         stdio: 'ignore',
@@ -592,7 +591,6 @@ export async function launchGameWithXXMI(
     } else {
       // Non-HoYo games: use wine directly (Endfield etc.)
       const runner = findInstalledRunner()!
-      const exeWinePath = 'Z:' + executablePath.replace(/\//g, '\\')
       const env = {
         ...process.env,
         WINEPREFIX: winePrefix,
@@ -603,7 +601,7 @@ export async function launchGameWithXXMI(
         DXVK_STATE_CACHE_PATH: winePrefix,
         WINEDLLOVERRIDES: 'd3d11=n,b;dxgi=n,b',
       }
-      proc = spawn(runner.wine, [launcherExe, '--nogui', '--xxmi', importer, '--exe_path', exeWinePath], {
+      proc = spawn(runner.wine, [launcherExe, '--nogui', '--xxmi', importer], {
         env,
         detached: true,
         stdio: 'ignore',
