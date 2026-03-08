@@ -432,9 +432,10 @@ function configureImporterGameFolder(importer: string, gameDirectory: string): b
 
     if (config?.Importers?.[importer]?.Importer) {
       // Importer already installed — update game folder and mode
+      const useInjectMode = importer === 'EFMI' || importer === 'GIMI' || importer === 'WWMI'
       config.Importers[importer].Importer.game_folder = winePath
       config.Importers[importer].Importer.process_start_method = 'Shell'
-      config.Importers[importer].Importer.custom_launch_inject_mode = 'Hook'
+      config.Importers[importer].Importer.custom_launch_inject_mode = useInjectMode ? 'Inject' : 'Hook'
     } else {
       // Importer just installed via downloadImporter — seed a minimal config stub so
       // XXMI finds a valid Importers section and doesn't show its own install dialog.
@@ -570,7 +571,8 @@ export async function launchGameWithXXMI(
         WINEDLLOVERRIDES: mergedOverrides,
       }
       console.log(`[xxmi] umu-run env: WINEDLLOVERRIDES=${env.WINEDLLOVERRIDES} STUB_WINTRUST=${gameEnv.STUB_WINTRUST} BLOCK_FIRST_REQ=${gameEnv.BLOCK_FIRST_REQ} STEAM_COMPAT_CONFIG=${gameEnv.STEAM_COMPAT_CONFIG}`)
-      proc = spawn('umu-run', [launcherExe, '--nogui', '--xxmi', importer], {
+      const exeWinePath = 'Z:' + executablePath.replace(/\//g, '\\')
+      proc = spawn('umu-run', [launcherExe, '--nogui', '--xxmi', importer, '--exe_path', exeWinePath], {
         env,
         detached: true,
         stdio: 'ignore',
@@ -579,6 +581,7 @@ export async function launchGameWithXXMI(
     } else {
       // Non-HoYo games: use wine directly (Endfield etc.)
       const runner = findInstalledRunner()!
+      const exeWinePath = 'Z:' + executablePath.replace(/\//g, '\\')
       const env = {
         ...process.env,
         WINEPREFIX: winePrefix,
@@ -589,7 +592,7 @@ export async function launchGameWithXXMI(
         DXVK_STATE_CACHE_PATH: winePrefix,
         WINEDLLOVERRIDES: 'd3d11=n,b;dxgi=n,b',
       }
-      proc = spawn(runner.wine, [launcherExe, '--nogui', '--xxmi', importer], {
+      proc = spawn(runner.wine, [launcherExe, '--nogui', '--xxmi', importer, '--exe_path', exeWinePath], {
         env,
         detached: true,
         stdio: 'ignore',
