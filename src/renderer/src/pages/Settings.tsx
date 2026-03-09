@@ -1,8 +1,52 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type JSX } from 'react'
 import { Button } from '@/components/ui/button'
 import type { AppConfig } from '../../../shared/types/config'
 
-function Settings() {
+function getRunnerActionLabel(
+  runnerDownloading: boolean,
+  runnerProgress: number,
+  hasInstalledRunner: boolean,
+): string {
+  if (runnerDownloading) {
+    return `${runnerProgress}%`
+  }
+
+  if (hasInstalledRunner) {
+    return 'Update'
+  }
+
+  return 'Download'
+}
+
+function getSteamRuntimeStatusText(status: { installed: boolean; path: string | null } | null): string {
+  if (status === null) {
+    return 'Checking...'
+  }
+
+  if (status.installed) {
+    return status.path ?? 'Installed'
+  }
+
+  return 'Not installed'
+}
+
+function getSteamRuntimeActionLabel(
+  steamrtDownloading: boolean,
+  steamrtProgress: number,
+  isInstalled: boolean,
+): string {
+  if (steamrtDownloading) {
+    return `${steamrtProgress}%`
+  }
+
+  if (isInstalled) {
+    return 'Reinstall'
+  }
+
+  return 'Download'
+}
+
+function Settings(): JSX.Element {
   const [config, setConfig] = useState<AppConfig | null>(null)
   const [loading, setLoading] = useState(true)
   const [installedRunner, setInstalledRunner] = useState<{ name: string } | null>(null)
@@ -169,7 +213,7 @@ function Settings() {
               onClick={handleDownloadRunner}
               disabled={runnerDownloading}
             >
-              {runnerDownloading ? `${runnerProgress}%` : installedRunner ? 'Update' : 'Download'}
+              {getRunnerActionLabel(runnerDownloading, runnerProgress, installedRunner !== null)}
             </Button>
           </div>
 
@@ -200,11 +244,7 @@ function Settings() {
             <div>
               <div>Steam Linux Runtime (sniper)</div>
               <div className="text-sm text-zinc-400">
-                {steamrtStatus === null
-                  ? 'Checking...'
-                  : steamrtStatus.installed
-                    ? steamrtStatus.path
-                    : 'Not installed'}
+                {getSteamRuntimeStatusText(steamrtStatus)}
               </div>
             </div>
             <Button
@@ -213,11 +253,7 @@ function Settings() {
               onClick={handleInstallSteamrt}
               disabled={steamrtDownloading}
             >
-              {steamrtDownloading
-                ? `${steamrtProgress}%`
-                : steamrtStatus?.installed
-                  ? 'Reinstall'
-                  : 'Download'}
+              {getSteamRuntimeActionLabel(steamrtDownloading, steamrtProgress, steamrtStatus?.installed ?? false)}
             </Button>
           </div>
 

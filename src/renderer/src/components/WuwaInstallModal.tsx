@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, type JSX } from 'react'
 import {
   Dialog,
   DialogContent,
@@ -9,10 +9,18 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+  formatBytes,
+  formatTime,
+  getInstallDialogDescription,
+  getInstallDialogTitle,
+  getInstallModeButtonClass,
+  getParentDirectory,
+  type InstallMode,
+  type InstallStatus,
+} from '@/components/install-modal-utils'
 import { FolderOpen, Download, Search } from 'lucide-react'
 import type { DownloadProgress } from '../../../shared/types/download'
-
-type InstallMode = 'download' | 'locate'
 
 interface WuwaInstallModalProps {
   open: boolean
@@ -22,16 +30,31 @@ interface WuwaInstallModalProps {
   onGameAdded?: () => void
 }
 
+const WUWA_GAME = {
+  name: 'Wuthering Waves',
+  slug: 'wuwa',
+  defaultInstallDir: '~/Games/WutheringWaves',
+  defaultPrefix: '~/Games/prefixes/wuwa/pfx',
+  executable: 'Client/Binaries/Win64/Client-Win64-Shipping.exe',
+  launch: {
+    env: { STEAM_COMPAT_CONFIG: 'noopwr,noxalia' },
+    preLaunch: [],
+    postLaunch: [],
+    args: '',
+  },
+  mods: { enabled: false, importer: 'WWMI' },
+} as const
+
 export function WuwaInstallModal({
   open,
   onClose,
   latestVersion,
   totalSize,
   onGameAdded,
-}: WuwaInstallModalProps) {
+}: WuwaInstallModalProps): JSX.Element {
   const [mode, setMode] = useState<InstallMode>('download')
   const [installDir, setInstallDir] = useState('')
-  const [status, setStatus] = useState<'idle' | 'downloading' | 'complete' | 'error'>('idle')
+  const [status, setStatus] = useState<InstallStatus>('idle')
   const [progress, setProgress] = useState<DownloadProgress | null>(null)
   const hasStartedRef = useRef(false)
 
@@ -54,7 +77,7 @@ export function WuwaInstallModal({
         setStatus('idle')
         setProgress(null)
         hasStartedRef.current = false
-        setInstallDir('~/Games/WutheringWaves')
+        setInstallDir(WUWA_GAME.defaultInstallDir)
         setLocateExePath('')
         setLocateDetected(null)
         setLocateError(null)
@@ -99,8 +122,7 @@ export function WuwaInstallModal({
   const handleBrowse = async () => {
     const filePath = await window.api.openFile()
     if (filePath) {
-      const dir = filePath.substring(0, filePath.lastIndexOf('/'))
-      setInstallDir(dir)
+      setInstallDir(getParentDirectory(filePath))
     }
   }
 
@@ -126,23 +148,18 @@ export function WuwaInstallModal({
     setLocating(true)
     try {
       await window.api.invoke('game:add', {
-        name: 'Wuthering Waves',
-        slug: 'wuwa',
+        name: WUWA_GAME.name,
+        slug: WUWA_GAME.slug,
         installed: true,
         directory: locateDetected.directory,
         executable: locateExePath,
         runner: {
           type: 'proton' as const,
           path: '',
-          prefix: locateDetected.prefix || '~/Games/prefixes/wuwa/pfx',
+          prefix: locateDetected.prefix || WUWA_GAME.defaultPrefix,
         },
-        launch: {
-          env: { STEAM_COMPAT_CONFIG: 'noopwr,noxalia' },
-          preLaunch: [],
-          postLaunch: [],
-          args: '',
-        },
-        mods: { enabled: false, importer: 'WWMI' },
+        launch: WUWA_GAME.launch,
+        mods: WUWA_GAME.mods,
       })
       onGameAdded?.()
       onClose()
@@ -181,19 +198,14 @@ export function WuwaInstallModal({
     const runnerPath = runners.length > 0 ? runners[0].path : ''
     try {
       await window.api.invoke('game:add', {
-        name: 'Wuthering Waves',
-        slug: 'wuwa',
+        name: WUWA_GAME.name,
+        slug: WUWA_GAME.slug,
         installed: true,
         directory: installDir,
-        executable: `${installDir}/Client/Binaries/Win64/Client-Win64-Shipping.exe`,
-        runner: { type: 'proton' as const, path: runnerPath, prefix: '~/Games/prefixes/wuwa/pfx' },
-        launch: {
-          env: { STEAM_COMPAT_CONFIG: 'noopwr,noxalia' },
-          preLaunch: [],
-          postLaunch: [],
-          args: '',
-        },
-        mods: { enabled: false, importer: 'WWMI' },
+        executable: `${installDir}/${WUWA_GAME.executable}`,
+        runner: { type: 'proton' as const, path: runnerPath, prefix: WUWA_GAME.defaultPrefix },
+        launch: WUWA_GAME.launch,
+        mods: WUWA_GAME.mods,
       })
       onGameAdded?.()
     } catch (err) {
@@ -201,40 +213,13 @@ export function WuwaInstallModal({
     }
   }
 
-  const formatBytes = (bytes: number) => {
-    if (bytes === 0) return '0 B'
-    const k = 1024
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-    const i = Math.floor(Math.log(bytes) / Math.log(k))
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
-  }
-
-  const formatTime = (seconds: number) => {
-    if (seconds <= 0) return '--:--'
-    const h = Math.floor(seconds / 3600)
-    const m = Math.floor((seconds % 3600) / 60)
-    const s = seconds % 60
-    if (h > 0) {
-      return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
-    }
-    return `${m}:${s.toString().padStart(2, '0')}`
-  }
-
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>
-            {status === 'idle' && 'Install Wuthering Waves'}
-            {status === 'downloading' && 'Downloading Wuthering Waves'}
-            {status === 'complete' && 'Installation Complete!'}
-            {status === 'error' && 'Download Failed'}
-          </DialogTitle>
+          <DialogTitle>{getInstallDialogTitle(status, WUWA_GAME.name)}</DialogTitle>
           <DialogDescription>
-            {status === 'idle' && `Version ${latestVersion}`}
-            {status === 'downloading' && `Installing to ${installDir}`}
-            {status === 'complete' && 'Wuthering Waves is ready to play'}
-            {status === 'error' && progress?.error}
+            {getInstallDialogDescription(status, latestVersion, installDir, WUWA_GAME.name, progress?.error)}
           </DialogDescription>
         </DialogHeader>
 
@@ -244,18 +229,14 @@ export function WuwaInstallModal({
               {/* Mode toggle */}
               <div className="flex gap-1 p-1 bg-muted rounded-lg">
                 <button
-                  className={`flex-1 flex items-center justify-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                    mode === 'download' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
-                  }`}
+                  className={`flex-1 flex items-center justify-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${getInstallModeButtonClass(mode === 'download')}`}
                   onClick={() => setMode('download')}
                 >
                   <Download className="h-4 w-4" />
                   Download
                 </button>
                 <button
-                  className={`flex-1 flex items-center justify-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                    mode === 'locate' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
-                  }`}
+                  className={`flex-1 flex items-center justify-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${getInstallModeButtonClass(mode === 'locate')}`}
                   onClick={() => setMode('locate')}
                 >
                   <Search className="h-4 w-4" />

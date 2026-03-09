@@ -41,6 +41,10 @@ const GAME_TO_STEAM_APPID: Record<string, string> = {
   'client-win64-shipping.exe': '3513350',
 }
 
+const DISABLED_MOD_PREFIX = 'DISABLED_'
+const WWMI_PROCESS_EXE_NAMES = ['Client-Win64-Shipping.exe']
+const WWMI_LAUNCH_OPTIONS = '-dx11'
+
 export function shouldUseXXMI(executablePath: string): boolean {
   const exeName = path.basename(executablePath).toLowerCase()
   return !!GAME_TO_XXMI_IMPORTER[exeName]
@@ -58,6 +62,41 @@ function getXXMIPaths() {
     launcherExe: path.join(paths.xxmi, 'Resources', 'Bin', 'XXMI Launcher.exe'),
     launcherPrefix: path.join(paths.xxmi, 'prefix'),
     runnersDir: paths.runners,
+  }
+}
+
+function usesInjectMode(importer: string): boolean {
+  return importer === 'EFMI' || importer === 'GIMI'
+}
+
+function applyWWMILaunchSettings(importerConfig: Record<string, unknown>): void {
+  importerConfig.custom_launch_enabled = false
+  importerConfig.custom_launch = ''
+  importerConfig.custom_launch_signature = ''
+  importerConfig.use_launch_options = true
+  importerConfig.launch_options = WWMI_LAUNCH_OPTIONS
+  importerConfig.process_exe_names = WWMI_PROCESS_EXE_NAMES
+}
+
+function stripDisabledModPrefix(folderName: string): string {
+  if (folderName.startsWith(DISABLED_MOD_PREFIX)) {
+    return folderName.substring(DISABLED_MOD_PREFIX.length)
+  }
+
+  return folderName
+}
+
+function addDisabledModPrefix(folderName: string, disabled: boolean): string {
+  if (disabled) {
+    return `${DISABLED_MOD_PREFIX}${folderName}`
+  }
+
+  return folderName
+}
+
+function removeFileIfExists(filePath: string): void {
+  if (fs.existsSync(filePath)) {
+    fs.unlinkSync(filePath)
   }
 }
 
@@ -252,7 +291,7 @@ async function downloadFile(
           const redirectUrl = response.headers.location
           if (redirectUrl) {
             file.close()
-            fs.unlinkSync(destPath)
+            removeFileIfExists(destPath)
             downloadWithRedirect(redirectUrl, redirectCount + 1)
             return
           }
@@ -260,7 +299,7 @@ async function downloadFile(
 
         if (response.statusCode !== 200) {
           file.close()
-          fs.unlinkSync(destPath)
+          removeFileIfExists(destPath)
           resolve({ success: false, error: `HTTP ${response.statusCode}` })
           return
         }
@@ -285,13 +324,13 @@ async function downloadFile(
         file.on('error', (err) => {
           console.error('[download] File write error:', err)
           file.close()
-          fs.unlinkSync(destPath)
+          removeFileIfExists(destPath)
           resolve({ success: false, error: `Write failed: ${err.message}` })
         })
       }).on('error', (err) => {
         console.error('[download] Download error:', err)
         file.close()
-        fs.unlinkSync(destPath)
+        removeFileIfExists(destPath)
         resolve({ success: false, error: `Download failed: ${err.message}` })
       })
     }
@@ -311,7 +350,7 @@ async function extractArchive(
       : spawn('tar', ['-xzf', archivePath, '-C', destDir], { stdio: 'inherit' })
 
     command.on('close', (code) => {
-      fs.unlinkSync(archivePath)
+      removeFileIfExists(archivePath)
       if (code === 0) {
         resolve({ success: true })
       } else {
@@ -321,7 +360,7 @@ async function extractArchive(
 
     command.on('error', (err) => {
       console.error('[extract] Error:', err)
-      fs.unlinkSync(archivePath)
+      removeFileIfExists(archivePath)
       resolve({ success: false, error: `Extraction failed: ${err.message}` })
     })
   })
@@ -541,7 +580,7 @@ export function isImporterInstalled(importer: string): boolean {
   }
 }
 
-function configureImporterGameFolder(importer: string, gameDirectory: string, executablePath?: string): boolean {
+function configureImporterGameFolder(importer: string, gameDirectory: string, _executablePath?: string): boolean {
   const { xxmiDir } = getXXMIPaths()
   const configPath = path.join(xxmiDir, 'XXMI Launcher Config.json')
 
@@ -559,36 +598,33 @@ function configureImporterGameFolder(importer: string, gameDirectory: string, ex
       }
     }
 
-    const customLaunch = executablePath ? `${linuxToWinePath(executablePath)} -dx11` : undefined
-
     if (config?.Importers?.[importer]?.Importer) {
       // Importer already installed — update game folder and mode
-      const useInjectMode = importer === 'EFMI' || importer === 'GIMI'
+      const useInjectMode = usesInjectMode(importer)
       const importerConfig = config.Importers[importer].Importer
       importerConfig.game_folder = winePath
       importerConfig.process_start_method = 'Shell'
       importerConfig.custom_launch_inject_mode = useInjectMode ? 'Inject' : 'Hook'
-      if (importer === 'WWMI' && customLaunch) {
-        importerConfig.custom_launch_enabled = true
-        importerConfig.custom_launch = customLaunch
+      if (importer === 'WWMI') {
+        applyWWMILaunchSettings(importerConfig)
       }
     } else {
       // Importer just installed via downloadImporter — seed a minimal config stub so
       // XXMI finds a valid Importers section and doesn't show its own install dialog.
-      const useInjectMode = importer === 'EFMI' || importer === 'GIMI'
+      const useInjectMode = usesInjectMode(importer)
+      const importerConfig: Record<string, unknown> = {
+        game_folder: winePath,
+        process_start_method: 'Shell',
+        custom_launch_inject_mode: useInjectMode ? 'Inject' : 'Hook',
+      }
+
+      if (importer === 'WWMI') {
+        applyWWMILaunchSettings(importerConfig)
+      }
+
       if (!config.Importers) config.Importers = {}
       config.Importers[importer] = {
-        Importer: {
-          game_folder: winePath,
-          process_start_method: 'Shell',
-          custom_launch_inject_mode: useInjectMode ? 'Inject' : 'Hook',
-          ...(importer === 'WWMI' && customLaunch
-            ? {
-                custom_launch_enabled: true,
-                custom_launch: customLaunch,
-              }
-            : {}),
-        }
+        Importer: importerConfig,
       }
     }
 
@@ -601,7 +637,7 @@ function configureImporterGameFolder(importer: string, gameDirectory: string, ex
   }
 }
 
-function ensureLinuxCompatibility(importer: string, executablePath?: string): void {
+function ensureLinuxCompatibility(importer: string, _executablePath?: string): void {
   const { xxmiDir } = getXXMIPaths()
   const configPath = path.join(xxmiDir, 'XXMI Launcher Config.json')
 
@@ -620,21 +656,37 @@ function ensureLinuxCompatibility(importer: string, executablePath?: string): vo
       }
 
       // EFMI and GIMI use Inject mode; WWMI uses Hook mode (DLL loaded before d3d11 initializes)
-      const useInjectMode = importer === 'EFMI' || importer === 'GIMI'
+      const useInjectMode = usesInjectMode(importer)
       const targetMode = useInjectMode ? 'Inject' : 'Hook'
       if (importerConfig.custom_launch_inject_mode !== targetMode) {
         importerConfig.custom_launch_inject_mode = targetMode
         needsSave = true
       }
 
-      if (importer === 'WWMI' && executablePath) {
-        const customLaunch = `${linuxToWinePath(executablePath)} -dx11`
-        if (importerConfig.custom_launch_enabled !== true) {
-          importerConfig.custom_launch_enabled = true
+      if (importer === 'WWMI') {
+        if (importerConfig.custom_launch_enabled !== false) {
+          importerConfig.custom_launch_enabled = false
           needsSave = true
         }
-        if (importerConfig.custom_launch !== customLaunch) {
-          importerConfig.custom_launch = customLaunch
+        if (importerConfig.custom_launch !== '') {
+          importerConfig.custom_launch = ''
+          needsSave = true
+        }
+        if (importerConfig.custom_launch_signature !== '') {
+          importerConfig.custom_launch_signature = ''
+          needsSave = true
+        }
+        if (importerConfig.use_launch_options !== true) {
+          importerConfig.use_launch_options = true
+          needsSave = true
+        }
+        if (importerConfig.launch_options !== WWMI_LAUNCH_OPTIONS) {
+          importerConfig.launch_options = WWMI_LAUNCH_OPTIONS
+          needsSave = true
+        }
+        const processExeNames = JSON.stringify(importerConfig.process_exe_names || [])
+        if (processExeNames !== JSON.stringify(WWMI_PROCESS_EXE_NAMES)) {
+          importerConfig.process_exe_names = WWMI_PROCESS_EXE_NAMES
           needsSave = true
         }
       }
@@ -647,6 +699,87 @@ function ensureLinuxCompatibility(importer: string, executablePath?: string): vo
   } catch (err) {
     console.error('[xxmi] Failed to ensure Linux compatibility:', err)
   }
+}
+
+interface ProtonLaunchSpec {
+  command: string
+  args: string[]
+  env: NodeJS.ProcessEnv
+  cwd: string
+}
+
+function buildProtonLaunchSpec(
+  targetPath: string,
+  targetArgs: string[],
+  runnerPath: string,
+  winePrefix: string,
+  gameDirectory: string,
+  gameEnv: Record<string, string>,
+  steamAppId: string,
+  windowsOverrides?: string
+): ProtonLaunchSpec {
+  const prefixParent = winePrefix.replace(/\/pfx\/?$/, '')
+  const steamrt = findSteamrt()
+
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...gameEnv,
+    PROTONPATH: runnerPath,
+    WINEPREFIX: winePrefix,
+    STEAM_COMPAT_DATA_PATH: prefixParent,
+    STEAM_COMPAT_APP_ID: steamAppId,
+    PROTONFIXES_DISABLE: '1',
+    WINEARCH: 'win64',
+  }
+
+  if (windowsOverrides) {
+    env.WINEDLLOVERRIDES = windowsOverrides
+  }
+
+  if (steamrt) {
+    const shaderCache = path.join(prefixParent, 'shadercache')
+    fs.mkdirSync(shaderCache, { recursive: true })
+
+    return {
+      command: path.join(steamrt, '_v2-entry-point'),
+      args: [
+        '--verb=waitforexitandrun', '--',
+        path.join(runnerPath, 'proton'),
+        'waitforexitandrun',
+        linuxToWinePath(targetPath),
+        ...targetArgs,
+      ],
+      env: {
+        ...env,
+        STEAM_COMPAT_CLIENT_INSTALL_PATH: '',
+        STEAM_COMPAT_INSTALL_PATH: gameDirectory,
+        STEAM_COMPAT_LIBRARY_PATHS: `${gameDirectory}:${winePrefix}`,
+        STEAM_COMPAT_SHADER_PATH: shaderCache,
+        STEAM_COMPAT_TOOL_PATHS: runnerPath,
+        STEAM_ZENITY: '/usr/bin/zenity',
+      },
+      cwd: path.dirname(targetPath),
+    }
+  }
+
+  return {
+    command: 'umu-run',
+    args: [targetPath, ...targetArgs],
+    env: {
+      ...env,
+      GAMEID: `umu-${steamAppId}`,
+    },
+    cwd: path.dirname(targetPath),
+  }
+}
+
+function spawnDetached(spec: ProtonLaunchSpec): ChildProcess {
+  return spawn(spec.command, spec.args, {
+    env: spec.env,
+    detached: true,
+    stdio: 'ignore',
+    cwd: spec.cwd,
+  })
 }
 
 export async function launchGameWithXXMI(
@@ -734,13 +867,12 @@ export async function launchGameWithXXMI(
       })
     } else if (isProtonRunner) {
       // Non-HoYo games with a Proton runner (e.g. WuWa with proton-cachyos)
-      const prefixParent = winePrefix.replace(/\/pfx\/?$/, '')
       const env = {
         ...process.env,
         ...gameEnv,
         PROTONPATH: runnerPath,
         WINEPREFIX: winePrefix,
-        STEAM_COMPAT_DATA_PATH: prefixParent,
+        STEAM_COMPAT_DATA_PATH: winePrefix.replace(/\/pfx\/?$/, ''),
         GAMEID: gameId || '0',
         STEAM_COMPAT_APP_ID: GAME_TO_STEAM_APPID[exeName] || '0',
         PROTONFIXES_DISABLE: '1',
@@ -759,49 +891,42 @@ export async function launchGameWithXXMI(
             ? `d3d11=n,b;dxgi=n,b;${gameEnv.WINEDLLOVERRIDES}`
             : 'd3d11=n,b;dxgi=n,b',
         }
-        const steamrt = findSteamrt()
 
-        if (steamrt) {
-          const shaderCache = path.join(prefixParent, 'shadercache')
-          fs.mkdirSync(shaderCache, { recursive: true })
+        const steamAppId = GAME_TO_STEAM_APPID[exeName] || '0'
+        const loaderLaunch = buildProtonLaunchSpec(
+          launcherExe,
+          ['--nogui', '--xxmi', importer],
+          runnerPath,
+          winePrefix,
+          gameDirectory,
+          gameEnv,
+          steamAppId,
+          sharedWineEnv.WINEDLLOVERRIDES
+        )
+        const gameLaunch = buildProtonLaunchSpec(
+          executablePath,
+          ['-dx11'],
+          runnerPath,
+          winePrefix,
+          gameDirectory,
+          gameEnv,
+          steamAppId,
+          sharedWineEnv.WINEDLLOVERRIDES
+        )
 
-          proc = spawn(
-            path.join(steamrt, '_v2-entry-point'),
-            [
-              '--verb=waitforexitandrun', '--',
-              path.join(runnerPath, 'proton'),
-              'waitforexitandrun',
-              `z:\\${launcherExe}`,
-              '--nogui',
-              '--xxmi',
-              importer,
-            ],
-            {
-              env: {
-                ...sharedWineEnv,
-                PROTONFIXES_DISABLE: '1',
-                STEAM_COMPAT_APP_ID: GAME_TO_STEAM_APPID[exeName] || '0',
-                STEAM_COMPAT_CLIENT_INSTALL_PATH: '',
-                STEAM_COMPAT_DATA_PATH: prefixParent,
-                STEAM_COMPAT_INSTALL_PATH: gameDirectory,
-                STEAM_COMPAT_LIBRARY_PATHS: `${gameDirectory}:${winePrefix}`,
-                STEAM_COMPAT_SHADER_PATH: shaderCache,
-                STEAM_COMPAT_TOOL_PATHS: runnerPath,
-                STEAM_ZENITY: '/usr/bin/zenity',
-              },
-              detached: true,
-              stdio: 'ignore',
-              cwd: path.dirname(launcherExe),
-            }
-          )
-        } else {
-          proc = spawn('umu-run', [launcherExe, '--nogui', '--xxmi', importer], {
-            env: sharedWineEnv,
-            detached: true,
-            stdio: 'ignore',
-            cwd: path.dirname(launcherExe),
+        proc = spawnDetached(loaderLaunch)
+        proc.unref()
+
+        setTimeout(() => {
+          const gameProc = spawnDetached(gameLaunch)
+          gameProc.unref()
+          gameProc.on('error', (err) => {
+            console.error('[xxmi] Failed to start WuWa after XXMI setup:', err)
           })
-        }
+          gameProc.on('close', (code) => {
+            console.log(`[xxmi] WuWa launch helper exited with code ${code}`)
+          })
+        }, 1500)
       } else {
         proc = spawn('umu-run', [launcherExe, '--nogui', '--xxmi', importer], {
           env,
@@ -893,8 +1018,8 @@ export function getMods(importer: string): Mod[] {
   return entries
     .filter(e => e.isDirectory() && !excludeFolders.includes(e.name))
     .map(e => {
-      const isDisabled = e.name.startsWith('DISABLED_')
-      const cleanFolder = isDisabled ? e.name.substring(9) : e.name
+      const isDisabled = e.name.startsWith(DISABLED_MOD_PREFIX)
+      const cleanFolder = stripDisabledModPrefix(e.name)
       const { displayName, originalName } = parseModFolderName(cleanFolder)
 
       return {
@@ -910,15 +1035,15 @@ export function getMods(importer: string): Mod[] {
 export function toggleMod(modPath: string, enabled: boolean): boolean {
   const dir = path.dirname(modPath)
   const folder = path.basename(modPath)
-  const isCurrentlyDisabled = folder.startsWith('DISABLED_')
+  const isCurrentlyDisabled = folder.startsWith(DISABLED_MOD_PREFIX)
 
   try {
     if (enabled && isCurrentlyDisabled) {
-      const newName = folder.substring(9)
+      const newName = stripDisabledModPrefix(folder)
       fs.renameSync(modPath, path.join(dir, newName))
       return true
     } else if (!enabled && !isCurrentlyDisabled) {
-      fs.renameSync(modPath, path.join(dir, 'DISABLED_' + folder))
+      fs.renameSync(modPath, path.join(dir, addDisabledModPrefix(folder, true)))
       return true
     }
     return true
@@ -932,21 +1057,16 @@ export function renameMod(modPath: string, customName: string): { success: boole
   const dir = path.dirname(modPath)
   const folder = path.basename(modPath)
 
-  const isDisabled = folder.startsWith('DISABLED_')
-  const cleanFolder = isDisabled ? folder.substring(9) : folder
+  const isDisabled = folder.startsWith(DISABLED_MOD_PREFIX)
+  const cleanFolder = stripDisabledModPrefix(folder)
   const { originalName } = parseModFolderName(cleanFolder)
 
   try {
-    let newFolderName: string
-    if (customName && customName.trim()) {
-      newFolderName = `(${customName.trim()})${originalName}`
-    } else {
-      newFolderName = originalName
-    }
-
-    if (isDisabled) {
-      newFolderName = 'DISABLED_' + newFolderName
-    }
+    const trimmedCustomName = customName.trim()
+    const renamedFolder = trimmedCustomName
+      ? `(${trimmedCustomName})${originalName}`
+      : originalName
+    const newFolderName = addDisabledModPrefix(renamedFolder, isDisabled)
 
     if (folder === newFolderName) {
       return { success: true, newPath: modPath }
@@ -971,7 +1091,7 @@ export async function installMod(importer: string, zipPath: string): Promise<{ s
   const modName = path.basename(zipPath, path.extname(zipPath))
   const destPath = path.join(modsPath, modName)
 
-  if (fs.existsSync(destPath) || fs.existsSync(path.join(modsPath, 'DISABLED_' + modName))) {
+  if (fs.existsSync(destPath) || fs.existsSync(path.join(modsPath, addDisabledModPrefix(modName, true)))) {
     return { success: false, error: 'Mod already exists' }
   }
 

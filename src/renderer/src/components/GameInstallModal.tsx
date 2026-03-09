@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, type JSX } from 'react'
 import {
   Dialog,
   DialogContent,
@@ -9,10 +9,18 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+  formatBytes,
+  formatTime,
+  getInstallDialogDescription,
+  getInstallDialogTitle,
+  getInstallModeButtonClass,
+  getParentDirectory,
+  type InstallMode,
+  type InstallStatus,
+} from '@/components/install-modal-utils'
 import { FolderOpen, X, Download, Search } from 'lucide-react'
 import type { DownloadProgress } from '../../../shared/types/download'
-
-type InstallMode = 'download' | 'locate'
 
 const BIZ_CONFIG = {
   genshin: {
@@ -67,10 +75,10 @@ export function GameInstallModal({
   latestVersion,
   downloadSize,
   onGameAdded,
-}: GameInstallModalProps) {
+}: GameInstallModalProps): JSX.Element {
   const [mode, setMode] = useState<InstallMode>('download')
   const [installDir, setInstallDir] = useState('')
-  const [status, setStatus] = useState<'idle' | 'downloading' | 'complete' | 'error'>('idle')
+  const [status, setStatus] = useState<InstallStatus>('idle')
   const [progress, setProgress] = useState<DownloadProgress | null>(null)
   const hasStartedRef = useRef(false)
 
@@ -135,8 +143,7 @@ export function GameInstallModal({
   const handleBrowse = async () => {
     const path = await window.api.openFile()
     if (path) {
-      const dir = path.substring(0, path.lastIndexOf('/'))
-      setInstallDir(dir)
+      setInstallDir(getParentDirectory(path))
     }
   }
 
@@ -235,40 +242,13 @@ export function GameInstallModal({
     setProgress(null)
   }
 
-  const formatBytes = (bytes: number) => {
-    if (bytes === 0) return '0 B'
-    const k = 1024
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-    const i = Math.floor(Math.log(bytes) / Math.log(k))
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
-  }
-
-  const formatTime = (seconds: number) => {
-    if (seconds <= 0) return '--:--'
-    const h = Math.floor(seconds / 3600)
-    const m = Math.floor((seconds % 3600) / 60)
-    const s = seconds % 60
-    if (h > 0) {
-      return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
-    }
-    return `${m}:${s.toString().padStart(2, '0')}`
-  }
-
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="w-full sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>
-            {status === 'idle' && `Install ${gameName}`}
-            {status === 'downloading' && `Downloading ${gameName}`}
-            {status === 'complete' && 'Installation Complete!'}
-            {status === 'error' && 'Download Failed'}
-          </DialogTitle>
+          <DialogTitle>{getInstallDialogTitle(status, gameName)}</DialogTitle>
           <DialogDescription>
-            {status === 'idle' && `Version ${latestVersion}`}
-            {status === 'downloading' && `Installing to ${installDir}`}
-            {status === 'complete' && `${gameName} is ready to play`}
-            {status === 'error' && progress?.error}
+            {getInstallDialogDescription(status, latestVersion, installDir, gameName, progress?.error)}
           </DialogDescription>
         </DialogHeader>
 
@@ -278,18 +258,14 @@ export function GameInstallModal({
               {/* Mode toggle */}
               <div className="flex gap-1 p-1 bg-muted rounded-lg">
                 <button
-                  className={`flex-1 flex items-center justify-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                    mode === 'download' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
-                  }`}
+                  className={`flex-1 flex items-center justify-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${getInstallModeButtonClass(mode === 'download')}`}
                   onClick={() => setMode('download')}
                 >
                   <Download className="h-4 w-4" />
                   Download
                 </button>
                 <button
-                  className={`flex-1 flex items-center justify-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                    mode === 'locate' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
-                  }`}
+                  className={`flex-1 flex items-center justify-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${getInstallModeButtonClass(mode === 'locate')}`}
                   onClick={() => setMode('locate')}
                 >
                   <Search className="h-4 w-4" />

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type JSX } from 'react'
 import { Plus, Gamepad2, Trash2, FolderOpen, Puzzle, Play, Settings, Download, Cloud } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -19,6 +19,7 @@ import { EndfieldInstallModal } from '@/components/EndfieldInstallModal'
 import { WuwaInstallModal } from '@/components/WuwaInstallModal'
 import GameConfigModal from '@/components/GameConfigModal'
 import CoverImage from '@/components/CoverImage'
+import { formatBytes } from '@/components/install-modal-utils'
 import type { Game, DetectedRunner } from '../../../shared/types/game'
 import type { HoyoVersionInfo, WuwaVersionInfo } from '../../../shared/types/download'
 
@@ -60,7 +61,19 @@ const HOYO_GAMES = [
 
 type LibraryTab = 'my-games' | 'explore'
 
-function Library() {
+function getInstallButtonLabel(isInstalled: boolean, isAvailable: boolean): string {
+  if (isInstalled) {
+    return 'Already Installed'
+  }
+
+  if (!isAvailable) {
+    return 'Unavailable'
+  }
+
+  return 'Install'
+}
+
+function Library(): JSX.Element {
   const [activeTab, setActiveTab] = useState<LibraryTab>('my-games')
   const [games, setGames] = useState<Game[]>([])
   const [runners, setRunners] = useState<DetectedRunner[]>([])
@@ -731,7 +744,7 @@ function Library() {
                       title={!versionInfo ? 'Version info required to install' : undefined}
                     >
                       <Download className="h-4 w-4 mr-2" />
-                      {isInstalled ? 'Already Installed' : !versionInfo ? 'Unavailable' : 'Install'}
+                      {getInstallButtonLabel(isInstalled, versionInfo !== undefined)}
                     </Button>
                   </CardContent>
                 </Card>
@@ -796,7 +809,7 @@ function Library() {
                 title={!endfieldInfo ? 'Version info required to install' : undefined}
               >
                 <Download className="h-4 w-4 mr-2" />
-                {checkGameInstalled('endfield') ? 'Already Installed' : !endfieldInfo ? 'Unavailable' : 'Install'}
+                {getInstallButtonLabel(checkGameInstalled('endfield'), endfieldInfo !== null)}
               </Button>
             </CardContent>
           </Card>
@@ -857,7 +870,7 @@ function Library() {
                 title={!wuwaInfo ? 'Version info required to install' : undefined}
               >
                 <Download className="h-4 w-4 mr-2" />
-                {checkGameInstalled('wuwa') ? 'Already Installed' : !wuwaInfo ? 'Unavailable' : 'Install'}
+                {getInstallButtonLabel(checkGameInstalled('wuwa'), wuwaInfo !== null)}
               </Button>
             </CardContent>
           </Card>
@@ -885,15 +898,6 @@ function Library() {
       )}
     </div>
   )
-}
-
-// Helper function to format bytes
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
 }
 
 export default Library

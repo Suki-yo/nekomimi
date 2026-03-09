@@ -4,6 +4,7 @@
 - nekomimi now uses a nekomimi-local copy of Twintail's working WuWa runner and prefix instead of launching against `~/.local/share/twintaillauncher` directly
 - nekomimi now treats WuWa as Steam app `3513350` / `umu-3513350` and writes `Client/Binaries/Win64/steam_appid.txt`
 - nekomimi's WWMI Proton path now prefers direct `steamrt -> proton waitforexitandrun` instead of always going through `umu-run`
+- nekomimi now forces WWMI `custom_launch_enabled = false`, clears `custom_launch_signature`, and split-launches WuWa itself after XXMI setup
 - **Still broken:** WuWa still trips the false-positive ACE path under nekomimi
 - **New concrete mismatch:** XXMI's WWMI custom launch is spawning `C:\\windows\\system32\\cmd.exe /C ...Client-Win64-Shipping.exe -dx11`, and that `cmd.exe` stays alive as the parent of the game process
 - **Why this matters:** Twintail does not leave that hanging `cmd.exe` layer around, so XXMI custom launch is still not matching Twintail's working launch architecture
@@ -32,7 +33,7 @@
   - `C:\\windows\\system32\\cmd.exe /C Z:\\home\\jyq\\Games\\WutheringWaves\\Client\\Binaries\\Win64\\Client-Win64-Shipping.exe -dx11`
   - `Client-Win64-Shipping.exe -dx11`
 - The hanging `cmd.exe` strongly suggests XXMI `custom_launch` is the remaining runtime mismatch
-- Next likely fix direction: remove WWMI reliance on XXMI `custom_launch` for WuWa and launch the shipping exe from nekomimi's own Proton path while preserving XXMI hook/setup
+- Current fix direction in code: keep XXMI for hook/setup only, then have nekomimi launch `Client-Win64-Shipping.exe -dx11` itself under the same Proton path after a short delay
 
 ## Current Status (INJECTION WORKS, XXMI CREATE MODE IS NOT USABLE)
 - ✅ **SOLVED**: DLL injection now succeeds when WWMI is launched under the proper Proton environment

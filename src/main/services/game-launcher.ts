@@ -79,13 +79,33 @@ function startPolling() {
 
 startPolling()
 
+function resolveRunnerPrefix(game: Game): string {
+  const configuredPrefix = expandHome(game.runner.prefix)
+  if (configuredPrefix) {
+    return configuredPrefix
+  }
+
+  const generatedPrefix = join(homedir(), '.local', 'share', 'nekomimi', 'prefixes', game.slug, 'pfx')
+  mkdirSync(generatedPrefix, { recursive: true })
+  return generatedPrefix
+}
+
+function getUmuGameId(game: Game): string {
+  const configuredGameId = game.launch.env?.GAMEID
+  if (configuredGameId) {
+    return configuredGameId
+  }
+
+  if (game.slug === 'wuwa') {
+    return 'umu-3513350'
+  }
+
+  return '0'
+}
+
 function buildLaunchCommand(game: Game, useXXMI: boolean): { command: string; args: string[]; env: Record<string, string> } {
   // Resolve prefix: expand ~ and auto-generate if empty
-  let prefix = expandHome(game.runner.prefix)
-  if (!prefix) {
-    prefix = join(homedir(), '.local', 'share', 'nekomimi', 'prefixes', game.slug, 'pfx')
-    mkdirSync(prefix, { recursive: true })
-  }
+  const prefix = resolveRunnerPrefix(game)
 
   const runnerPath = expandHome(game.runner.path)
 
@@ -127,7 +147,7 @@ function buildLaunchCommand(game: Game, useXXMI: boolean): { command: string; ar
       // Fallback to umu-run if Steam Runtime not found
       command = 'umu-run'
       env.PROTONPATH = runnerPath
-      env.GAMEID = game.launch.env?.GAMEID || (game.slug === 'wuwa' ? 'umu-3513350' : '0')
+      env.GAMEID = getUmuGameId(game)
       if (game.slug === 'wuwa') {
         env.STEAM_COMPAT_APP_ID = STEAM_APP_IDS[game.slug]
       }
@@ -203,13 +223,7 @@ export async function launchGame(
   ensureSteamCompatMarkers(game)
 
   // Resolve prefix: expand ~ and auto-generate if not set
-  const resolvedPrefix = (() => {
-    const p = expandHome(game.runner.prefix)
-    if (p) return p
-    const auto = join(homedir(), '.local', 'share', 'nekomimi', 'prefixes', game.slug, 'pfx')
-    mkdirSync(auto, { recursive: true })
-    return auto
-  })()
+  const resolvedPrefix = resolveRunnerPrefix(game)
   const resolvedRunnerPath = expandHome(game.runner.path)
 
   const gameSupportsXXMI = shouldUseXXMI(game.executable)

@@ -4,8 +4,8 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import * as https from 'https'
-import * as crypto from 'crypto'
 import { fetchWuwaVersionInfo, fetchWuwaManifest } from './wuwa-api'
+import { streamingMd5 } from './utils'
 import type { DownloadProgress, WuwaFileEntry } from '../../../shared/types/download'
 
 const CONCURRENCY = 4
@@ -99,23 +99,12 @@ function downloadFile(
   })
 }
 
-// Compute MD5 of a file
-function fileMd5(filePath: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const hash = crypto.createHash('md5')
-    const stream = fs.createReadStream(filePath)
-    stream.on('data', (chunk) => hash.update(chunk))
-    stream.on('end', () => resolve(hash.digest('hex')))
-    stream.on('error', reject)
-  })
-}
-
 // Check if a file is already correctly downloaded
 async function isFileComplete(filePath: string, entry: WuwaFileEntry): Promise<boolean> {
   if (!fs.existsSync(filePath)) return false
   const stat = fs.statSync(filePath)
   if (stat.size !== entry.size) return false
-  const md5 = await fileMd5(filePath)
+  const md5 = await streamingMd5(filePath)
   return md5.toLowerCase() === entry.md5.toLowerCase()
 }
 

@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, type JSX } from 'react'
 import {
   Dialog,
   DialogContent,
@@ -9,10 +9,18 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+  formatBytes,
+  formatTime,
+  getInstallDialogDescription,
+  getInstallDialogTitle,
+  getInstallModeButtonClass,
+  getParentDirectory,
+  type InstallMode,
+  type InstallStatus,
+} from '@/components/install-modal-utils'
 import { FolderOpen, Download, Search } from 'lucide-react'
 import type { DownloadProgress } from '../../../shared/types/download'
-
-type InstallMode = 'download' | 'locate'
 
 interface EndfieldInstallModalProps {
   open: boolean
@@ -23,6 +31,21 @@ interface EndfieldInstallModalProps {
   onGameAdded?: () => void
 }
 
+const ENDFIELD_GAME = {
+  name: 'Arknights: Endfield',
+  slug: 'endfield',
+  defaultInstallDir: '~/Games/Endfield',
+  defaultPrefix: '~/Games/prefixes/endfield/pfx',
+  executable: 'Endfield.exe',
+  launch: {
+    env: { STEAM_COMPAT_CONFIG: 'noxalia', WINEDLLOVERRIDES: 'lsteamclient=d;KRSDKExternal.exe=d' },
+    preLaunch: [],
+    postLaunch: [],
+    args: '-force-d3d11',
+  },
+  mods: { enabled: true, importer: 'EFMI' },
+} as const
+
 export function EndfieldInstallModal({
   open,
   onClose,
@@ -30,10 +53,10 @@ export function EndfieldInstallModal({
   totalSize,
   installedSize,
   onGameAdded,
-}: EndfieldInstallModalProps) {
+}: EndfieldInstallModalProps): JSX.Element {
   const [mode, setMode] = useState<InstallMode>('download')
   const [installDir, setInstallDir] = useState('')
-  const [status, setStatus] = useState<'idle' | 'downloading' | 'complete' | 'error'>('idle')
+  const [status, setStatus] = useState<InstallStatus>('idle')
   const [progress, setProgress] = useState<DownloadProgress | null>(null)
   const hasStartedRef = useRef(false)
 
@@ -56,7 +79,7 @@ export function EndfieldInstallModal({
         setStatus('idle')
         setProgress(null)
         hasStartedRef.current = false
-        setInstallDir('~/Games/Endfield')
+        setInstallDir(ENDFIELD_GAME.defaultInstallDir)
         setLocateExePath('')
         setLocateDetected(null)
         setLocateError(null)
@@ -98,8 +121,7 @@ export function EndfieldInstallModal({
   const handleBrowse = async () => {
     const path = await window.api.openFile()
     if (path) {
-      const dir = path.substring(0, path.lastIndexOf('/'))
-      setInstallDir(dir)
+      setInstallDir(getParentDirectory(path))
     }
   }
 
@@ -125,23 +147,18 @@ export function EndfieldInstallModal({
     setLocating(true)
     try {
       await window.api.invoke('game:add', {
-        name: 'Arknights: Endfield',
-        slug: 'endfield',
+        name: ENDFIELD_GAME.name,
+        slug: ENDFIELD_GAME.slug,
         installed: true,
         directory: locateDetected.directory,
         executable: locateExePath,
         runner: {
           type: 'proton' as const,
           path: '',
-          prefix: locateDetected.prefix || '~/Games/prefixes/endfield/pfx',
+          prefix: locateDetected.prefix || ENDFIELD_GAME.defaultPrefix,
         },
-        launch: {
-          env: { STEAM_COMPAT_CONFIG: 'noxalia', WINEDLLOVERRIDES: 'lsteamclient=d;KRSDKExternal.exe=d' },
-          preLaunch: [],
-          postLaunch: [],
-          args: '-force-d3d11',
-        },
-        mods: { enabled: true, importer: 'EFMI' },
+        launch: ENDFIELD_GAME.launch,
+        mods: ENDFIELD_GAME.mods,
       })
       onGameAdded?.()
       onClose()
@@ -180,19 +197,14 @@ export function EndfieldInstallModal({
     const runnerPath = runners.length > 0 ? runners[0].path : ''
     try {
       await window.api.invoke('game:add', {
-        name: 'Arknights: Endfield',
-        slug: 'endfield',
+        name: ENDFIELD_GAME.name,
+        slug: ENDFIELD_GAME.slug,
         installed: true,
         directory: installDir,
-        executable: `${installDir}/Endfield.exe`,
-        runner: { type: 'proton' as const, path: runnerPath, prefix: '~/Games/prefixes/endfield/pfx' },
-        launch: {
-          env: { STEAM_COMPAT_CONFIG: 'noxalia', WINEDLLOVERRIDES: 'lsteamclient=d;KRSDKExternal.exe=d' },
-          preLaunch: [],
-          postLaunch: [],
-          args: '-force-d3d11',
-        },
-        mods: { enabled: true, importer: 'EFMI' },
+        executable: `${installDir}/${ENDFIELD_GAME.executable}`,
+        runner: { type: 'proton' as const, path: runnerPath, prefix: ENDFIELD_GAME.defaultPrefix },
+        launch: ENDFIELD_GAME.launch,
+        mods: ENDFIELD_GAME.mods,
       })
       onGameAdded?.()
     } catch (err) {
@@ -200,40 +212,13 @@ export function EndfieldInstallModal({
     }
   }
 
-  const formatBytes = (bytes: number) => {
-    if (bytes === 0) return '0 B'
-    const k = 1024
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-    const i = Math.floor(Math.log(bytes) / Math.log(k))
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
-  }
-
-  const formatTime = (seconds: number) => {
-    if (seconds <= 0) return '--:--'
-    const h = Math.floor(seconds / 3600)
-    const m = Math.floor((seconds % 3600) / 60)
-    const s = seconds % 60
-    if (h > 0) {
-      return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
-    }
-    return `${m}:${s.toString().padStart(2, '0')}`
-  }
-
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>
-            {status === 'idle' && 'Install Arknights: Endfield'}
-            {status === 'downloading' && 'Downloading Arknights: Endfield'}
-            {status === 'complete' && 'Installation Complete!'}
-            {status === 'error' && 'Download Failed'}
-          </DialogTitle>
+          <DialogTitle>{getInstallDialogTitle(status, ENDFIELD_GAME.name)}</DialogTitle>
           <DialogDescription>
-            {status === 'idle' && `Version ${latestVersion}`}
-            {status === 'downloading' && `Installing to ${installDir}`}
-            {status === 'complete' && 'Arknights: Endfield is ready to play'}
-            {status === 'error' && progress?.error}
+            {getInstallDialogDescription(status, latestVersion, installDir, ENDFIELD_GAME.name, progress?.error)}
           </DialogDescription>
         </DialogHeader>
 
@@ -243,18 +228,14 @@ export function EndfieldInstallModal({
               {/* Mode toggle */}
               <div className="flex gap-1 p-1 bg-muted rounded-lg">
                 <button
-                  className={`flex-1 flex items-center justify-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                    mode === 'download' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
-                  }`}
+                  className={`flex-1 flex items-center justify-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${getInstallModeButtonClass(mode === 'download')}`}
                   onClick={() => setMode('download')}
                 >
                   <Download className="h-4 w-4" />
                   Download
                 </button>
                 <button
-                  className={`flex-1 flex items-center justify-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-                    mode === 'locate' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
-                  }`}
+                  className={`flex-1 flex items-center justify-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${getInstallModeButtonClass(mode === 'locate')}`}
                   onClick={() => setMode('locate')}
                 >
                   <Search className="h-4 w-4" />
