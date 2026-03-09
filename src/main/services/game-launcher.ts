@@ -1,11 +1,12 @@
 import { spawn, execSync } from 'child_process'
-import { mkdirSync } from 'fs'
+import { mkdirSync, existsSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
 import { getGame, updateGame } from './database'
 import { loadGameConfig, saveGameConfig } from './config'
 import { shouldUseXXMI, launchGameWithXXMI } from './mod-manager'
 import { findSteamrt, downloadSteamrt } from './steamrt'
+import { syncGameFromTwintailIfNeeded } from './twintail-import'
 import type { Game } from '../../shared/types/game'
 
 function expandHome(p: string): string {
@@ -37,6 +38,10 @@ interface RunningGame {
   launcherPid?: number
   startTime: number
   lastCheck: number
+}
+
+const STEAM_APP_IDS: Record<string, string> = {
+  wuwa: '3513350',
 }
 
 const runningProcesses = new Map<string, RunningGame>()
@@ -108,7 +113,7 @@ function buildLaunchCommand(game: Game, useXXMI: boolean): { command: string; ar
         'z:\\' + game.executable,
       ]
       env.PROTONFIXES_DISABLE = '1'
-      env.STEAM_COMPAT_APP_ID = '0'
+      env.STEAM_COMPAT_APP_ID = STEAM_APP_IDS[game.slug] || '0'
       env.STEAM_COMPAT_CLIENT_INSTALL_PATH = ''
       env.STEAM_COMPAT_DATA_PATH = prefixParent
       env.STEAM_COMPAT_INSTALL_PATH = game.directory
@@ -122,7 +127,10 @@ function buildLaunchCommand(game: Game, useXXMI: boolean): { command: string; ar
       // Fallback to umu-run if Steam Runtime not found
       command = 'umu-run'
       env.PROTONPATH = runnerPath
-      env.GAMEID = game.launch.env?.GAMEID || '0'
+      env.GAMEID = game.launch.env?.GAMEID || (game.slug === 'wuwa' ? 'umu-3513350' : '0')
+      if (game.slug === 'wuwa') {
+        env.STEAM_COMPAT_APP_ID = STEAM_APP_IDS[game.slug]
+      }
       env.STEAM_COMPAT_DATA_PATH = prefixParent
       args = [game.executable]
     }
@@ -148,6 +156,15 @@ function buildLaunchCommand(game: Game, useXXMI: boolean): { command: string; ar
   return { command, args, env }
 }
 
+function ensureSteamCompatMarkers(game: Game): void {
+  if (game.slug !== 'wuwa') return
+
+  const steamAppIdPath = join(game.directory, 'Client', 'Binaries', 'Win64', 'steam_appid.txt')
+  if (!existsSync(steamAppIdPath)) {
+    writeFileSync(steamAppIdPath, `${STEAM_APP_IDS.wuwa}\n`, 'utf-8')
+  }
+}
+
 export async function launchGame(
   gameId: string,
   onProgress?: (step: string, percent: number) => void
@@ -160,10 +177,11 @@ export async function launchGame(
     return { success: false, error: 'Game not found' }
   }
 
-  const game = loadGameConfig(gameRow.config_path)
-  if (!game) {
+  const loadedGame = loadGameConfig(gameRow.config_path)
+  if (!loadedGame) {
     return { success: false, error: 'Game config not found' }
   }
+  const game = syncGameFromTwintailIfNeeded(loadedGame)
 
   const exeName = game.executable.split(/[/\\]/).pop() || game.executable
 
@@ -181,6 +199,8 @@ export async function launchGame(
   if (!game.executable || !game.runner?.path) {
     return { success: false, error: 'Game is missing required launch fields (executable or runner)' }
   }
+
+  ensureSteamCompatMarkers(game)
 
   // Resolve prefix: expand ~ and auto-generate if not set
   const resolvedPrefix = (() => {

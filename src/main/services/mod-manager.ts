@@ -1,8 +1,10 @@
 import { spawn, execSync } from 'child_process'
+import type { ChildProcess } from 'child_process'
 import * as path from 'path'
 import * as fs from 'fs'
 import * as https from 'https'
 import { getPathsInstance } from './paths'
+import { findSteamrt } from './steamrt'
 import type { Mod } from '../../shared/types/game'
 
 const XXMI_RELEASES_API = 'https://api.github.com/repos/SpectrumQT/XXMI-Launcher/releases/latest'
@@ -32,6 +34,11 @@ const GAME_TO_UMU_GAMEID: Record<string, string> = {
   'genshinimpact.exe': 'umu-genshin',
   'zenlesszonezero.exe': 'umu-zenlesszonezero',
   'starrail.exe': '0',
+  'client-win64-shipping.exe': 'umu-3513350',
+}
+
+const GAME_TO_STEAM_APPID: Record<string, string> = {
+  'client-win64-shipping.exe': '3513350',
 }
 
 export function shouldUseXXMI(executablePath: string): boolean {
@@ -54,6 +61,23 @@ function getXXMIPaths() {
   }
 }
 
+// Twintail keeps WWMI configured for XXMI Launcher ownership rather than directly
+// rewriting the package into a standalone 3dmloader flow.
+function configureWWMILaunchPath(_gameExecutable: string): void {
+  const { xxmiDir } = getXXMIPaths()
+  const d3dxIni = path.join(xxmiDir, 'WWMI', 'd3dx.ini')
+  if (!fs.existsSync(d3dxIni)) return
+
+  let content = fs.readFileSync(d3dxIni, 'utf-8')
+  content = content.replace(/^loader\s*=.*$/m, 'loader = XXMI Launcher.exe')
+  content = content.replace(/^;?\s*require_admin\s*=.*$/m, 'require_admin = true')
+  content = content.replace(/^;launch\s*=.*$/m, 'launch = $\\xxmi\\config\\game_exe_path')
+  content = content.replace(/^;?delay\s*=.*$/m, 'delay = 0')
+
+  fs.writeFileSync(d3dxIni, content)
+  console.log('[wwmi] d3dx.ini: restored XXMI launcher mode')
+}
+
 function findInstalledRunner(): { name: string; path: string; wine: string } | null {
   const { runnersDir } = getXXMIPaths()
   if (!fs.existsSync(runnersDir)) return null
@@ -73,6 +97,48 @@ function findInstalledRunner(): { name: string; path: string; wine: string } | n
     }
   }
   return null
+}
+
+function ensureWindowsDllAliases(importerDir: string): void {
+  const aliases: Array<[string, string]> = [
+    ['d3d11.dll', 'D3D11.dll'],
+    ['d3dcompiler_47.dll', 'D3DCOMPILER_47.dll'],
+  ]
+
+  for (const [sourceName, aliasName] of aliases) {
+    const sourcePath = path.join(importerDir, sourceName)
+    const aliasPath = path.join(importerDir, aliasName)
+
+    if (!fs.existsSync(sourcePath) || fs.existsSync(aliasPath)) continue
+
+    try {
+      fs.copyFileSync(sourcePath, aliasPath)
+    } catch (err) {
+      console.warn(`[xxmi] Failed to create DLL alias ${aliasName}:`, err)
+    }
+  }
+}
+
+function ensureImporterRootSymlinks(importerDir: string): void {
+  const { xxmiDir } = getXXMIPaths()
+  const aliases: Array<[string, string]> = [
+    ['d3d11.dll', 'd3d11.dll'],
+    ['d3dcompiler_47.dll', 'd3dcompiler_47.dll'],
+  ]
+
+  for (const [rootName, importerName] of aliases) {
+    const rootPath = path.join(xxmiDir, rootName)
+    const importerPath = path.join(importerDir, importerName)
+
+    if (!fs.existsSync(rootPath) || fs.existsSync(importerPath)) continue
+
+    try {
+      fs.symlinkSync(rootPath, importerPath)
+      console.log(`[xxmi] Created shared DLL symlink: ${importerName}`)
+    } catch (err) {
+      console.warn(`[xxmi] Failed to create shared DLL symlink ${importerName}:`, err)
+    }
+  }
 }
 
 export function isXXMIInstalled(): boolean {
@@ -436,6 +502,8 @@ export async function downloadImporter(
     return { success: false, error: `Failed to create symlinks: ${err}` }
   }
 
+  ensureWindowsDllAliases(importerDir)
+
   // Phase 3: Register importer in XXMI config
   const configPath = path.join(xxmiDir, 'XXMI Launcher Config.json')
   if (fs.existsSync(configPath)) {
@@ -456,15 +524,24 @@ export async function downloadImporter(
 }
 
 function linuxToWinePath(linuxPath: string): string {
-  return 'Z:' + linuxPath.replace(/\/+/g, '/')
+  return 'Z:' + linuxPath.replace(/\//g, '\\')
 }
 
 export function isImporterInstalled(importer: string): boolean {
   const { xxmiDir } = getXXMIPaths()
-  return fs.existsSync(path.join(xxmiDir, importer, 'd3d11.dll'))
+  const dllPath = path.join(xxmiDir, importer, 'd3d11.dll')
+  const compilerPath = path.join(xxmiDir, importer, 'd3dcompiler_47.dll')
+
+  try {
+    const dllStat = fs.statSync(dllPath)
+    const compilerStat = fs.statSync(compilerPath)
+    return dllStat.isFile() && compilerStat.isFile() && dllStat.size > 0 && compilerStat.size > 0
+  } catch {
+    return false
+  }
 }
 
-function configureImporterGameFolder(importer: string, gameDirectory: string): boolean {
+function configureImporterGameFolder(importer: string, gameDirectory: string, executablePath?: string): boolean {
   const { xxmiDir } = getXXMIPaths()
   const configPath = path.join(xxmiDir, 'XXMI Launcher Config.json')
 
@@ -482,22 +559,35 @@ function configureImporterGameFolder(importer: string, gameDirectory: string): b
       }
     }
 
+    const customLaunch = executablePath ? `${linuxToWinePath(executablePath)} -dx11` : undefined
+
     if (config?.Importers?.[importer]?.Importer) {
       // Importer already installed — update game folder and mode
-      const useInjectMode = importer === 'EFMI' || importer === 'GIMI' || importer === 'WWMI'
-      config.Importers[importer].Importer.game_folder = winePath
-      config.Importers[importer].Importer.process_start_method = 'Shell'
-      config.Importers[importer].Importer.custom_launch_inject_mode = useInjectMode ? 'Inject' : 'Hook'
+      const useInjectMode = importer === 'EFMI' || importer === 'GIMI'
+      const importerConfig = config.Importers[importer].Importer
+      importerConfig.game_folder = winePath
+      importerConfig.process_start_method = 'Shell'
+      importerConfig.custom_launch_inject_mode = useInjectMode ? 'Inject' : 'Hook'
+      if (importer === 'WWMI' && customLaunch) {
+        importerConfig.custom_launch_enabled = true
+        importerConfig.custom_launch = customLaunch
+      }
     } else {
       // Importer just installed via downloadImporter — seed a minimal config stub so
       // XXMI finds a valid Importers section and doesn't show its own install dialog.
-      const useInjectMode = importer === 'EFMI' || importer === 'GIMI' || importer === 'WWMI'
+      const useInjectMode = importer === 'EFMI' || importer === 'GIMI'
       if (!config.Importers) config.Importers = {}
       config.Importers[importer] = {
         Importer: {
           game_folder: winePath,
           process_start_method: 'Shell',
           custom_launch_inject_mode: useInjectMode ? 'Inject' : 'Hook',
+          ...(importer === 'WWMI' && customLaunch
+            ? {
+                custom_launch_enabled: true,
+                custom_launch: customLaunch,
+              }
+            : {}),
         }
       }
     }
@@ -511,7 +601,7 @@ function configureImporterGameFolder(importer: string, gameDirectory: string): b
   }
 }
 
-function ensureLinuxCompatibility(importer: string): void {
+function ensureLinuxCompatibility(importer: string, executablePath?: string): void {
   const { xxmiDir } = getXXMIPaths()
   const configPath = path.join(xxmiDir, 'XXMI Launcher Config.json')
 
@@ -529,12 +619,24 @@ function ensureLinuxCompatibility(importer: string): void {
         needsSave = true
       }
 
-      // EFMI, GIMI, and WWMI require Inject mode - Hook mode waits for window which fails on Wayland
-      const useInjectMode = importer === 'EFMI' || importer === 'GIMI' || importer === 'WWMI'
+      // EFMI and GIMI use Inject mode; WWMI uses Hook mode (DLL loaded before d3d11 initializes)
+      const useInjectMode = importer === 'EFMI' || importer === 'GIMI'
       const targetMode = useInjectMode ? 'Inject' : 'Hook'
       if (importerConfig.custom_launch_inject_mode !== targetMode) {
         importerConfig.custom_launch_inject_mode = targetMode
         needsSave = true
+      }
+
+      if (importer === 'WWMI' && executablePath) {
+        const customLaunch = `${linuxToWinePath(executablePath)} -dx11`
+        if (importerConfig.custom_launch_enabled !== true) {
+          importerConfig.custom_launch_enabled = true
+          needsSave = true
+        }
+        if (importerConfig.custom_launch !== customLaunch) {
+          importerConfig.custom_launch = customLaunch
+          needsSave = true
+        }
       }
 
       if (needsSave) {
@@ -549,7 +651,7 @@ function ensureLinuxCompatibility(importer: string): void {
 
 export async function launchGameWithXXMI(
   executablePath: string,
-  _gameDirectory: string,
+  gameDirectory: string,
   runnerPath: string,
   winePrefix: string,
   gameEnv: Record<string, string> = {}
@@ -573,9 +675,10 @@ export async function launchGameWithXXMI(
   const exeName = path.basename(executablePath).toLowerCase()
   const gameId = GAME_TO_UMU_GAMEID[exeName]
   const useUmu = !!gameId
+  const isProtonRunner = !useUmu && fs.existsSync(path.join(runnerPath, 'proton'))
 
-  // For non-HoYo games (e.g. Endfield), still need the bundled wine runner
-  if (!useUmu) {
+  // For non-HoYo games using a bundled wine runner (not a Proton runner), need the bundled runner
+  if (!useUmu && !isProtonRunner) {
     const runner = findInstalledRunner()
     if (!runner) {
       return { success: false, error: 'No Proton runner found. Please install a runner first.' }
@@ -589,8 +692,8 @@ export async function launchGameWithXXMI(
   }
 
   const gameFolder = path.dirname(executablePath)
-  configureImporterGameFolder(importer, gameFolder)
-  ensureLinuxCompatibility(importer)
+  configureImporterGameFolder(importer, gameFolder, executablePath)
+  ensureLinuxCompatibility(importer, executablePath)
 
   console.log(`[xxmi] Using XXMI Launcher inject mode for ${importer}`)
 
@@ -606,7 +709,7 @@ export async function launchGameWithXXMI(
 
     console.log(`[xxmi] Launching ${path.basename(executablePath)} with ${importer} (umu=${useUmu})`)
 
-    let proc
+    let proc: ChildProcess
     if (useUmu) {
       // HoYo games: use umu-run so ProtonFixes applies UMU_USE_STEAM=1 for anti-cheat
       // Merge game-specific env vars (e.g. MHYPBase bypass), combining WINEDLLOVERRIDES
@@ -629,8 +732,86 @@ export async function launchGameWithXXMI(
         stdio: 'ignore',
         cwd: path.dirname(launcherExe),
       })
+    } else if (isProtonRunner) {
+      // Non-HoYo games with a Proton runner (e.g. WuWa with proton-cachyos)
+      const prefixParent = winePrefix.replace(/\/pfx\/?$/, '')
+      const env = {
+        ...process.env,
+        ...gameEnv,
+        PROTONPATH: runnerPath,
+        WINEPREFIX: winePrefix,
+        STEAM_COMPAT_DATA_PATH: prefixParent,
+        GAMEID: gameId || '0',
+        STEAM_COMPAT_APP_ID: GAME_TO_STEAM_APPID[exeName] || '0',
+        PROTONFIXES_DISABLE: '1',
+      }
+
+      if (importer === 'WWMI') {
+        configureWWMILaunchPath(executablePath)
+        const { xxmiDir } = getXXMIPaths()
+        const loaderDir = path.join(xxmiDir, 'WWMI')
+        ensureImporterRootSymlinks(loaderDir)
+        ensureWindowsDllAliases(loaderDir)
+        const sharedWineEnv = {
+          ...env,
+          WINEARCH: 'win64',
+          WINEDLLOVERRIDES: gameEnv.WINEDLLOVERRIDES
+            ? `d3d11=n,b;dxgi=n,b;${gameEnv.WINEDLLOVERRIDES}`
+            : 'd3d11=n,b;dxgi=n,b',
+        }
+        const steamrt = findSteamrt()
+
+        if (steamrt) {
+          const shaderCache = path.join(prefixParent, 'shadercache')
+          fs.mkdirSync(shaderCache, { recursive: true })
+
+          proc = spawn(
+            path.join(steamrt, '_v2-entry-point'),
+            [
+              '--verb=waitforexitandrun', '--',
+              path.join(runnerPath, 'proton'),
+              'waitforexitandrun',
+              `z:\\${launcherExe}`,
+              '--nogui',
+              '--xxmi',
+              importer,
+            ],
+            {
+              env: {
+                ...sharedWineEnv,
+                PROTONFIXES_DISABLE: '1',
+                STEAM_COMPAT_APP_ID: GAME_TO_STEAM_APPID[exeName] || '0',
+                STEAM_COMPAT_CLIENT_INSTALL_PATH: '',
+                STEAM_COMPAT_DATA_PATH: prefixParent,
+                STEAM_COMPAT_INSTALL_PATH: gameDirectory,
+                STEAM_COMPAT_LIBRARY_PATHS: `${gameDirectory}:${winePrefix}`,
+                STEAM_COMPAT_SHADER_PATH: shaderCache,
+                STEAM_COMPAT_TOOL_PATHS: runnerPath,
+                STEAM_ZENITY: '/usr/bin/zenity',
+              },
+              detached: true,
+              stdio: 'ignore',
+              cwd: path.dirname(launcherExe),
+            }
+          )
+        } else {
+          proc = spawn('umu-run', [launcherExe, '--nogui', '--xxmi', importer], {
+            env: sharedWineEnv,
+            detached: true,
+            stdio: 'ignore',
+            cwd: path.dirname(launcherExe),
+          })
+        }
+      } else {
+        proc = spawn('umu-run', [launcherExe, '--nogui', '--xxmi', importer], {
+          env,
+          detached: true,
+          stdio: 'ignore',
+          cwd: path.dirname(launcherExe),
+        })
+      }
     } else {
-      // Non-HoYo games: use wine directly (Endfield etc.)
+      // Non-HoYo games with bundled wine runner (Endfield etc.)
       const runner = findInstalledRunner()!
       const env = {
         ...process.env,
@@ -649,6 +830,8 @@ export async function launchGameWithXXMI(
         cwd: path.dirname(launcherExe),
       })
     }
+
+    proc.unref()
 
     proc.on('error', (err) => {
       console.error(`[xxmi] Failed to start:`, err)
