@@ -20,6 +20,7 @@ function GameConfigModal({ game, open, onClose, onUpdate, runners }: GameConfigM
   const [loadingMods, setLoadingMods] = useState(false)
   const [name, setName] = useState('')
   const [runnerPath, setRunnerPath] = useState('')
+  const [prefix, setPrefix] = useState('')
   const [coverImage, setCoverImage] = useState<string | undefined>()
   const [editingModPath, setEditingModPath] = useState<string | null>(null)
   const [editingModName, setEditingModName] = useState('')
@@ -28,6 +29,7 @@ function GameConfigModal({ game, open, onClose, onUpdate, runners }: GameConfigM
     if (game) {
       setName(game.name)
       setRunnerPath(game.runner?.path || '')
+      setPrefix(game.runner?.prefix || '')
       setCoverImage(game.coverImage)
     }
   }, [game])
@@ -73,6 +75,19 @@ function GameConfigModal({ game, open, onClose, onUpdate, runners }: GameConfigM
           ...game.runner,
           type: selectedRunner?.type || game.runner.type,
           path: newRunnerPath,
+        }
+      }
+    })
+    onUpdate(updated)
+  }
+  const handlePrefixChange = async (newPrefix: string) => {
+    setPrefix(newPrefix)
+    const updated = await window.api.invoke('game:update', {
+      id: game.id,
+      updates: {
+        runner: {
+          ...game.runner,
+          prefix: newPrefix,
         }
       }
     })
@@ -243,6 +258,17 @@ function GameConfigModal({ game, open, onClose, onUpdate, runners }: GameConfigM
                     </option>
                   ))}
                 </select>
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Wine Prefix</label>
+                <input
+                  type="text"
+                  value={prefix}
+                  onChange={(e) => handlePrefixChange(e.target.value)}
+                  placeholder="/path/to/prefix"
+                  className="w-full px-3 py-2 border rounded bg-background font-mono text-xs"
+                />
               </div>
 
               <div className="text-sm text-muted-foreground space-y-1 pt-2 border-t">

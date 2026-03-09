@@ -1,8 +1,37 @@
 import { spawn, execSync } from 'child_process'
+import { mkdirSync, existsSync, writeFileSync } from 'fs'
+import { join } from 'path'
+import { homedir } from 'os'
 import { getGame, updateGame } from './database'
 import { loadGameConfig, saveGameConfig } from './config'
 import { shouldUseXXMI, launchGameWithXXMI } from './mod-manager'
+import { findSteamrt, downloadSteamrt } from './steamrt'
+import { syncGameFromTwintailIfNeeded } from './twintail-import'
 import type { Game } from '../../shared/types/game'
+
+function expandHome(p: string): string {
+  return p.startsWith('~/') ? join(homedir(), p.slice(2)) : p
+}
+
+function shellSplit(input: string): string[] {
+  const args: string[] = []
+  let current = ''
+  let quote: string | null = null
+  for (const ch of input) {
+    if (quote) {
+      if (ch === quote) quote = null
+      else current += ch
+    } else if (ch === '"' || ch === "'") {
+      quote = ch
+    } else if (ch === ' ') {
+      if (current) { args.push(current); current = '' }
+    } else {
+      current += ch
+    }
+  }
+  if (current) args.push(current)
+  return args
+}
 
 interface RunningGame {
   exeName: string
@@ -11,12 +40,17 @@ interface RunningGame {
   lastCheck: number
 }
 
+const STEAM_APP_IDS: Record<string, string> = {
+  wuwa: '3513350',
+}
+
 const runningProcesses = new Map<string, RunningGame>()
 const POLL_INTERVAL = 5000
 
 function isProcessRunning(exeName: string): boolean {
+  if (!exeName) return false
   try {
-    const result = execSync(`pgrep -f "${exeName}"`, { stdio: 'pipe' })
+    const result = execSync(`pgrep -fi "${exeName}"`, { stdio: 'pipe' })
     return result.toString().trim().length > 0
   } catch {
     return false
@@ -45,9 +79,38 @@ function startPolling() {
 
 startPolling()
 
+function resolveRunnerPrefix(game: Game): string {
+  const configuredPrefix = expandHome(game.runner.prefix)
+  if (configuredPrefix) {
+    return configuredPrefix
+  }
+
+  const generatedPrefix = join(homedir(), '.local', 'share', 'nekomimi', 'prefixes', game.slug, 'pfx')
+  mkdirSync(generatedPrefix, { recursive: true })
+  return generatedPrefix
+}
+
+function getUmuGameId(game: Game): string {
+  const configuredGameId = game.launch.env?.GAMEID
+  if (configuredGameId) {
+    return configuredGameId
+  }
+
+  if (game.slug === 'wuwa') {
+    return 'umu-3513350'
+  }
+
+  return '0'
+}
+
 function buildLaunchCommand(game: Game, useXXMI: boolean): { command: string; args: string[]; env: Record<string, string> } {
+  // Resolve prefix: expand ~ and auto-generate if empty
+  const prefix = resolveRunnerPrefix(game)
+
+  const runnerPath = expandHome(game.runner.path)
+
   const env: Record<string, string> = {
-    WINEPREFIX: game.runner.prefix,
+    WINEPREFIX: prefix,
     ...game.launch.env,
   }
 
@@ -55,9 +118,42 @@ function buildLaunchCommand(game: Game, useXXMI: boolean): { command: string; ar
   let args: string[]
 
   if (game.runner.type === 'proton') {
-    command = 'umu-run'
-    env.PROTONPATH = game.runner.path
-    args = [game.executable]
+    const steamrt = findSteamrt()
+    const prefixParent = prefix.replace(/\/pfx\/?$/, '')
+    const shaderCache = join(prefixParent, 'shadercache')
+    mkdirSync(shaderCache, { recursive: true })
+
+    if (steamrt) {
+      // Use Steam Runtime (pressure-vessel) + proton script directly — matches Twintail's approach
+      command = join(steamrt, '_v2-entry-point')
+      args = [
+        '--verb=waitforexitandrun', '--',
+        join(runnerPath, 'proton'),
+        'waitforexitandrun',
+        'z:\\' + game.executable,
+      ]
+      env.PROTONFIXES_DISABLE = '1'
+      env.STEAM_COMPAT_APP_ID = STEAM_APP_IDS[game.slug] || '0'
+      env.STEAM_COMPAT_CLIENT_INSTALL_PATH = ''
+      env.STEAM_COMPAT_DATA_PATH = prefixParent
+      env.STEAM_COMPAT_INSTALL_PATH = game.directory
+      env.STEAM_COMPAT_LIBRARY_PATHS = `${game.directory}:${prefix}`
+      env.STEAM_COMPAT_SHADER_PATH = shaderCache
+      env.STEAM_COMPAT_TOOL_PATHS = runnerPath
+      env.STEAM_ZENITY = '/usr/bin/zenity'
+      env.WINEARCH = 'win64'
+      env.WINEPREFIX = prefix
+    } else {
+      // Fallback to umu-run if Steam Runtime not found
+      command = 'umu-run'
+      env.PROTONPATH = runnerPath
+      env.GAMEID = getUmuGameId(game)
+      if (game.slug === 'wuwa') {
+        env.STEAM_COMPAT_APP_ID = STEAM_APP_IDS[game.slug]
+      }
+      env.STEAM_COMPAT_DATA_PATH = prefixParent
+      args = [game.executable]
+    }
   } else if (game.runner.type === 'wine') {
     command = 'wine'
     args = [game.executable]
@@ -74,13 +170,25 @@ function buildLaunchCommand(game: Game, useXXMI: boolean): { command: string; ar
   }
 
   if (game.launch.args) {
-    args = args.concat(game.launch.args.split(' ').filter(Boolean))
+    args = args.concat(shellSplit(game.launch.args))
   }
 
   return { command, args, env }
 }
 
-export async function launchGame(gameId: string): Promise<{ success: boolean; pid?: number; error?: string }> {
+function ensureSteamCompatMarkers(game: Game): void {
+  if (game.slug !== 'wuwa') return
+
+  const steamAppIdPath = join(game.directory, 'Client', 'Binaries', 'Win64', 'steam_appid.txt')
+  if (!existsSync(steamAppIdPath)) {
+    writeFileSync(steamAppIdPath, `${STEAM_APP_IDS.wuwa}\n`, 'utf-8')
+  }
+}
+
+export async function launchGame(
+  gameId: string,
+  onProgress?: (step: string, percent: number) => void
+): Promise<{ success: boolean; pid?: number; error?: string }> {
   startPolling()
   cleanupStaleEntries()
 
@@ -89,10 +197,11 @@ export async function launchGame(gameId: string): Promise<{ success: boolean; pi
     return { success: false, error: 'Game not found' }
   }
 
-  const game = loadGameConfig(gameRow.config_path)
-  if (!game) {
+  const loadedGame = loadGameConfig(gameRow.config_path)
+  if (!loadedGame) {
     return { success: false, error: 'Game config not found' }
   }
+  const game = syncGameFromTwintailIfNeeded(loadedGame)
 
   const exeName = game.executable.split(/[/\\]/).pop() || game.executable
 
@@ -107,9 +216,15 @@ export async function launchGame(gameId: string): Promise<{ success: boolean; pi
     runningProcesses.delete(gameId)
   }
 
-  if (!game.executable || !game.runner?.path || !game.runner?.prefix) {
-    return { success: false, error: 'Game is missing required launch fields' }
+  if (!game.executable || !game.runner?.path) {
+    return { success: false, error: 'Game is missing required launch fields (executable or runner)' }
   }
+
+  ensureSteamCompatMarkers(game)
+
+  // Resolve prefix: expand ~ and auto-generate if not set
+  const resolvedPrefix = resolveRunnerPrefix(game)
+  const resolvedRunnerPath = expandHome(game.runner.path)
 
   const gameSupportsXXMI = shouldUseXXMI(game.executable)
   const modsEnabled = game.mods?.enabled ?? false
@@ -136,8 +251,9 @@ export async function launchGame(gameId: string): Promise<{ success: boolean; pi
     const loaderResult = await launchGameWithXXMI(
       game.executable,
       game.directory,
-      game.runner.path,
-      game.runner.prefix
+      resolvedRunnerPath,
+      resolvedPrefix,
+      game.launch.env || {}
     )
 
     if (!loaderResult.success) {
@@ -153,15 +269,30 @@ export async function launchGame(gameId: string): Promise<{ success: boolean; pi
     return { success: true }
   }
 
+  // Auto-install Steam Runtime if needed for proton games
+  if (game.runner.type === 'proton' && !findSteamrt()) {
+    console.log('[launch] Steam Runtime not found, downloading...')
+    onProgress?.('Installing Steam Runtime', 0)
+    const result = await downloadSteamrt((percent) => onProgress?.('Installing Steam Runtime', percent))
+    if (!result.success) {
+      return { success: false, error: `Failed to install Steam Runtime: ${result.error}` }
+    }
+  }
+
   const { command, args, env } = buildLaunchCommand(game, false)
 
   console.log(`[launch] Launching ${game.name}: ${command} ${args.join(' ')}`)
 
   const proc = spawn(command, args, {
     env: { ...process.env, ...env },
+    cwd: game.directory,
     detached: true,
     stdio: 'ignore',
   })
+
+  // Unref the process so the parent doesn't wait for it and can exit cleanly
+  // This prevents the launcher process from becoming a zombie
+  proc.unref()
 
   runningProcesses.set(gameId, {
     exeName,

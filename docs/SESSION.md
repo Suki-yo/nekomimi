@@ -4,6 +4,256 @@
 
 ---
 
+### 2026-03-05 (Session 15) - HSR & ZZZ Version Info Fixed ✅
+
+#### Achievement
+**All three games (Genshin, HSR, ZZZ) now correctly fetch version info via Twintail manifests with proper Sophon URLs.**
+
+#### Root Cause Analysis
+
+**1. Wrong Twintail Repository Name**
+```
+# Code had:
+TwintailTeam/twintail-manifests  ← doesn't exist → 404
+
+# Actual repo:
+TwintailTeam/game-manifests
+```
+All three games were 404-ing on Twintail. Genshin only "worked" because the old MDK fallback API still responded for it (HSR/ZZZ MDK endpoints were stale/deprecated).
+
+**2. Wrong Field Mapping (introduced and reverted this session)**
+Mistakenly tried `metadata.index_file` as the Sophon manifest URL — but that field is always empty. Reverted to correct mapping:
+```
+game.full[0].file_url  → sophonManifestUrl  (Sophon manifest protobuf)
+game.full[0].file_path → sophonChunkBaseUrl (chunk CDN base URL)
+```
+
+**3. Old MDK API Fallback Was Stale**
+The three per-game MDK endpoints in `hoyo-api.ts` no longer return current data for HSR/ZZZ — HoYoverse migrated to HYP.
+
+#### The Fix
+
+**1. Fixed Twintail URLs** (`twintail-api.ts`)
+```typescript
+// Before (404):
+'TwintailTeam/twintail-manifests/main/main/game-manifests/hk4e_global.json'
+
+// After (works):
+'TwintailTeam/game-manifests/main/hk4e_global.json'
+```
+
+**2. Updated Twintail Interface to Match Real Schema**
+```typescript
+metadata: {
+  versioned_name: string  // added
+  version: string
+  download_mode: string   // "DOWNLOAD_MODE_CHUNK" | "DOWNLOAD_MODE_FILE"
+  game_hash: string       // added
+  index_file: string      // always empty in practice — not used
+  res_list_url: string    // fallback chunk base URL
+}
+game.full[]: {
+  file_url: string        // Sophon manifest URL ← use this
+  file_path?: string      // Chunk base CDN URL ← use this
+  compressed_size: string
+  decompressed_size: string
+  file_hash: string
+}
+```
+
+**3. Replaced Old MDK API with HYP API** (`hoyo-api.ts`)
+```typescript
+// Before — stale per-game MDK endpoints (dead for HSR/ZZZ)
+// After — unified HoYoPlay API:
+const HYP_API_BASE = 'https://sg-hyp-api.hoyoverse.com/hyp/hyp-connect/api/getGamePackages'
+const HYP_LAUNCHER_ID = 'VYTpXlbWo8'
+const HYP_GAME_IDS = {
+  genshin:  'gopR6Cufr3',
+  starrail: '4ziysqXOQ8',
+  zzz:      'U5hbdsT9W7',
+}
+```
+HYP returns `data.game_packages[].main.major.game_pkgs[]` (segmented zip/7z). Mapped to `HoyoVersionInfo.segments`.
+
+#### Verified Current Versions (from local Twintail install)
+
+| Game | Version | Download Mode | CDN |
+|------|---------|---------------|-----|
+| Genshin Impact | **6.4.0** | DOWNLOAD_MODE_CHUNK | autopatchhk.yuanshen.com |
+| Honkai: Star Rail | **4.0.0** | DOWNLOAD_MODE_CHUNK | autopatchos.starrails.com |
+| Zenless Zone Zero | **2.6.0** | DOWNLOAD_MODE_CHUNK | autopatchos.zenlesszonezero.com |
+
+ZZZ has 111 entries in `game.full[]` — all identical, `full[0]` is safe to use.
+
+#### Important Finding: HYP Launcher ID is Stale
+`launcher_id=VYTpXlbWo8` returns outdated versions (e.g. Genshin 5.5.0 instead of 6.4.0). Correct ID would need extracting from the HoYoPlay binary. Since Twintail is primary and returns correct versions, HYP fallback is last-resort only.
+
+#### Download Flow
+
+```
+1. Twintail (primary — Sophon, Linux-native)
+   ├─ game.full[0].file_url  → Sophon manifest URL
+   ├─ game.full[0].file_path → Chunk base CDN URL
+   └─ metadata.download_mode → "DOWNLOAD_MODE_CHUNK" = sophon
+
+2. HYP API (fallback — segmented zip/7z)
+   ├─ main.major.game_pkgs[] → segments[]
+   └─ Always 'zip' mode (no Sophon from official API)
+```
+
+#### Files Modified
+
+- `src/main/services/download/twintail-api.ts` — Fixed repo URL, updated interface schema
+- `src/main/services/download/hoyo-api.ts` — Replaced MDK endpoints with HYP API + new parser
+
+---
+
+### 2026-03-04 (Session 14) - Game Download Fixed! ✅
+
+#### Achievement
+**Downloads now working with segmented zip fallback!** Twintail repository is dead, official API Sophon manifests are broken, but segmented zips work.
+
+#### Root Cause Analysis
+
+**1. Twintail Repository Gone**
+```
+curl https://raw.githubusercontent.com/TwintailTeam/twintail-manifests/...
+→ 404: Not Found
+```
+
+**2. Official API Sophon Manifests Broken**
+```json
+{
+  "latest": {
+    "decompressed_path": "https://autopatchhk.yuanshen.com/.../ScatteredFiles"
+  }
+}
+```
+```
+curl https://autopatchhk.yuanshen.com/.../ScatteredFiles/manifest
+→ HTTP/2 404
+```
+
+**3. Segments Array Works!**
+```json
+{
+  "segments": [
+    {"path": "https://.../GenshinImpact_4.7.0.zip.001", ...},
+    {"path": "https://.../GenshinImpact_4.7.0.zip.002", ...},
+    ...
+  ]
+}
+```
+```
+curl https://.../GenshinImpact_4.7.0.zip.001
+→ HTTP/2 200
+```
+
+#### The Fix
+
+**Problem:** API returns `decompressed_path` → code chooses 'sophon' mode → manifest 404s → download fails
+
+**Solution:** Validate manifest URL before Sophon, fall back to segments/zip
+
+**1. Added URL Validation** (`src/main/services/download/index.ts`)
+```typescript
+async function isUrlAccessible(url: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const req = https.request(url, { method: 'HEAD', timeout: 10000 }, (response) => {
+      resolve(response.statusCode === 200)
+    })
+    req.on('error', () => resolve(false))
+    req.on('timeout', () => { req.destroy(); resolve(false) })
+    req.end()
+  })
+}
+```
+
+**2. Sophon → Segments → Zip Fallback**
+```typescript
+if (versionInfo.downloadMode === 'sophon') {
+  const manifestAccessible = await isUrlAccessible(url)
+  if (manifestAccessible) {
+    // Use Sophon
+  } else {
+    console.log('[download] Sophon manifest not accessible (404), falling back to zip mode')
+    // Fall through to zip mode
+  }
+}
+
+// Zip mode - check segments first
+if (versionInfo.segments && versionInfo.segments.length > 0) {
+  // Download all segments, merge, extract
+} else if (versionInfo.zipUrl) {
+  // Single zip download
+}
+```
+
+**3. Segmented Zip Support**
+```typescript
+// Download each segment (.001, .002, ...)
+for (let i = 0; i < versionInfo.segments.length; i++) {
+  const segmentPath = path.join(destDir, `game.zip.${String(i + 1).padStart(3, '0')}`)
+  await downloadFile(segment.url, segmentPath, ...)
+}
+
+// Concatenate into single zip
+const mergedZipPath = path.join(destDir, 'game.zip')
+const writeStream = fs.createWriteStream(mergedZipPath)
+for (let i = 0; i < versionInfo.segments.length; i++) {
+  const segmentData = fs.readFileSync(segmentPath)
+  writeStream.write(segmentData)
+}
+writeStream.end()
+
+// Extract merged zip
+await extractZip(mergedZipPath, destDir, ...)
+```
+
+#### Files Modified
+
+**Created:**
+- `src/main/services/download/twintail-api.ts` - Twintail API client (currently non-functional as repo is gone)
+
+**Modified:**
+- `src/main/services/download/hoyo-api.ts` - Added `sophonChunkBaseUrl`, improved error logging
+- `src/shared/types/download.ts` - Added `sophonChunkBaseUrl` to `HoyoVersionInfo`
+- `src/shared/types/ipc.ts` - Added `download:check-updates` channel
+- `src/main/services/download/index.ts` - Added URL validation, Sophon→zip fallback, segmented zip support
+- `src/main/ipc/download.handler.ts` - Added update check handler
+- `src/main/services/download/sophon/downloader.ts` - Accept explicit `chunkBaseUrl` option
+- `src/renderer/src/components/GameInstallModal.tsx` - Passes `useTwintail: true`
+
+#### Download Flow Now
+
+```
+1. Try Sophon mode (if API indicates it)
+   ├─ Check if manifest URL returns HTTP 200
+   ├─ If accessible → proceed with Sophon download
+   └─ If 404 → fall back to zip mode
+
+2. Zip mode (primary or fallback)
+   ├─ Check for segments array (split zip files)
+   │   ├─ Download all segments sequentially
+   │   ├─ Concatenate into single zip
+   │   └─ Extract
+   └─ If no segments, use single zip URL
+```
+
+#### Technical Notes
+
+**Segmented zips** are multiple parts of the same file:
+- `game.zip.001`, `game.zip.002`, `game.zip.003`, etc.
+- Standard `unzip` can handle concatenated multi-part zips
+- Download size: ~60GB for Genshin 4.7.0 (6 segments × ~10GB each)
+
+**Why Sophon fails:**
+- Old game versions are removed from CDN
+- The API still points to old `ScatteredFiles` URLs
+- These return 404, but the segments remain available
+
+---
+
 ### 2026-03-01 (Session 13) - Cover Image Display Fixed! ✅
 
 #### Achievement

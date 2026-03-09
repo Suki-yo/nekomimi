@@ -1,10 +1,14 @@
 // IPC handlers for game operations
 
-import { ipcMain } from 'electron'
+import { ipcMain, BrowserWindow } from 'electron'
 import * as crypto from 'crypto'
+import * as os from 'os'
+import * as path from 'path'
+import { mkdirSync } from 'fs'
 import {
   getGames,
   getGame as dbGetGame,
+  getGameBySlug as dbGetGameBySlug,
   createGame as dbCreateGame,
   updateGame as dbUpdateGame,
   deleteGame as dbDeleteGame,
@@ -49,13 +53,35 @@ export const registerGamesHandlers = () => {
   ipcMain.handle(
     'game:add',
     (_event, input: Omit<Game, 'id' | 'playtime' | 'lastPlayed'>): Game => {
-      const id = crypto.randomUUID()
+      const expandTilde = (p: string) => (p.startsWith('~/') ? path.join(os.homedir(), p.slice(2)) : p)
+
       const slug = input.slug || generateSlug(input.name)
+
+      // Return existing game if slug already taken
+      const existing = dbGetGameBySlug(slug)
+      if (existing) {
+        const existingConfig = loadGameConfig(existing.config_path)
+        if (existingConfig) return existingConfig
+      }
+
+      const id = crypto.randomUUID()
       const configPath = getGameConfigPath(slug)
+
+      // Auto-generate prefix if not provided
+      const resolvedPrefix = expandTilde(input.runner.prefix) ||
+        path.join(os.homedir(), 'Games', 'prefixes', slug, 'pfx')
+      mkdirSync(resolvedPrefix, { recursive: true })
 
       // Create the full Game object
       const game: Game = {
         ...input,
+        directory: expandTilde(input.directory),
+        executable: expandTilde(input.executable),
+        runner: {
+          ...input.runner,
+          path: expandTilde(input.runner.path),
+          prefix: resolvedPrefix,
+        },
         id,
         slug,
         playtime: 0,
@@ -127,8 +153,11 @@ export const registerGamesHandlers = () => {
   // Launch a game
   ipcMain.handle(
     'game:launch',
-    async (_event, { id }: { id: string }): Promise<{ success: boolean; pid?: number; error?: string }> => {
-      return launchGame(id)
+    async (event, { id }: { id: string }): Promise<{ success: boolean; pid?: number; error?: string }> => {
+      const win = BrowserWindow.fromWebContents(event.sender)
+      return launchGame(id, (step, percent) => {
+        win?.webContents.send('game:launch-progress', { step, percent })
+      })
     }
   )
 

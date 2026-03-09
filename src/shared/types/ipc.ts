@@ -4,6 +4,7 @@
 import type { AppConfig } from './config'
 import type { Game, DetectedGameInfo, DetectedRunner, Mod } from './game'
 import type { Runner } from './runner'
+import type { HoyoVersionInfo, WuwaVersionInfo } from './download'
 
 // All IPC channels - this is the contract between frontend and backend
 export interface IPCChannels {
@@ -134,6 +135,63 @@ export interface IPCChannels {
   'mods:rename': {
     request: { modPath: string; customName: string }
     response: { success: boolean; newPath?: string; error?: string }
+  }
+
+  // ─────────────────────────────────────────────
+  // Steam Runtime
+  // ─────────────────────────────────────────────
+  'steamrt:status': {
+    request: void
+    response: { installed: boolean; path: string | null }
+  }
+  'steamrt:install': {
+    request: void
+    response: { success: boolean; error?: string }
+  }
+
+  // ─────────────────────────────────────────────
+  // Downloads
+  // ─────────────────────────────────────────────
+  'download:fetch-info': {
+    request: { biz: 'genshin' | 'starrail' | 'zzz' }
+    response: HoyoVersionInfo | null
+  }
+  'download:start': {
+    request: { gameId: string; biz: 'genshin' | 'starrail' | 'zzz'; destDir: string; manifestUrl?: string; useTwintail?: boolean; preferVersion?: string }
+    response: { success: boolean; error?: string }
+  }
+  'download:cancel': {
+    request: { gameId: string }
+    response: { success: boolean }
+  }
+  'download:status': {
+    request: { gameId: string }
+    response: { inProgress: boolean }
+  }
+  'download:check-updates': {
+    request: { biz: 'genshin' | 'starrail' | 'zzz'; currentVersion: string }
+    response: {
+      hasUpdate: boolean
+      currentVersion: string
+      latestVersion: string | undefined
+      downloadMode: 'zip' | 'sophon' | undefined
+    }
+  }
+  'download:fetch-endfield-info': {
+    request: Record<string, never>
+    response: { version: string; totalSize: number; installedSize: number } | null
+  }
+  'download:start-endfield': {
+    request: { gameId: string; destDir: string }
+    response: { success: boolean; error?: string }
+  }
+  'download:fetch-wuwa-info': {
+    request: Record<string, never>
+    response: WuwaVersionInfo | null
+  }
+  'download:start-wuwa': {
+    request: { gameId: string; destDir: string }
+    response: { success: boolean; error?: string }
   }
 }
 

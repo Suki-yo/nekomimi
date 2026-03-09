@@ -71,6 +71,7 @@ export function detectGame(exePath: string): DetectedGameInfo {
 const PROTON_DIRS = [
   "~/.steam/steam/compatibilitytools.d",
   "~/.local/share/Steam/compatibilitytools.d",
+  "~/.local/share/twintaillauncher/compatibility/runners",
 ];
 
 export function detectRunners(): DetectedRunner[] {

@@ -86,7 +86,7 @@ const createWindow = async (): Promise<void> => {
     mainWindow?.show()
   })
 
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url)
     return { action: 'deny' }
   })
