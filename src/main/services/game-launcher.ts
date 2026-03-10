@@ -35,7 +35,13 @@ function shellSplit(input: string): string[] {
 
 interface RunningGame {
   exeName: string
+  executablePath: string
+  gameName: string
+  configPath: string
+  initialPlaytime: number
+  postLaunch: string[]
   launcherPid?: number
+  gamePid?: number
   startTime: number
   lastCheck: number
 }
@@ -47,6 +53,14 @@ const STEAM_APP_IDS: Record<string, string> = {
 const runningProcesses = new Map<string, RunningGame>()
 const POLL_INTERVAL = 5000
 
+interface ProcessInfo {
+  pid: number
+  ppid: number
+  etimes: number
+  command: string
+  args: string
+}
+
 function isProcessRunning(exeName: string): boolean {
   if (!exeName) return false
   try {
@@ -54,6 +68,24 @@ function isProcessRunning(exeName: string): boolean {
     return result.toString().trim().length > 0
   } catch {
     return false
+  }
+}
+
+function findPidByPattern(pattern: string): number | undefined {
+  if (!pattern) return undefined
+
+  try {
+    const output = execSync(`pgrep -fi "${pattern}"`, { stdio: 'pipe' }).toString().trim()
+    if (!output) return undefined
+
+    const pids = output
+      .split('\n')
+      .map((value) => Number(value.trim()))
+      .filter((value) => Number.isFinite(value) && value > 0)
+
+    return pids.at(-1)
+  } catch {
+    return undefined
   }
 }
 
@@ -68,18 +100,145 @@ function isPidRunning(pid?: number): boolean {
   }
 }
 
+function listProcesses(): ProcessInfo[] {
+  try {
+    const output = execSync('ps -eo pid=,ppid=,etimes=,comm=,args=', { stdio: 'pipe' }).toString()
+    return output
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const match = line.match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/)
+        if (!match) return null
+        return {
+          pid: Number(match[1]),
+          ppid: Number(match[2]),
+          etimes: Number(match[3]),
+          command: match[4],
+          args: match[5],
+        }
+      })
+      .filter((proc): proc is ProcessInfo => proc !== null)
+  } catch {
+    return []
+  }
+}
+
+function getDescendantPids(rootPid: number, processes: ProcessInfo[]): Set<number> {
+  const descendants = new Set<number>()
+  const queue = [rootPid]
+
+  while (queue.length > 0) {
+    const current = queue.shift()!
+    for (const proc of processes) {
+      if (proc.ppid !== current || descendants.has(proc.pid)) continue
+      descendants.add(proc.pid)
+      queue.push(proc.pid)
+    }
+  }
+
+  return descendants
+}
+
+function matchesGameProcess(proc: ProcessInfo, running: RunningGame): boolean {
+  const args = proc.args.toLowerCase()
+  const command = proc.command.toLowerCase()
+  const exeName = running.exeName.toLowerCase()
+  const executablePath = running.executablePath.toLowerCase()
+
+  return (
+    command === exeName ||
+    command.endsWith(`/${exeName}`) ||
+    args.includes(executablePath) ||
+    args.includes(exeName)
+  )
+}
+
+function pickBestGameProcess(candidates: ProcessInfo[], running: RunningGame): ProcessInfo | undefined {
+  if (candidates.length === 0) return undefined
+
+  const sessionAgeSeconds = Math.max(1, Math.ceil((Date.now() - running.startTime) / 1000))
+  const recentCandidates = candidates.filter((proc) => proc.etimes <= sessionAgeSeconds + 15)
+  const pool = recentCandidates.length > 0 ? recentCandidates : candidates
+
+  return pool.sort((a, b) => {
+    const aScore = Number(a.command.toLowerCase() === running.exeName.toLowerCase()) * 2 + Number(a.args.toLowerCase().includes(running.executablePath.toLowerCase()))
+    const bScore = Number(b.command.toLowerCase() === running.exeName.toLowerCase()) * 2 + Number(b.args.toLowerCase().includes(running.executablePath.toLowerCase()))
+    if (aScore !== bScore) return bScore - aScore
+    return a.etimes - b.etimes
+  })[0]
+}
+
+function resolveGamePid(running: RunningGame, processes: ProcessInfo[]): number | undefined {
+  if (running.gamePid && processes.some((proc) => proc.pid === running.gamePid)) {
+    return running.gamePid
+  }
+
+  const descendantPids = running.launcherPid ? getDescendantPids(running.launcherPid, processes) : null
+  const descendantCandidates = descendantPids
+    ? processes.filter((proc) => descendantPids.has(proc.pid) && matchesGameProcess(proc, running))
+    : []
+  const descendantMatch = pickBestGameProcess(descendantCandidates, running)
+  if (descendantMatch) {
+    return descendantMatch.pid
+  }
+
+  const globalMatch = pickBestGameProcess(
+    processes.filter((proc) => matchesGameProcess(proc, running)),
+    running
+  )
+  if (globalMatch) {
+    return globalMatch.pid
+  }
+
+  const exeStem = running.exeName.replace(/\.[^.]+$/, '')
+  return findPidByPattern(running.exeName) ?? findPidByPattern(exeStem)
+}
+
+function finalizeRunningGame(gameId: string, running: RunningGame) {
+  const completedAt = new Date().toISOString()
+  const sessionPlaytime = (Date.now() - running.startTime) / 1000 / 60 / 60
+  const totalPlaytime = running.initialPlaytime + sessionPlaytime
+
+  console.log(`[launch] Finalizing session for ${running.gameName}`)
+
+  updateGame(gameId, {
+    playtime: totalPlaytime,
+    last_played: completedAt,
+  })
+
+  const loadedGame = loadGameConfig(running.configPath)
+  if (loadedGame) {
+    loadedGame.playtime = totalPlaytime
+    loadedGame.lastPlayed = completedAt
+    saveGameConfig(loadedGame)
+  }
+
+  for (const cmd of running.postLaunch) {
+    console.log(`[launch] Running post-launch: ${cmd}`)
+    try {
+      execSync(cmd, { stdio: 'inherit' })
+    } catch {
+      // Ignore post-launch errors
+    }
+  }
+
+  runningProcesses.delete(gameId)
+}
+
 function cleanupStaleEntries() {
   const now = Date.now()
+  const processes = listProcesses()
 
   for (const [gameId, running] of runningProcesses.entries()) {
-    const stillRunning =
-      (running.launcherPid ? isPidRunning(running.launcherPid) : false) ||
-      isProcessRunning(running.exeName)
+    const launcherRunning = running.launcherPid ? isPidRunning(running.launcherPid) : false
+    const gamePid = resolveGamePid(running, processes)
+    const gameRunning = !!gamePid
 
-    if (!stillRunning) {
-      console.log(`[launch] Cleaning up stale entry for ${running.exeName}`)
-      runningProcesses.delete(gameId)
+    if (!gameRunning && !launcherRunning) {
+      finalizeRunningGame(gameId, running)
     } else {
+      running.gamePid = gamePid
       running.lastCheck = now
     }
   }
@@ -228,7 +387,7 @@ export async function launchGame(
   const existing = runningProcesses.get(gameId)
   if (existing) {
     console.log(`[launch] Cleaning up stale entry for ${exeName}`)
-    runningProcesses.delete(gameId)
+    finalizeRunningGame(gameId, existing)
   }
 
   if (!game.executable || !game.runner?.path) {
@@ -277,6 +436,11 @@ export async function launchGame(
 
     runningProcesses.set(gameId, {
       exeName,
+      executablePath: game.executable,
+      gameName: game.name,
+      configPath: gameRow.config_path,
+      initialPlaytime: game.playtime,
+      postLaunch: game.launch.postLaunch || [],
       launcherPid: loaderResult.pid,
       startTime,
       lastCheck: Date.now(),
@@ -312,6 +476,11 @@ export async function launchGame(
 
   runningProcesses.set(gameId, {
     exeName,
+    executablePath: game.executable,
+    gameName: game.name,
+    configPath: gameRow.config_path,
+    initialPlaytime: game.playtime,
+    postLaunch: game.launch.postLaunch || [],
     launcherPid: proc.pid,
     startTime,
     lastCheck: Date.now(),
@@ -319,39 +488,62 @@ export async function launchGame(
 
   proc.on('close', (code) => {
     console.log(`[launch] Launcher for ${game.name} exited with code ${code}`)
-
-    const sessionPlaytime = (Date.now() - startTime) / 1000 / 60 / 60
-
-    updateGame(gameId, {
-      playtime: game.playtime + sessionPlaytime,
-      last_played: new Date().toISOString(),
-    })
-
-    game.playtime = game.playtime + sessionPlaytime
-    game.lastPlayed = new Date().toISOString()
-    saveGameConfig(game)
-
-    for (const cmd of game.launch.postLaunch || []) {
-      console.log(`[launch] Running post-launch: ${cmd}`)
-      try {
-        execSync(cmd, { stdio: 'inherit' })
-      } catch {
-        // Ignore post-launch errors
-      }
-    }
-
-    runningProcesses.delete(gameId)
+    cleanupStaleEntries()
   })
 
   proc.on('error', (err) => {
     console.error(`[launch] Process error:`, err)
-    runningProcesses.delete(gameId)
+    cleanupStaleEntries()
   })
 
   return { success: true, pid: proc.pid }
 }
 
+export function syncRunningGames(
+  games: Array<{ id: string; configPath: string; game: Game }>
+): void {
+  startPolling()
+  cleanupStaleEntries()
+
+  const now = Date.now()
+  const processes = listProcesses()
+
+  for (const { id, configPath, game } of games) {
+    if (runningProcesses.has(id) || !game.executable) {
+      continue
+    }
+
+    const exeName = game.executable.split(/[/\\]/).pop() || game.executable
+    const probe: RunningGame = {
+      exeName,
+      executablePath: game.executable,
+      gameName: game.name,
+      configPath,
+      initialPlaytime: game.playtime,
+      postLaunch: game.launch.postLaunch || [],
+      startTime: now,
+      lastCheck: now,
+    }
+
+    const gamePid = resolveGamePid(probe, processes)
+    if (!gamePid) {
+      continue
+    }
+
+    const processInfo = processes.find((proc) => proc.pid === gamePid)
+    const startTime = processInfo ? now - processInfo.etimes * 1000 : now
+
+    runningProcesses.set(id, {
+      ...probe,
+      gamePid,
+      startTime,
+      lastCheck: now,
+    })
+  }
+}
+
 export function getRunningGames(): { id: string; startTime: number }[] {
+  cleanupStaleEntries()
   return Array.from(runningProcesses.entries()).map(([id, data]) => ({
     id,
     startTime: data.startTime,

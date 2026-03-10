@@ -32,7 +32,7 @@ export interface IPCChannels {
     response: string | null
   }
   'dialog:openModSource': {
-    request: { defaultPath?: string }
+    request: { defaultPath?: string; mode: 'file' | 'directory' }
     response: { path: string; kind: 'file' | 'directory' } | null
   }
   'image:read': {

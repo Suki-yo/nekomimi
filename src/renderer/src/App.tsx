@@ -100,6 +100,8 @@ interface SectionState {
   system: boolean
 }
 
+type ModImportMode = 'file' | 'directory'
+
 const EMPTY_MODS: Mod[] = []
 
 const DEFAULT_LAUNCH: LaunchConfig = {
@@ -361,6 +363,7 @@ function App(): JSX.Element {
   const [sections, setSections] = useState<SectionState>(INITIAL_SECTIONS)
   const [modsByGame, setModsByGame] = useState<Record<string, Mod[]>>({})
   const [runningGames, setRunningGames] = useState<Set<string>>(new Set())
+  const [runningGameStarts, setRunningGameStarts] = useState<Record<string, number>>({})
   const [statusLine, setStatusLine] = useState('> awaiting input...')
   const [launchingGameId, setLaunchingGameId] = useState<string | null>(null)
   const [launchStatus, setLaunchStatus] = useState<string | null>(null)
@@ -395,6 +398,7 @@ function App(): JSX.Element {
   const [savingConfig, setSavingConfig] = useState(false)
   const [editingModPath, setEditingModPath] = useState<string | null>(null)
   const [editingModName, setEditingModName] = useState('')
+  const [modImportMenuGameId, setModImportMenuGameId] = useState<string | null>(null)
   const [runnerDownloading, setRunnerDownloading] = useState(false)
   const [runnerProgress, setRunnerProgress] = useState(0)
   const [runnerError, setRunnerError] = useState<string | null>(null)
@@ -439,6 +443,13 @@ function App(): JSX.Element {
       return null
     }
 
+    const activeGames = games.filter((game) => runningGames.has(game.id))
+    if (activeGames.length > 0) {
+      return [...activeGames].sort(
+        (left, right) => (runningGameStarts[right.id] ?? 0) - (runningGameStarts[left.id] ?? 0),
+      )[0] ?? null
+    }
+
     const playedGames = games.filter((game) => game.lastPlayed)
     if (playedGames.length === 0) {
       return games[0] ?? null
@@ -447,7 +458,7 @@ function App(): JSX.Element {
     return [...playedGames].sort((left, right) =>
       new Date(right.lastPlayed!).getTime() - new Date(left.lastPlayed!).getTime(),
     )[0] ?? null
-  }, [games])
+  }, [games, runningGameStarts, runningGames])
 
   const quickPicks = useMemo(
     () =>
@@ -480,6 +491,10 @@ function App(): JSX.Element {
   }, [])
 
   useEffect(() => {
+    setModImportMenuGameId(null)
+  }, [selectedNode])
+
+  useEffect(() => {
     const interval = window.setInterval(() => {
       setClock(new Date())
     }, 1000)
@@ -491,6 +506,9 @@ function App(): JSX.Element {
     const pollRunning = async () => {
       const running = await window.api.invoke('game:running')
       setRunningGames(new Set(running.map((game) => game.id)))
+      setRunningGameStarts(
+        Object.fromEntries(running.map((game) => [game.id, game.startTime])) as Record<string, number>,
+      )
     }
 
     void pollRunning()
@@ -1037,15 +1055,17 @@ function App(): JSX.Element {
     setEditingModName('')
   }
 
-  async function handleAddMod(game: Game): Promise<void> {
+  async function handleAddMod(game: Game, mode: ModImportMode): Promise<void> {
     const importer = getGameImporter(game)
     if (!importer) {
       reportStatus('mods are not supported for this title')
       return
     }
 
+    setModImportMenuGameId(null)
     const selectedSource = await window.api.invoke('dialog:openModSource', {
       defaultPath: game.directory,
+      mode,
     })
     if (!selectedSource) {
       return
@@ -1621,9 +1641,25 @@ function App(): JSX.Element {
               >
                 [OPEN MODS FOLDER]
               </button>
-              <button className="tui-command" onClick={() => void handleAddMod(game)} type="button">
-                [ADD MOD]
-              </button>
+              <div className="tui-menu-group">
+                <button
+                  className={`tui-command ${modImportMenuGameId === game.id ? 'is-selected' : ''}`}
+                  onClick={() => setModImportMenuGameId((current) => (current === game.id ? null : game.id))}
+                  type="button"
+                >
+                  [ADD MOD V]
+                </button>
+                {modImportMenuGameId === game.id && (
+                  <div className="tui-menu-list">
+                    <button className="tui-menu-item" onClick={() => void handleAddMod(game, 'file')} type="button">
+                      import zip
+                    </button>
+                    <button className="tui-menu-item" onClick={() => void handleAddMod(game, 'directory')} type="button">
+                      import folder
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </>
         )}

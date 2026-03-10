@@ -1,5 +1,6 @@
 import { ipcMain, dialog } from "electron";
 import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
 
 function findPreferredFolder(startDir: string, names: string[]): string | null {
@@ -47,6 +48,8 @@ function findPreferredFolder(startDir: string, names: string[]): string | null {
 }
 
 export function registerDialogHandlers() {
+  let lastModSourcePath: string | null = null;
+
   ipcMain.handle("dialog:openFile", async (): Promise<string | null> => {
     const result = await dialog.showOpenDialog({
       properties: ["openFile"],
@@ -79,16 +82,18 @@ export function registerDialogHandlers() {
     return result.filePaths[0];
   });
 
-  ipcMain.handle("dialog:openModSource", async (_event, { defaultPath }: { defaultPath?: string }): Promise<{ path: string; kind: 'file' | 'directory' } | null> => {
-    const startDir = defaultPath || process.env.HOME || '/';
-    const downloadsFolder = findPreferredFolder(startDir, ['Downloads', 'Download', 'downloads', 'download']);
+  ipcMain.handle("dialog:openModSource", async (_event, { defaultPath, mode }: { defaultPath?: string; mode: 'file' | 'directory' }): Promise<{ path: string; kind: 'file' | 'directory' } | null> => {
+    const homeDir = process.env.HOME || os.homedir() || '/';
+    const startDir = defaultPath || homeDir;
+    const downloadsFolder =
+      findPreferredFolder(homeDir, ['Downloads', 'Download', 'downloads', 'download']) ||
+      findPreferredFolder(startDir, ['Downloads', 'Download', 'downloads', 'download']);
+    const pickerRoot = lastModSourcePath || downloadsFolder || homeDir;
 
     const result = await dialog.showOpenDialog({
-      defaultPath: downloadsFolder || startDir,
-      properties: ["openFile", "openDirectory"],
-      filters: [
-        { name: "ZIP archives", extensions: ["zip"] }
-      ],
+      defaultPath: pickerRoot,
+      properties: mode === 'directory' ? ["openDirectory"] : ["openFile"],
+      filters: mode === 'directory' ? undefined : [{ name: "Archives", extensions: ["zip", "7z"] }],
     });
 
     if (result.canceled || result.filePaths.length === 0) {
@@ -97,6 +102,7 @@ export function registerDialogHandlers() {
 
     const selectedPath = result.filePaths[0];
     const stat = fs.statSync(selectedPath);
+    lastModSourcePath = stat.isDirectory() ? selectedPath : path.dirname(selectedPath);
     return {
       path: selectedPath,
       kind: stat.isDirectory() ? 'directory' : 'file',

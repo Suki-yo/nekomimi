@@ -1109,12 +1109,15 @@ export async function installMod(importer: string, sourcePath: string): Promise<
     }
   }
 
-  if (path.extname(sourcePath).toLowerCase() !== '.zip') {
-    return { success: false, error: 'Only .zip archives or folders are supported' }
+  const ext = path.extname(sourcePath).toLowerCase()
+  if (ext !== '.zip' && ext !== '.7z') {
+    return { success: false, error: 'Only .zip, .7z, or folder sources are supported' }
   }
 
   return new Promise((resolve) => {
-    const extract = spawn('unzip', ['-o', sourcePath, '-d', destPath], { stdio: 'inherit' })
+    const extract = ext === '.7z'
+      ? spawn('7z', ['x', '-y', `-o${destPath}`, sourcePath], { stdio: 'inherit' })
+      : spawn('unzip', ['-o', sourcePath, '-d', destPath], { stdio: 'inherit' })
 
     extract.on('close', (code) => {
       if (code === 0) {

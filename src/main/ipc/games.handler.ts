@@ -22,7 +22,7 @@ import {
   getGameConfigPath,
 } from '../services/config'
 import { detectGame, detectRunners } from '../services/game-detector'
-import { launchGame, getRunningGames } from '../services/game-launcher'
+import { launchGame, getRunningGames, syncRunningGames } from '../services/game-launcher'
 import type { Game } from '../../shared/types'
 
 export const registerGamesHandlers = () => {
@@ -163,6 +163,17 @@ export const registerGamesHandlers = () => {
 
   // List running games
   ipcMain.handle('game:running', () => {
+    const rows = getGames()
+    const knownGames: Array<{ id: string; configPath: string; game: Game }> = []
+
+    for (const row of rows) {
+      const config = loadGameConfig(row.config_path)
+      if (config) {
+        knownGames.push({ id: row.id, configPath: row.config_path, game: config })
+      }
+    }
+
+    syncRunningGames(knownGames)
     return getRunningGames()
   })
 

@@ -317,6 +317,41 @@ button {
   color: #ff5555;
 }
 
+.tui-menu-group {
+  position: relative;
+}
+
+.tui-menu-list {
+  position: absolute;
+  top: calc(100% + 0.35rem);
+  right: 0;
+  min-width: 10rem;
+  border: 1px solid #2a2a3d;
+  background: #0f0f15;
+  display: grid;
+  z-index: 10;
+}
+
+.tui-menu-item {
+  border: 0;
+  border-bottom: 1px solid #2a2a3d;
+  background: transparent;
+  color: #e0d7f5;
+  padding: 0.55rem 0.75rem;
+  text-align: left;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.tui-menu-item:last-child {
+  border-bottom: 0;
+}
+
+.tui-menu-item:hover {
+  background: rgba(157, 78, 221, 0.12);
+  color: #ffffff;
+}
+
 .tui-progress-block {
   display: grid;
   gap: 0.3rem;
