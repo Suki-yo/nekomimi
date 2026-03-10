@@ -1081,22 +1081,40 @@ export function renameMod(modPath: string, customName: string): { success: boole
   }
 }
 
-export async function installMod(importer: string, zipPath: string): Promise<{ success: boolean; error?: string }> {
+export async function installMod(importer: string, sourcePath: string): Promise<{ success: boolean; error?: string }> {
   const modsPath = getModsPath(importer)
 
   if (!fs.existsSync(modsPath)) {
     fs.mkdirSync(modsPath, { recursive: true })
   }
 
-  const modName = path.basename(zipPath, path.extname(zipPath))
+  if (!fs.existsSync(sourcePath)) {
+    return { success: false, error: 'Selected mod source does not exist' }
+  }
+
+  const sourceStat = fs.statSync(sourcePath)
+  const modName = path.basename(sourcePath, sourceStat.isDirectory() ? '' : path.extname(sourcePath))
   const destPath = path.join(modsPath, modName)
 
   if (fs.existsSync(destPath) || fs.existsSync(path.join(modsPath, addDisabledModPrefix(modName, true)))) {
     return { success: false, error: 'Mod already exists' }
   }
 
+  if (sourceStat.isDirectory()) {
+    try {
+      fs.cpSync(sourcePath, destPath, { recursive: true, errorOnExist: true })
+      return { success: true }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : 'Failed to copy mod folder' }
+    }
+  }
+
+  if (path.extname(sourcePath).toLowerCase() !== '.zip') {
+    return { success: false, error: 'Only .zip archives or folders are supported' }
+  }
+
   return new Promise((resolve) => {
-    const extract = spawn('unzip', ['-o', zipPath, '-d', destPath], { stdio: 'inherit' })
+    const extract = spawn('unzip', ['-o', sourcePath, '-d', destPath], { stdio: 'inherit' })
 
     extract.on('close', (code) => {
       if (code === 0) {

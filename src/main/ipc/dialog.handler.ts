@@ -2,16 +2,14 @@ import { ipcMain, dialog } from "electron";
 import * as fs from "fs";
 import * as path from "path";
 
-// Find a pictures folder by traversing up and down from a starting directory
-function findPicturesFolder(startDir: string): string | null {
-  const picturesNames = ['pictures', 'Images', 'images', 'Photos', 'photos', 'Wallpapers', 'wallpapers'];
+function findPreferredFolder(startDir: string, names: string[]): string | null {
+  const normalizedNames = names.map((name) => name.toLowerCase())
 
-  // Check if current directory has a pictures subfolder
-  const checkForPicturesSubfolder = (dir: string): string | null => {
+  const checkForNamedSubfolder = (dir: string): string | null => {
     try {
       const entries = fs.readdirSync(dir, { withFileTypes: true });
       for (const entry of entries) {
-        if (entry.isDirectory() && picturesNames.some(name => entry.name.toLowerCase() === name.toLowerCase())) {
+        if (entry.isDirectory() && normalizedNames.includes(entry.name.toLowerCase())) {
           return path.join(dir, entry.name);
         }
       }
@@ -24,7 +22,7 @@ function findPicturesFolder(startDir: string): string | null {
   // Traverse up looking for pictures folder
   let currentDir = startDir;
   for (let i = 0; i < 10; i++) { // Max 10 levels up
-    const found = checkForPicturesSubfolder(currentDir);
+    const found = checkForNamedSubfolder(currentDir);
     if (found) return found;
 
     const parent = path.dirname(currentDir);
@@ -37,7 +35,7 @@ function findPicturesFolder(startDir: string): string | null {
     const entries = fs.readdirSync(startDir, { withFileTypes: true });
     for (const entry of entries) {
       if (entry.isDirectory()) {
-        const found = checkForPicturesSubfolder(path.join(startDir, entry.name));
+        const found = checkForNamedSubfolder(path.join(startDir, entry.name));
         if (found) return found;
       }
     }
@@ -63,9 +61,8 @@ export function registerDialogHandlers() {
   });
 
   ipcMain.handle("dialog:openImage", async (_event, { defaultPath }: { defaultPath?: string }): Promise<string | null> => {
-    // Try to find a pictures folder
     let startDir = defaultPath || process.env.HOME || '/';
-    const picturesFolder = findPicturesFolder(startDir);
+    const picturesFolder = findPreferredFolder(startDir, ['Pictures', 'Images', 'Photos', 'Wallpapers']);
 
     const result = await dialog.showOpenDialog({
       defaultPath: picturesFolder || startDir,
@@ -80,5 +77,29 @@ export function registerDialogHandlers() {
     }
 
     return result.filePaths[0];
+  });
+
+  ipcMain.handle("dialog:openModSource", async (_event, { defaultPath }: { defaultPath?: string }): Promise<{ path: string; kind: 'file' | 'directory' } | null> => {
+    const startDir = defaultPath || process.env.HOME || '/';
+    const downloadsFolder = findPreferredFolder(startDir, ['Downloads', 'Download', 'downloads', 'download']);
+
+    const result = await dialog.showOpenDialog({
+      defaultPath: downloadsFolder || startDir,
+      properties: ["openFile", "openDirectory"],
+      filters: [
+        { name: "ZIP archives", extensions: ["zip"] }
+      ],
+    });
+
+    if (result.canceled || result.filePaths.length === 0) {
+      return null;
+    }
+
+    const selectedPath = result.filePaths[0];
+    const stat = fs.statSync(selectedPath);
+    return {
+      path: selectedPath,
+      kind: stat.isDirectory() ? 'directory' : 'file',
+    };
   });
 }

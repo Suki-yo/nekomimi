@@ -1,6 +1,8 @@
 // IPC handlers for mod operations (XXMI, etc.)
 
-import { ipcMain, BrowserWindow } from 'electron'
+import { ipcMain, BrowserWindow, shell } from 'electron'
+import * as fs from 'fs'
+import * as path from 'path'
 import {
   isXXMIInstalled,
   isRunnerInstalled,
@@ -14,6 +16,7 @@ import {
   enableAllMods,
   disableAllMods,
   renameMod,
+  getModsPath,
 } from '../services/mod-manager'
 
 export const registerModsHandlers = () => {
@@ -79,9 +82,9 @@ export const registerModsHandlers = () => {
   })
 
   // Install a mod from zip
-  ipcMain.handle('mods:install', async (_event, { importer, zipPath }: { importer: string; zipPath: string }) => {
-    console.log(`[mods] Installing mod from ${zipPath} to ${importer}`)
-    return await installMod(importer, zipPath)
+  ipcMain.handle('mods:install', async (_event, { importer, sourcePath }: { importer: string; sourcePath: string }) => {
+    console.log(`[mods] Installing mod from ${sourcePath} to ${importer}`)
+    return await installMod(importer, sourcePath)
   })
 
   // Delete a mod
@@ -106,5 +109,23 @@ export const registerModsHandlers = () => {
   ipcMain.handle('mods:rename', (_event, { modPath, customName }: { modPath: string; customName: string }) => {
     console.log(`[mods] Renaming mod: ${modPath} → "${customName}"`)
     return renameMod(modPath, customName)
+  })
+
+  ipcMain.handle('mods:open-folder', async (_event, { importer }: { importer: string }) => {
+    try {
+      const modsPath = getModsPath(importer)
+      fs.mkdirSync(modsPath, { recursive: true })
+      const markerPath = path.join(modsPath, '.nekomimi')
+      if (!fs.existsSync(markerPath)) {
+        fs.writeFileSync(markerPath, '')
+      }
+      shell.showItemInFolder(markerPath)
+      return { success: true, path: modsPath }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'failed to open mods folder',
+      }
+    }
   })
 }

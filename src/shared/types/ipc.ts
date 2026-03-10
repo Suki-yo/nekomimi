@@ -31,6 +31,10 @@ export interface IPCChannels {
     request: { defaultPath?: string }
     response: string | null
   }
+  'dialog:openModSource': {
+    request: { defaultPath?: string }
+    response: { path: string; kind: 'file' | 'directory' } | null
+  }
   'image:read': {
     request: { imagePath: string }
     response: string | null  // file:// URL
@@ -117,7 +121,7 @@ export interface IPCChannels {
     response: { success: boolean }
   }
   'mods:install': {
-    request: { importer: string; zipPath: string }
+    request: { importer: string; sourcePath: string }
     response: { success: boolean; error?: string }
   }
   'mods:delete': {
@@ -135,6 +139,10 @@ export interface IPCChannels {
   'mods:rename': {
     request: { modPath: string; customName: string }
     response: { success: boolean; newPath?: string; error?: string }
+  }
+  'mods:open-folder': {
+    request: { importer: string }
+    response: { success: boolean; path?: string; error?: string }
   }
 
   // ─────────────────────────────────────────────

@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type JSX, type KeyboardEvent } from 'react'
+import { useEffect, useMemo, useState, type JSX, type KeyboardEvent } from 'react'
 import CoverImage from '@/components/CoverImage'
 import { formatBytes, formatTime } from '@/components/install-modal-utils'
+import { formatPlaytimeHours } from '@/lib/utils'
 import { getXXMIImporter } from './utils/mods'
 import { APP_NAME, APP_VERSION } from '../../shared/constants'
 import type { AppConfig } from '../../shared/types/config'
@@ -14,6 +15,7 @@ import type {
 import type { DownloadProgress, HoyoVersionInfo, WuwaVersionInfo } from '../../shared/types/download'
 
 type Selection =
+  | { type: 'home' }
   | { type: 'game'; gameId: string }
   | { type: 'mods'; gameId: string }
   | { type: 'config'; gameId: string }
@@ -83,6 +85,13 @@ interface LaunchPreparationState {
   phase: LaunchPrepPhase
   progress: number
   error: string | null
+}
+
+interface ActivityEvent {
+  id: number
+  message: string
+  timestamp: string
+  selection?: Selection
 }
 
 interface SectionState {
@@ -226,7 +235,7 @@ const CATALOG_ENTRIES: CatalogEntry[] = [
   },
 ]
 
-const INITIAL_SELECTION: Selection = { type: 'settings' }
+const INITIAL_SELECTION: Selection = { type: 'home' }
 const INITIAL_SECTIONS: SectionState = { library: true, catalog: true, system: true }
 
 function createCatalogForm(entry: CatalogEntry): CatalogFormState {
@@ -263,7 +272,7 @@ function formatStamp(date: Date): string {
 }
 
 function isSelectionValid(selection: Selection, games: Game[]): boolean {
-  if (selection.type === 'settings' || selection.type === 'add-game') {
+  if (selection.type === 'home' || selection.type === 'settings' || selection.type === 'add-game') {
     return true
   }
 
@@ -319,6 +328,18 @@ function placeholderLabel(name: string): string {
     .slice(0, 3)
     .map((part) => part[0]?.toUpperCase() ?? '')
     .join('')
+}
+
+function formatHomeDate(value?: string): string {
+  if (!value) {
+    return 'never'
+  }
+
+  return new Date(value).toLocaleDateString()
+}
+
+function formatHomeTime(value: string): string {
+  return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
 function upsertGameList(current: Game[], next: Game): Game[] {
@@ -382,7 +403,7 @@ function App(): JSX.Element {
   const [steamrtDownloading, setSteamrtDownloading] = useState(false)
   const [steamrtProgress, setSteamrtProgress] = useState(0)
   const [steamrtError, setSteamrtError] = useState<string | null>(null)
-  const modUploadRef = useRef<HTMLInputElement | null>(null)
+  const [activityLog, setActivityLog] = useState<ActivityEvent[]>([])
 
   const gamesById = useMemo(
     () => Object.fromEntries(games.map((game) => [game.id, game])) as Record<string, Game>,
@@ -411,6 +432,36 @@ function App(): JSX.Element {
         ['downloading', 'verifying', 'extracting'].includes(progress.status),
       ) ?? null,
     [downloadProgresses],
+  )
+
+  const continueGame = useMemo(() => {
+    if (games.length === 0) {
+      return null
+    }
+
+    return [...games].sort((left, right) => {
+      const leftPlayed = left.lastPlayed ? new Date(left.lastPlayed).getTime() : 0
+      const rightPlayed = right.lastPlayed ? new Date(right.lastPlayed).getTime() : 0
+      if (leftPlayed !== rightPlayed) {
+        return rightPlayed - leftPlayed
+      }
+      return right.playtime - left.playtime
+    })[0] ?? null
+  }, [games])
+
+  const quickPicks = useMemo(
+    () =>
+      [...games]
+        .sort((left, right) => {
+          const leftPlayed = left.lastPlayed ? new Date(left.lastPlayed).getTime() : 0
+          const rightPlayed = right.lastPlayed ? new Date(right.lastPlayed).getTime() : 0
+          if (leftPlayed !== rightPlayed) {
+            return rightPlayed - leftPlayed
+          }
+          return right.playtime - left.playtime
+        })
+        .slice(0, 3),
+    [games],
   )
 
   const activeGameState = selectedGame
@@ -452,11 +503,7 @@ function App(): JSX.Element {
 
   useEffect(() => {
     if (!isSelectionValid(selectedNode, games)) {
-      if (games.length > 0) {
-        setSelectedNode({ type: 'game', gameId: games[0].id })
-      } else {
-        setSelectedNode({ type: 'catalog', catalogId: 'genshin' })
-      }
+      setSelectedNode({ type: 'home' })
     }
 
     setExpandedGames((current) => {
@@ -507,7 +554,7 @@ function App(): JSX.Element {
 
     const unsubDownloadComplete = window.api.on('download:complete', (data) => {
       const { gameId } = data as { gameId: string }
-      setStatusLine(`> ${gameId} installation complete`)
+      reportStatus(`${gameId} installation complete`, { type: 'catalog', catalogId: gameId as CatalogId })
       setDownloadProgresses((current) => {
         const existing = current[gameId]
         if (!existing) {
@@ -526,7 +573,7 @@ function App(): JSX.Element {
 
     const unsubDownloadError = window.api.on('download:error', (data) => {
       const { gameId, error } = data as { gameId: string; error: string }
-      setStatusLine(`> ${gameId} failed: ${error}`)
+      reportStatus(`${gameId} failed: ${error}`, { type: 'catalog', catalogId: gameId as CatalogId })
       setDownloadProgresses((current) => {
         const existing = current[gameId]
         if (!existing) {
@@ -740,9 +787,27 @@ function App(): JSX.Element {
     return updated
   }
 
+  function pushActivity(message: string, selection?: Selection): void {
+    setActivityLog((current) => [
+      {
+        id: Date.now() + current.length,
+        message,
+        timestamp: new Date().toISOString(),
+        selection,
+      },
+      ...current,
+    ].slice(0, 12))
+  }
+
+  function reportStatus(message: string, activitySelection?: Selection): void {
+    const normalized = message.startsWith('>') ? message : `> ${message}`
+    setStatusLine(normalized)
+    pushActivity(normalized.replace(/^>\s*/, ''), activitySelection)
+  }
+
   async function handleLaunchGame(game: Game): Promise<void> {
     if (runningGames.has(game.id)) {
-      setStatusLine(`> ${game.name.toLowerCase()} is already running`)
+      reportStatus(`${game.name.toLowerCase()} is already running`, { type: 'game', gameId: game.id })
       return
     }
 
@@ -757,7 +822,7 @@ function App(): JSX.Element {
       })
 
       if (!status.xxmiInstalled) {
-        setStatusLine('> downloading xxmi prerequisites...')
+        reportStatus('downloading xxmi prerequisites...', { type: 'game', gameId: game.id })
         const xxmiResult = await window.api.invoke('mods:xxmi-download')
         if (!xxmiResult.success) {
           setLaunchPreparation({
@@ -767,14 +832,14 @@ function App(): JSX.Element {
             progress: 0,
             error: xxmiResult.error || 'XXMI download failed',
           })
-          setStatusLine(`> xxmi failed: ${xxmiResult.error || 'download failed'}`)
+          reportStatus(`xxmi failed: ${xxmiResult.error || 'download failed'}`, { type: 'game', gameId: game.id })
           return
         }
       }
 
       if (!status.runnerInstalled) {
         setLaunchPreparation((current) => ({ ...current, phase: 'runner', progress: 0 }))
-        setStatusLine('> downloading proton-ge prerequisite...')
+        reportStatus('downloading proton-ge prerequisite...', { type: 'game', gameId: game.id })
         const runnerResult = await window.api.invoke('mods:runner-download')
         if (!runnerResult.success) {
           setLaunchPreparation({
@@ -784,7 +849,7 @@ function App(): JSX.Element {
             progress: 0,
             error: runnerResult.error || 'Runner download failed',
           })
-          setStatusLine(`> runner failed: ${runnerResult.error || 'download failed'}`)
+          reportStatus(`runner failed: ${runnerResult.error || 'download failed'}`, { type: 'game', gameId: game.id })
           return
         }
         await loadRunnerInfo()
@@ -800,17 +865,17 @@ function App(): JSX.Element {
     }
 
     setLaunchingGameId(game.id)
-    setStatusLine(`> launching ${game.name.toLowerCase()}...`)
+    reportStatus(`launching ${game.name.toLowerCase()}...`, { type: 'game', gameId: game.id })
     const result = await window.api.invoke('game:launch', { id: game.id })
     setLaunchingGameId(null)
     setLaunchStatus(null)
 
     if (!result.success) {
-      setStatusLine(`> launch failed: ${result.error || 'unknown error'}`)
+      reportStatus(`launch failed: ${result.error || 'unknown error'}`, { type: 'game', gameId: game.id })
       return
     }
 
-    setStatusLine(`> ${game.name.toLowerCase()} launched`)
+    reportStatus(`${game.name.toLowerCase()} launched`, { type: 'game', gameId: game.id })
   }
 
   async function handleDeleteGame(game: Game): Promise<void> {
@@ -821,7 +886,7 @@ function App(): JSX.Element {
     await window.api.invoke('game:delete', { id: game.id })
     setGames((current) => current.filter((item) => item.id !== game.id))
     setSelectedNode(games.length > 1 ? { type: 'game', gameId: games.find((item) => item.id !== game.id)?.id ?? '' } : { type: 'catalog', catalogId: 'genshin' })
-    setStatusLine(`> removed ${game.name.toLowerCase()} from library`)
+    reportStatus(`removed ${game.name.toLowerCase()} from library`)
   }
 
   async function handleBrowseManualExecutable(): Promise<void> {
@@ -840,9 +905,9 @@ function App(): JSX.Element {
         executable: filePath,
         prefix: detected.prefix ?? current.prefix,
       }))
-      setStatusLine(`> detected ${detected.name.toLowerCase()}`)
+      reportStatus(`detected ${detected.name.toLowerCase()}`)
     } catch (error) {
-      setStatusLine(`> detection failed: ${error instanceof Error ? error.message : 'unknown error'}`)
+      reportStatus(`detection failed: ${error instanceof Error ? error.message : 'unknown error'}`)
     } finally {
       setManualGameForm((current) => ({ ...current, detecting: false }))
     }
@@ -850,7 +915,7 @@ function App(): JSX.Element {
 
   async function handleAddManualGame(): Promise<void> {
     if (!manualGameForm.name || !manualGameForm.directory || !manualGameForm.executable) {
-      setStatusLine('> missing executable, name, or directory')
+      reportStatus('missing executable, name, or directory')
       return
     }
 
@@ -881,7 +946,7 @@ function App(): JSX.Element {
       runnerPath: runners[0]?.path ?? '',
       detecting: false,
     })
-    setStatusLine(`> added ${game.name.toLowerCase()} to library`)
+    reportStatus(`added ${game.name.toLowerCase()} to library`, { type: 'game', gameId: game.id })
   }
 
   function handleSelectGame(selection: Selection): void {
@@ -889,6 +954,19 @@ function App(): JSX.Element {
     if (selection.type === 'game' || selection.type === 'mods' || selection.type === 'config') {
       setExpandedGames((current) => ({ ...current, [selection.gameId]: true }))
     }
+  }
+
+  function handleGameLabelClick(gameId: string): void {
+    const isCurrentGame =
+      (selectedNode.type === 'game' || selectedNode.type === 'mods' || selectedNode.type === 'config') &&
+      selectedNode.gameId === gameId
+
+    if (!isCurrentGame) {
+      handleSelectGame({ type: 'game', gameId })
+      return
+    }
+
+    setExpandedGames((current) => ({ ...current, [gameId]: !current[gameId] }))
   }
 
   function handleToggleGameExpanded(gameId: string): void {
@@ -907,7 +985,7 @@ function App(): JSX.Element {
         item.path === mod.path ? { ...item, enabled: !item.enabled } : item,
       ),
     }))
-    setStatusLine(`> ${mod.name.toLowerCase()} ${mod.enabled ? 'disabled' : 'enabled'}`)
+    reportStatus(`${mod.name.toLowerCase()} ${mod.enabled ? 'disabled' : 'enabled'}`, { type: 'mods', gameId: game.id })
   }
 
   async function handleEnableAllMods(game: Game, enabled: boolean): Promise<void> {
@@ -918,12 +996,22 @@ function App(): JSX.Element {
 
     if (enabled) {
       await window.api.invoke('mods:enable-all', { importer })
-      setStatusLine(`> enabled all mods for ${game.name.toLowerCase()}`)
+      reportStatus(`enabled all mods for ${game.name.toLowerCase()}`, { type: 'mods', gameId: game.id })
     } else {
       await window.api.invoke('mods:disable-all', { importer })
-      setStatusLine(`> disabled all mods for ${game.name.toLowerCase()}`)
+      reportStatus(`disabled all mods for ${game.name.toLowerCase()}`, { type: 'mods', gameId: game.id })
     }
     await refreshMods(game)
+  }
+
+  async function handleOpenModsFolder(importer: string): Promise<void> {
+    const result = await window.api.invoke('mods:open-folder', { importer })
+    if (result.success) {
+      reportStatus(`opened ${importer.toLowerCase()} mods folder`)
+      return
+    }
+
+    reportStatus(`failed to open mods folder: ${result.error || 'unknown error'}`)
   }
 
   async function handleRenameMod(game: Game, mod: Mod): Promise<void> {
@@ -940,37 +1028,36 @@ function App(): JSX.Element {
 
     if (result.success) {
       await refreshMods(game)
-      setStatusLine(`> renamed mod to ${editingModName.trim().toLowerCase()}`)
+      reportStatus(`renamed mod to ${editingModName.trim().toLowerCase()}`, { type: 'mods', gameId: game.id })
     } else {
-      setStatusLine(`> rename failed: ${result.error || 'unknown error'}`)
+      reportStatus(`rename failed: ${result.error || 'unknown error'}`)
     }
 
     setEditingModPath(null)
     setEditingModName('')
   }
 
-  async function handleModUploadSelected(event: ChangeEvent<HTMLInputElement>): Promise<void> {
-    const file = event.target.files?.[0] as (File & { path?: string }) | undefined
-    if (!file || !selectedGame) {
+  async function handleAddMod(game: Game): Promise<void> {
+    const importer = getGameImporter(game)
+    if (!importer) {
+      reportStatus('mods are not supported for this title')
       return
     }
 
-    const importer = getGameImporter(selectedGame)
-    if (!importer || !file.path) {
-      setStatusLine('> unable to resolve selected mod archive')
-      event.target.value = ''
+    const selectedSource = await window.api.invoke('dialog:openModSource', {
+      defaultPath: game.directory,
+    })
+    if (!selectedSource) {
       return
     }
 
-    const result = await window.api.invoke('mods:install', { importer, zipPath: file.path })
+    const result = await window.api.invoke('mods:install', { importer, sourcePath: selectedSource.path })
     if (result.success) {
-      await refreshMods(selectedGame)
-      setStatusLine(`> installed mod from ${file.name.toLowerCase()}`)
+      await refreshMods(game)
+      reportStatus(`added mod from ${selectedSource.path.split(/[/\\]/).pop()?.toLowerCase() ?? 'selection'}`, { type: 'mods', gameId: game.id })
     } else {
-      setStatusLine(`> mod install failed: ${result.error || 'unknown error'}`)
+      reportStatus(`add mod failed: ${result.error || 'unknown error'}`)
     }
-
-    event.target.value = ''
   }
 
   async function handleChangeCoverImage(): Promise<void> {
@@ -984,7 +1071,7 @@ function App(): JSX.Element {
     }
 
     setConfigDraft({ ...configDraft, coverImage: imagePath })
-    setStatusLine('> cover image updated in draft')
+    reportStatus('cover image updated in draft', { type: 'config', gameId: selectedGame.id })
   }
 
   async function handleSaveConfig(): Promise<void> {
@@ -1017,7 +1104,7 @@ function App(): JSX.Element {
         coverImage: updated.coverImage,
         modsEnabled: updated.mods.enabled,
       })
-      setStatusLine(`> saved config for ${updated.name.toLowerCase()}`)
+      reportStatus(`saved config for ${updated.name.toLowerCase()}`, { type: 'config', gameId: updated.id })
     } finally {
       setSavingConfig(false)
     }
@@ -1030,21 +1117,21 @@ function App(): JSX.Element {
 
     const updated = await window.api.invoke('config:update', { [key]: value } as Partial<AppConfig>)
     setConfig(updated)
-    setStatusLine(`> updated ${String(key)} settings`)
+    reportStatus(`updated ${String(key)} settings`, { type: 'settings' })
   }
 
   async function handleRunnerDownload(): Promise<void> {
     setRunnerDownloading(true)
     setRunnerProgress(0)
     setRunnerError(null)
-    setStatusLine('> downloading proton-ge...')
+    reportStatus('downloading proton-ge...', { type: 'settings' })
     const result = await window.api.invoke('mods:runner-download')
     if (result.success) {
       await loadRunnerInfo()
-      setStatusLine('> proton-ge ready')
+      reportStatus('proton-ge ready', { type: 'settings' })
     } else {
       setRunnerError(result.error || 'Download failed')
-      setStatusLine(`> proton-ge failed: ${result.error || 'download failed'}`)
+      reportStatus(`proton-ge failed: ${result.error || 'download failed'}`, { type: 'settings' })
     }
     setRunnerDownloading(false)
   }
@@ -1053,14 +1140,14 @@ function App(): JSX.Element {
     setSteamrtDownloading(true)
     setSteamrtProgress(0)
     setSteamrtError(null)
-    setStatusLine('> installing steam runtime...')
+    reportStatus('installing steam runtime...', { type: 'settings' })
     const result = await window.api.invoke('steamrt:install')
     if (result.success) {
       await loadSteamRuntimeStatus()
-      setStatusLine('> steam runtime ready')
+      reportStatus('steam runtime ready', { type: 'settings' })
     } else {
       setSteamrtError(result.error || 'Download failed')
-      setStatusLine(`> steam runtime failed: ${result.error || 'download failed'}`)
+      reportStatus(`steam runtime failed: ${result.error || 'download failed'}`, { type: 'settings' })
     }
     setSteamrtDownloading(false)
   }
@@ -1108,7 +1195,7 @@ function App(): JSX.Element {
           locating: false,
         },
       }))
-      setStatusLine(`> located ${entry.name.toLowerCase()}`)
+      reportStatus(`located ${entry.name.toLowerCase()}`, { type: 'catalog', catalogId: entry.id })
     } catch (error) {
       setCatalogForms((current) => ({
         ...current,
@@ -1118,14 +1205,14 @@ function App(): JSX.Element {
           locating: false,
         },
       }))
-      setStatusLine(`> locate failed: ${error instanceof Error ? error.message : 'unknown error'}`)
+      reportStatus(`locate failed: ${error instanceof Error ? error.message : 'unknown error'}`, { type: 'catalog', catalogId: entry.id })
     }
   }
 
   async function handleCatalogLocateConfirm(entry: CatalogEntry): Promise<void> {
     const form = catalogForms[entry.id]
     if (!form.locateExePath || !form.locateDirectory) {
-      setStatusLine('> choose an executable first')
+      reportStatus('choose an executable first', { type: 'catalog', catalogId: entry.id })
       return
     }
 
@@ -1148,17 +1235,17 @@ function App(): JSX.Element {
     setGames((current) => upsertGameList(current, game))
     setSelectedNode({ type: 'game', gameId: game.id })
     setExpandedGames((current) => ({ ...current, [game.id]: true }))
-    setStatusLine(`> registered ${entry.name.toLowerCase()}`)
+    reportStatus(`registered ${entry.name.toLowerCase()}`, { type: 'game', gameId: game.id })
   }
 
   async function handleCatalogStart(entry: CatalogEntry): Promise<void> {
     const form = catalogForms[entry.id]
     if (!form.installDir) {
-      setStatusLine('> install directory required')
+      reportStatus('install directory required', { type: 'catalog', catalogId: entry.id })
       return
     }
 
-    setStatusLine(`> starting ${entry.name.toLowerCase()} install...`)
+    reportStatus(`starting ${entry.name.toLowerCase()} install...`, { type: 'catalog', catalogId: entry.id })
 
     if (entry.kind === 'hoyo') {
       const result = await window.api.invoke('download:start', {
@@ -1168,7 +1255,7 @@ function App(): JSX.Element {
         useTwintail: true,
       })
       if (!result.success) {
-        setStatusLine(`> install failed: ${result.error || 'unknown error'}`)
+        reportStatus(`install failed: ${result.error || 'unknown error'}`, { type: 'catalog', catalogId: entry.id })
       }
       return
     }
@@ -1179,7 +1266,7 @@ function App(): JSX.Element {
         destDir: form.installDir,
       })
       if (!result.success) {
-        setStatusLine(`> install failed: ${result.error || 'unknown error'}`)
+        reportStatus(`install failed: ${result.error || 'unknown error'}`, { type: 'catalog', catalogId: entry.id })
       }
       return
     }
@@ -1189,7 +1276,7 @@ function App(): JSX.Element {
       destDir: form.installDir,
     })
     if (!result.success) {
-      setStatusLine(`> install failed: ${result.error || 'unknown error'}`)
+      reportStatus(`install failed: ${result.error || 'unknown error'}`, { type: 'catalog', catalogId: entry.id })
     }
   }
 
@@ -1200,7 +1287,7 @@ function App(): JSX.Element {
       delete next[entry.id]
       return next
     })
-    setStatusLine(`> cancelled ${entry.name.toLowerCase()} install`)
+    reportStatus(`cancelled ${entry.name.toLowerCase()} install`, { type: 'catalog', catalogId: entry.id })
   }
 
   async function autoAddCatalogGame(entry: CatalogEntry): Promise<void> {
@@ -1235,6 +1322,17 @@ function App(): JSX.Element {
   function renderTree(): JSX.Element {
     return (
       <div className="tui-tree">
+        <div className="tui-tree-block">
+          <button
+            className={`tui-tree-row ${selectedNode.type === 'home' ? 'is-active' : ''}`}
+            onClick={() => setSelectedNode({ type: 'home' })}
+            type="button"
+          >
+            <span className="tui-tree-prefix">├──</span>
+            <span className="tui-tree-label">home</span>
+          </button>
+        </div>
+
         <button className="tui-section-title" onClick={() => handleToggleSection('library')} type="button">
           {sections.library ? '[-]' : '[+]'} LIBRARY
         </button>
@@ -1259,7 +1357,7 @@ function App(): JSX.Element {
                     </button>
                     <button
                       className="tui-tree-label"
-                      onClick={() => handleSelectGame({ type: 'game', gameId: game.id })}
+                      onClick={() => handleGameLabelClick(game.id)}
                       type="button"
                     >
                       {game.name}
@@ -1397,7 +1495,7 @@ function App(): JSX.Element {
             <div><span>version</span><span>{game.download?.currentVersion ?? game.update?.currentVersion ?? 'unknown'}</span></div>
             <div><span>runner</span><span>{game.runner.path || game.runner.type}</span></div>
             <div><span>mods</span><span>{importer ? `${activeMods} active` : 'unsupported'}</span></div>
-            <div><span>playtime</span><span>{`${game.playtime}h`}</span></div>
+            <div><span>playtime</span><span>{formatPlaytimeHours(game.playtime)}</span></div>
             <div><span>status</span><span>{isRunning ? 'RUNNING' : launchBar ? 'PREPARING' : 'IDLE'}</span></div>
             <div><span>path</span><span className="tui-truncate">{game.directory}</span></div>
           </div>
@@ -1455,7 +1553,6 @@ function App(): JSX.Element {
   function renderModsPanel(game: Game, inline = false): JSX.Element {
     const importer = getGameImporter(game)
     const mods = modsByGame[game.id] ?? EMPTY_MODS
-    const modsPath = importer && config ? `${config.paths.xxmi}/${importer}/Mods` : null
 
     return (
       <div className={inline ? 'tui-subpanel' : 'tui-terminal-panel tui-terminal-full'}>
@@ -1515,16 +1612,16 @@ function App(): JSX.Element {
               <button
                 className="tui-command"
                 onClick={() => {
-                  if (modsPath) {
-                    openSystemPath(modsPath)
+                  if (importer) {
+                    void handleOpenModsFolder(importer)
                   }
                 }}
-                disabled={!modsPath}
+                disabled={!importer}
                 type="button"
               >
                 [OPEN MODS FOLDER]
               </button>
-              <button className="tui-command" onClick={() => modUploadRef.current?.click()} type="button">
+              <button className="tui-command" onClick={() => void handleAddMod(game)} type="button">
                 [ADD MOD]
               </button>
             </div>
@@ -1626,7 +1723,7 @@ function App(): JSX.Element {
       <div className="tui-terminal-panel tui-terminal-full">
         <div className="tui-terminal-header">&gt; SETTINGS</div>
 
-        <div className="tui-settings-section">
+        <div className="tui-settings-section tui-home-section">
           <div className="tui-config-title">runners</div>
           <div className="tui-kv-list">
             <div><span>default runner</span><span>{config.runner.defaultType}</span></div>
@@ -1645,7 +1742,7 @@ function App(): JSX.Element {
           </div>
         </div>
 
-        <div className="tui-settings-section">
+        <div className="tui-settings-section tui-home-section">
           <div className="tui-config-title">appearance</div>
           <div className="tui-form-grid">
             <label className="tui-field">
@@ -1678,7 +1775,7 @@ function App(): JSX.Element {
           </div>
         </div>
 
-        <div className="tui-settings-section">
+        <div className="tui-settings-section tui-home-section">
           <div className="tui-config-title">steam runtime</div>
           <div className="tui-kv-list">
             <div><span>status</span><span>{steamrtStatus?.installed ? steamrtStatus.path ?? 'installed' : 'not installed'}</span></div>
@@ -1696,7 +1793,7 @@ function App(): JSX.Element {
           </div>
         </div>
 
-        <div className="tui-settings-section">
+        <div className="tui-settings-section tui-home-section">
           <div className="tui-config-title">data</div>
           <div className="tui-kv-list">
             <div><span>library path</span><span className="tui-truncate">{config.paths.base}</span></div>
@@ -1911,6 +2008,137 @@ function App(): JSX.Element {
     )
   }
 
+  function renderHomePanel(): JSX.Element {
+    const runningList = games.filter((game) => runningGames.has(game.id))
+    const queueList = Object.values(downloadProgresses).filter((progress) =>
+      ['downloading', 'verifying', 'extracting'].includes(progress.status),
+    )
+    const modsEnabledCount = games.filter((game) => game.mods.enabled).length
+    const issues: string[] = []
+
+    if (!installedRunner) {
+      issues.push('runner missing')
+    }
+    if (!steamrtStatus?.installed) {
+      issues.push('steamrt missing')
+    }
+
+    return (
+      <div className="tui-terminal-panel tui-terminal-full">
+        <div className="tui-terminal-header">&gt; HOME</div>
+
+        <div className="tui-home-status-strip">
+          <div className="tui-home-status-card">
+            <span>running</span>
+            <strong>{runningList.length > 0 ? runningList.map((game) => game.name).join(', ') : 'none'}</strong>
+          </div>
+          <div className="tui-home-status-card">
+            <span>downloads</span>
+            <strong>{queueList.length}</strong>
+          </div>
+          <div className="tui-home-status-card">
+            <span>status</span>
+            <strong>{queueList[0] ? `${gamesById[queueList[0].gameId]?.name ?? queueList[0].gameId} • ${queueList[0].percent}% ${queueList[0].status}` : 'idle'}</strong>
+          </div>
+        </div>
+
+        <div className="tui-settings-section tui-home-section">
+          <div className="tui-config-title">continue playing</div>
+          {continueGame ? (
+            <>
+              <div className="tui-kv-list">
+                <div><span>game</span><span>{continueGame.name}</span></div>
+                <div><span>last played</span><span>{formatHomeDate(continueGame.lastPlayed)}</span></div>
+                <div><span>playtime</span><span>{formatPlaytimeHours(continueGame.playtime)}</span></div>
+                <div><span>status</span><span>{runningGames.has(continueGame.id) ? 'RUNNING' : 'IDLE'}</span></div>
+              </div>
+              <div className="tui-action-row">
+                <button className="tui-command" onClick={() => void handleLaunchGame(continueGame)} type="button">
+                  [PLAY]
+                </button>
+                <button className="tui-command" onClick={() => handleSelectGame({ type: 'mods', gameId: continueGame.id })} type="button">
+                  [MODS]
+                </button>
+                <button className="tui-command" onClick={() => handleSelectGame({ type: 'config', gameId: continueGame.id })} type="button">
+                  [CFG]
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="tui-meta-line">no games in library yet</div>
+          )}
+        </div>
+
+        <div className="tui-settings-section">
+          <div className="tui-config-title">system health</div>
+          <div className="tui-kv-list">
+            <div><span>xxmi</span><span>{config ? 'ready' : 'loading'}</span></div>
+            <div><span>runner</span><span>{installedRunner?.name ?? 'missing'}</span></div>
+            <div><span>steamrt</span><span>{steamrtStatus?.installed ? 'ready' : 'missing'}</span></div>
+            <div><span>issues</span><span>{issues.length > 0 ? issues.join(', ') : 'none'}</span></div>
+          </div>
+          <div className="tui-action-row">
+            <button className="tui-command" onClick={() => setSelectedNode({ type: 'settings' })} type="button">
+              [SETTINGS]
+            </button>
+            {config && (
+              <button className="tui-command" onClick={() => openSystemPath(config.paths.base)} type="button">
+                [OPEN DATA FOLDER]
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="tui-settings-section">
+          <div className="tui-config-title">quick picks</div>
+          {quickPicks.length > 0 ? (
+            <div className="tui-mod-list">
+              {quickPicks.map((game) => {
+                const mods = modsByGame[game.id] ?? EMPTY_MODS
+                const importer = getGameImporter(game)
+
+                return (
+                  <div key={game.id} className="tui-config-section">
+                    <div className="tui-kv-list">
+                      <div><span>game</span><span>{game.name}</span></div>
+                      <div><span>last played</span><span>{formatHomeDate(game.lastPlayed)}</span></div>
+                      <div><span>summary</span><span>{`${formatPlaytimeHours(game.playtime)} • ${mods.filter((mod) => mod.enabled).length} mods active`}</span></div>
+                    </div>
+                    <div className="tui-action-row">
+                      <button className="tui-command" onClick={() => void handleLaunchGame(game)} type="button">
+                        [PLAY]
+                      </button>
+                      <button className="tui-command" onClick={() => handleSelectGame({ type: 'mods', gameId: game.id })} type="button">
+                        [MODS]
+                      </button>
+                      <button className="tui-command" onClick={() => handleSelectGame({ type: 'config', gameId: game.id })} type="button">
+                        [CFG]
+                      </button>
+                      <button
+                        className="tui-command"
+                        onClick={() => {
+                          if (importer) {
+                            void handleOpenModsFolder(importer)
+                          }
+                        }}
+                        disabled={!importer}
+                        type="button"
+                      >
+                        [OPEN MODS]
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          ) : (
+            <div className="tui-meta-line">add a game to populate quick picks</div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
   function renderDetailPane(): JSX.Element {
     if (gamesLoading || configLoading) {
       return (
@@ -1932,6 +2160,10 @@ function App(): JSX.Element {
           </div>
         </div>
       )
+    }
+
+    if (selectedNode.type === 'home') {
+      return renderHomePanel()
     }
 
     if (selectedNode.type === 'settings') {
@@ -1988,14 +2220,6 @@ function App(): JSX.Element {
 
   return (
     <div className="tui-shell">
-      <input
-        ref={modUploadRef}
-        className="tui-hidden-input"
-        type="file"
-        accept=".zip,.7z,.rar"
-        onChange={(event) => void handleModUploadSelected(event)}
-      />
-
       <header className="tui-topbar">
         <div>{`${APP_NAME.toUpperCase()} v${displayVersion}`}</div>
         <div>{topStatus}</div>

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { X, Puzzle, Settings, ImageIcon } from 'lucide-react'
 import type { Game, Mod, DetectedRunner } from '../../../shared/types/game'
 import { getXXMIImporter } from '../utils/mods'
+import { formatPlaytimeHours } from '../lib/utils'
 import CoverImage from './CoverImage'
 
 interface GameConfigModalProps {
@@ -272,7 +273,7 @@ function GameConfigModal({ game, open, onClose, onUpdate, runners }: GameConfigM
               </div>
 
               <div className="text-sm text-muted-foreground space-y-1 pt-2 border-t">
-                <p><strong>Playtime:</strong> {Math.round(game.playtime)} hours</p>
+                <p><strong>Playtime:</strong> {formatPlaytimeHours(game.playtime)}</p>
                 <p><strong>Last played:</strong> {game.lastPlayed
                   ? new Date(game.lastPlayed).toLocaleDateString()
                   : 'Never'}</p>

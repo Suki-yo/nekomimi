@@ -378,6 +378,43 @@ button {
   gap: 0.5rem;
 }
 
+.tui-home-section {
+  gap: 0.85rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #2a2a3d;
+}
+
+.tui-home-section:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.tui-home-status-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.tui-home-status-card {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.85rem 0.95rem;
+  border: 1px solid #2a2a3d;
+  background: #111117;
+}
+
+.tui-home-status-card > span {
+  color: #6b6480;
+  text-transform: lowercase;
+}
+
+.tui-home-status-card > strong {
+  color: #e0d7f5;
+  font-size: 0.95rem;
+  font-weight: 600;
+  word-break: break-word;
+}
+
 .tui-subpanel {
   display: grid;
   gap: 1rem;
@@ -490,6 +527,11 @@ button {
   .tui-detail-split {
     grid-template-columns: 1fr;
   }
+
+  .tui-home-status-strip {
+    grid-template-columns: 1fr;
+  }
+
 
   .tui-form-grid {
     grid-template-columns: 1fr;
