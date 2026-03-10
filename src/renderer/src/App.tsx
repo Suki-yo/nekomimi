@@ -1500,7 +1500,7 @@ function App(): JSX.Element {
     const configSelected = selectedNode.type === 'config' && selectedNode.gameId === game.id
 
     return (
-      <div className="tui-detail-split">
+      <div className="tui-detail-split tui-detail-split-game">
         <div className="tui-cover-panel">
           {game.coverImage ? (
             <CoverImage imagePath={game.coverImage} alt={game.name} variant="modal" />
@@ -1509,7 +1509,7 @@ function App(): JSX.Element {
           )}
         </div>
 
-        <div className="tui-terminal-panel">
+        <div className="tui-terminal-panel tui-game-panel">
           <div className="tui-terminal-header">{`> ${game.name.toUpperCase()}`}</div>
           <div className="tui-kv-list">
             <div><span>version</span><span>{game.download?.currentVersion ?? game.update?.currentVersion ?? 'unknown'}</span></div>
@@ -1575,49 +1575,51 @@ function App(): JSX.Element {
     const mods = modsByGame[game.id] ?? EMPTY_MODS
 
     return (
-      <div className={inline ? 'tui-subpanel' : 'tui-terminal-panel tui-terminal-full'}>
+      <div className={inline ? 'tui-subpanel tui-subpanel-scroll' : 'tui-terminal-panel tui-terminal-full'}>
         <div className="tui-terminal-header">{`> ${game.name.toUpperCase()} / MODS`}</div>
         {!importer && <div className="tui-meta-line">mods are not supported for this title</div>}
         {importer && (
           <>
-            <div className="tui-mod-list">
-              {mods.length === 0 && <div className="tui-meta-line">no mods detected</div>}
-              {mods.map((mod) => (
-                <div key={mod.path} className="tui-mod-row">
-                  <button className="tui-tree-checkbox" onClick={() => void handleToggleMod(game, mod)} type="button">
-                    {mod.enabled ? '[✓]' : '[✗]'}
-                  </button>
-                  {editingModPath === mod.path ? (
-                    <input
-                      className="tui-input tui-input-inline"
-                      value={editingModName}
-                      onChange={(event) => setEditingModName(event.target.value)}
-                      onBlur={() => void handleRenameMod(game, mod)}
-                      onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
-                        if (event.key === 'Enter') {
-                          void handleRenameMod(game, mod)
-                        }
-                        if (event.key === 'Escape') {
-                          setEditingModPath(null)
-                          setEditingModName('')
-                        }
-                      }}
-                      autoFocus
-                    />
-                  ) : (
-                    <button
-                      className="tui-mod-name"
-                      onDoubleClick={() => {
-                        setEditingModPath(mod.path)
-                        setEditingModName(mod.name)
-                      }}
-                      type="button"
-                    >
-                      {mod.name}
+            <div className="tui-mod-list-shell">
+              <div className="tui-mod-list">
+                {mods.length === 0 && <div className="tui-meta-line">no mods detected</div>}
+                {mods.map((mod) => (
+                  <div key={mod.path} className="tui-mod-row">
+                    <button className="tui-tree-checkbox" onClick={() => void handleToggleMod(game, mod)} type="button">
+                      {mod.enabled ? '[✓]' : '[✗]'}
                     </button>
-                  )}
-                </div>
-              ))}
+                    {editingModPath === mod.path ? (
+                      <input
+                        className="tui-input tui-input-inline"
+                        value={editingModName}
+                        onChange={(event) => setEditingModName(event.target.value)}
+                        onBlur={() => void handleRenameMod(game, mod)}
+                        onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
+                          if (event.key === 'Enter') {
+                            void handleRenameMod(game, mod)
+                          }
+                          if (event.key === 'Escape') {
+                            setEditingModPath(null)
+                            setEditingModName('')
+                          }
+                        }}
+                        autoFocus
+                      />
+                    ) : (
+                      <button
+                        className="tui-mod-name"
+                        onDoubleClick={() => {
+                          setEditingModPath(mod.path)
+                          setEditingModName(mod.name)
+                        }}
+                        type="button"
+                      >
+                        {mod.name}
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
 
             <div className="tui-divider" />
