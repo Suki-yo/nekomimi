@@ -788,7 +788,7 @@ export async function launchGameWithXXMI(
   runnerPath: string,
   winePrefix: string,
   gameEnv: Record<string, string> = {}
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; pid?: number; error?: string }> {
   const importer = getXXMIImporter(executablePath)
 
   if (!importer) {
@@ -970,7 +970,7 @@ export async function launchGameWithXXMI(
         } else {
           console.log(`[xxmi] XXMI started with PID ${proc.pid}`)
         }
-        resolve({ success: true })
+        resolve({ success: true, pid: proc.pid })
       } else {
         resolve({ success: false, error: 'XXMI failed to start' })
       }

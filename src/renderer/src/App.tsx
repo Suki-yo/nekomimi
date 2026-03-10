@@ -439,14 +439,14 @@ function App(): JSX.Element {
       return null
     }
 
-    return [...games].sort((left, right) => {
-      const leftPlayed = left.lastPlayed ? new Date(left.lastPlayed).getTime() : 0
-      const rightPlayed = right.lastPlayed ? new Date(right.lastPlayed).getTime() : 0
-      if (leftPlayed !== rightPlayed) {
-        return rightPlayed - leftPlayed
-      }
-      return right.playtime - left.playtime
-    })[0] ?? null
+    const playedGames = games.filter((game) => game.lastPlayed)
+    if (playedGames.length === 0) {
+      return games[0] ?? null
+    }
+
+    return [...playedGames].sort((left, right) =>
+      new Date(right.lastPlayed!).getTime() - new Date(left.lastPlayed!).getTime(),
+    )[0] ?? null
   }, [games])
 
   const quickPicks = useMemo(
@@ -2037,8 +2037,8 @@ function App(): JSX.Element {
             <strong>{queueList.length}</strong>
           </div>
           <div className="tui-home-status-card">
-            <span>status</span>
-            <strong>{queueList[0] ? `${gamesById[queueList[0].gameId]?.name ?? queueList[0].gameId} • ${queueList[0].percent}% ${queueList[0].status}` : 'idle'}</strong>
+            <span>library</span>
+            <strong>{games.length}</strong>
           </div>
         </div>
 

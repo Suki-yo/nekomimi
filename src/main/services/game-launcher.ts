@@ -57,11 +57,26 @@ function isProcessRunning(exeName: string): boolean {
   }
 }
 
+function isPidRunning(pid?: number): boolean {
+  if (!pid) return false
+
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
 function cleanupStaleEntries() {
   const now = Date.now()
 
   for (const [gameId, running] of runningProcesses.entries()) {
-    if (!isProcessRunning(running.exeName)) {
+    const stillRunning =
+      (running.launcherPid ? isPidRunning(running.launcherPid) : false) ||
+      isProcessRunning(running.exeName)
+
+    if (!stillRunning) {
       console.log(`[launch] Cleaning up stale entry for ${running.exeName}`)
       runningProcesses.delete(gameId)
     } else {
@@ -262,11 +277,12 @@ export async function launchGame(
 
     runningProcesses.set(gameId, {
       exeName,
+      launcherPid: loaderResult.pid,
       startTime,
       lastCheck: Date.now(),
     })
 
-    return { success: true }
+    return { success: true, pid: loaderResult.pid }
   }
 
   // Auto-install Steam Runtime if needed for proton games
