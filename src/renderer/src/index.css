@@ -341,7 +341,7 @@ button {
 
 .tui-menu-list {
   position: absolute;
-  top: calc(100% + 0.35rem);
+  bottom: calc(100% + 0.35rem);
   right: 0;
   min-width: 10rem;
   border: 1px solid #2a2a3d;

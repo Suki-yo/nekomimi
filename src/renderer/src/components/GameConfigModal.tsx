@@ -15,6 +15,18 @@ interface GameConfigModalProps {
 
 type Tab = 'general' | 'mods'
 
+async function loadMods(importer: string, setLoadingMods: (loading: boolean) => void, setMods: (mods: Mod[]) => void) {
+  setLoadingMods(true)
+  try {
+    const nextMods = await window.api.invoke('mods:list', { importer })
+    setMods(nextMods)
+  } catch {
+    setMods([])
+  } finally {
+    setLoadingMods(false)
+  }
+}
+
 function GameConfigModal({ game, open, onClose, onUpdate, runners }: GameConfigModalProps) {
   const [tab, setTab] = useState<Tab>('general')
   const [mods, setMods] = useState<Mod[]>([])
@@ -39,15 +51,29 @@ function GameConfigModal({ game, open, onClose, onUpdate, runners }: GameConfigM
     if (game && open) {
       const importer = getXXMIImporter(game.executable)
       if (importer) {
-        setLoadingMods(true)
-        window.api.invoke('mods:list', { importer })
-          .then(setMods)
-          .catch(() => setMods([]))
-          .finally(() => setLoadingMods(false))
+        void loadMods(importer, setLoadingMods, setMods)
       } else {
         setMods([])
       }
     }
+  }, [game, open])
+
+  useEffect(() => {
+    if (!game || !open) {
+      return
+    }
+
+    const importer = getXXMIImporter(game.executable)
+    if (!importer) {
+      return
+    }
+
+    return window.api.on('mods:changed', (data) => {
+      const payload = data as { importer: string }
+      if (payload.importer === importer) {
+        void loadMods(importer, setLoadingMods, setMods)
+      }
+    })
   }, [game, open])
 
   if (!open || !game) return null

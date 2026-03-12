@@ -3,6 +3,7 @@
 import { ipcMain, BrowserWindow, shell } from 'electron'
 import * as fs from 'fs'
 import * as path from 'path'
+import type { FSWatcher } from 'fs'
 import {
   isXXMIInstalled,
   isRunnerInstalled,
@@ -18,6 +19,47 @@ import {
   renameMod,
   getModsPath,
 } from '../services/mod-manager'
+
+const modDirectoryWatchers = new Map<string, FSWatcher>()
+const modChangeDebounceTimers = new Map<string, NodeJS.Timeout>()
+
+function emitModsChanged(importer: string): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    window.webContents.send('mods:changed', { importer })
+  }
+}
+
+function scheduleModsChanged(importer: string): void {
+  const existingTimer = modChangeDebounceTimers.get(importer)
+  if (existingTimer) {
+    clearTimeout(existingTimer)
+  }
+
+  const timer = setTimeout(() => {
+    modChangeDebounceTimers.delete(importer)
+    emitModsChanged(importer)
+  }, 150)
+
+  modChangeDebounceTimers.set(importer, timer)
+}
+
+function ensureModsWatcher(importer: string): void {
+  if (modDirectoryWatchers.has(importer)) {
+    return
+  }
+
+  const modsPath = getModsPath(importer)
+  fs.mkdirSync(modsPath, { recursive: true })
+
+  try {
+    const watcher = fs.watch(modsPath, () => {
+      scheduleModsChanged(importer)
+    })
+    modDirectoryWatchers.set(importer, watcher)
+  } catch (error) {
+    console.warn(`[mods] Failed to watch ${modsPath}:`, error)
+  }
+}
 
 export const registerModsHandlers = () => {
   // Check if XXMI is installed
@@ -72,49 +114,72 @@ export const registerModsHandlers = () => {
   // Get list of mods for an importer
   ipcMain.handle('mods:list', (_event, { importer }: { importer: string }) => {
     console.log(`[mods] Listing mods for ${importer}`)
+    ensureModsWatcher(importer)
     return getMods(importer)
   })
 
   // Toggle a mod on/off
   ipcMain.handle('mods:toggle', (_event, { modPath, enabled }: { modPath: string; enabled: boolean }) => {
     console.log(`[mods] Toggling mod: ${modPath} → ${enabled ? 'enabled' : 'disabled'}`)
-    return { success: toggleMod(modPath, enabled) }
+    const success = toggleMod(modPath, enabled)
+    if (success) {
+      scheduleModsChanged(path.basename(path.dirname(modPath)))
+    }
+    return { success }
   })
 
   // Install a mod from zip
   ipcMain.handle('mods:install', async (_event, { importer, sourcePath }: { importer: string; sourcePath: string }) => {
     console.log(`[mods] Installing mod from ${sourcePath} to ${importer}`)
-    return await installMod(importer, sourcePath)
+    ensureModsWatcher(importer)
+    const result = await installMod(importer, sourcePath)
+    if (result.success) {
+      scheduleModsChanged(importer)
+    }
+    return result
   })
 
   // Delete a mod
   ipcMain.handle('mods:delete', (_event, { modPath }: { modPath: string }) => {
     console.log(`[mods] Deleting mod: ${modPath}`)
-    return { success: deleteMod(modPath) }
+    const success = deleteMod(modPath)
+    if (success) {
+      scheduleModsChanged(path.basename(path.dirname(modPath)))
+    }
+    return { success }
   })
 
   // Enable all mods for an importer
   ipcMain.handle('mods:enable-all', (_event, { importer }: { importer: string }) => {
     console.log(`[mods] Enabling all mods for ${importer}`)
+    ensureModsWatcher(importer)
     enableAllMods(importer)
+    scheduleModsChanged(importer)
   })
 
   // Disable all mods for an importer
   ipcMain.handle('mods:disable-all', (_event, { importer }: { importer: string }) => {
     console.log(`[mods] Disabling all mods for ${importer}`)
+    ensureModsWatcher(importer)
     disableAllMods(importer)
+    scheduleModsChanged(importer)
   })
 
   // Rename a mod (set custom display name)
   ipcMain.handle('mods:rename', (_event, { modPath, customName }: { modPath: string; customName: string }) => {
     console.log(`[mods] Renaming mod: ${modPath} → "${customName}"`)
-    return renameMod(modPath, customName)
+    const result = renameMod(modPath, customName)
+    if (result.success) {
+      scheduleModsChanged(path.basename(path.dirname(modPath)))
+    }
+    return result
   })
 
   ipcMain.handle('mods:open-folder', async (_event, { importer }: { importer: string }) => {
     try {
       const modsPath = getModsPath(importer)
       fs.mkdirSync(modsPath, { recursive: true })
+      ensureModsWatcher(importer)
       const markerPath = path.join(modsPath, '.nekomimi')
       if (!fs.existsSync(markerPath)) {
         fs.writeFileSync(markerPath, '')

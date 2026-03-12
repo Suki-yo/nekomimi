@@ -103,6 +103,7 @@ interface SectionState {
 type ModImportMode = 'file' | 'directory'
 
 const EMPTY_MODS: Mod[] = []
+const SIDEBAR_MOD_PREVIEW_LIMIT = 4
 
 const DEFAULT_LAUNCH: LaunchConfig = {
   env: {},
@@ -634,6 +635,15 @@ function App(): JSX.Element {
       setSteamrtProgress(percent as number)
     })
 
+    const unsubModsChanged = window.api.on('mods:changed', (data) => {
+      const { importer } = data as { importer: string }
+      const matchingGames = games.filter((game) => getGameImporter(game) === importer)
+
+      for (const game of matchingGames) {
+        void refreshMods(game)
+      }
+    })
+
     return () => {
       unsubDownloadProgress()
       unsubDownloadComplete()
@@ -642,8 +652,9 @@ function App(): JSX.Element {
       unsubRunner()
       unsubXXMI()
       unsubSteamrt()
+      unsubModsChanged()
     }
-  }, [catalogForms, runners])
+  }, [catalogForms, games, runners])
 
   async function loadInitialState(): Promise<void> {
     await Promise.all([
@@ -1062,21 +1073,25 @@ function App(): JSX.Element {
       return
     }
 
-    setModImportMenuGameId(null)
-    const selectedSource = await window.api.invoke('dialog:openModSource', {
-      defaultPath: game.directory,
-      mode,
-    })
-    if (!selectedSource) {
-      return
-    }
+    try {
+      setModImportMenuGameId(null)
+      const selectedSource = await window.api.invoke('dialog:openModSource', {
+        defaultPath: game.directory,
+        mode,
+      })
+      if (!selectedSource) {
+        return
+      }
 
-    const result = await window.api.invoke('mods:install', { importer, sourcePath: selectedSource.path })
-    if (result.success) {
-      await refreshMods(game)
-      reportStatus(`added mod from ${selectedSource.path.split(/[/\\]/).pop()?.toLowerCase() ?? 'selection'}`, { type: 'mods', gameId: game.id })
-    } else {
-      reportStatus(`add mod failed: ${result.error || 'unknown error'}`)
+      const result = await window.api.invoke('mods:install', { importer, sourcePath: selectedSource.path })
+      if (result.success) {
+        await refreshMods(game)
+        reportStatus(`added mod from ${selectedSource.path.split(/[/\\]/).pop()?.toLowerCase() ?? 'selection'}`, { type: 'mods', gameId: game.id })
+      } else {
+        reportStatus(`add mod failed: ${result.error || 'unknown error'}`)
+      }
+    } catch (error) {
+      reportStatus(`add mod failed: ${error instanceof Error ? error.message : 'unknown error'}`)
     }
   }
 
@@ -1361,6 +1376,8 @@ function App(): JSX.Element {
             {games.map((game) => {
               const importer = getGameImporter(game)
               const mods = modsByGame[game.id] ?? EMPTY_MODS
+              const visibleMods = mods.slice(0, SIDEBAR_MOD_PREVIEW_LIMIT)
+              const hasHiddenMods = mods.length > SIDEBAR_MOD_PREVIEW_LIMIT
               const running = runningGames.has(game.id)
               const active =
                 (selectedNode.type === 'game' || selectedNode.type === 'mods' || selectedNode.type === 'config') &&
@@ -1399,9 +1416,9 @@ function App(): JSX.Element {
                         {importer && <span className="tui-inline-status">[{mods.filter((mod) => mod.enabled).length}]</span>}
                       </button>
 
-                      {importer && mods.map((mod, index) => (
+                      {importer && visibleMods.map((mod) => (
                         <div key={mod.path} className="tui-tree-row tui-tree-mod">
-                          <span className="tui-tree-prefix">{index === mods.length - 1 ? '│   └──' : '│   ├──'}</span>
+                          <span className="tui-tree-prefix">│   ├──</span>
                           <button
                             className="tui-tree-checkbox"
                             onClick={(event) => {
@@ -1421,6 +1438,17 @@ function App(): JSX.Element {
                           </button>
                         </div>
                       ))}
+
+                      {importer && hasHiddenMods && (
+                        <button
+                          className="tui-tree-row tui-tree-mod"
+                          onClick={() => handleSelectGame({ type: 'mods', gameId: game.id })}
+                          type="button"
+                        >
+                          <span className="tui-tree-prefix">│   └──</span>
+                          <span className="tui-tree-label">... see all mods</span>
+                        </button>
+                      )}
 
                       <button
                         className={`tui-tree-row ${selectedNode.type === 'config' && selectedNode.gameId === game.id ? 'is-active' : ''}`}
@@ -1649,7 +1677,7 @@ function App(): JSX.Element {
                   onClick={() => setModImportMenuGameId((current) => (current === game.id ? null : game.id))}
                   type="button"
                 >
-                  [ADD MOD V]
+                  {modImportMenuGameId === game.id ? '[ADD MOD ▾]' : '[ADD MOD ▴]'}
                 </button>
                 {modImportMenuGameId === game.id && (
                   <div className="tui-menu-list">
