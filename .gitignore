@@ -3,6 +3,7 @@ node_modules/
 
 # Build output
 dist/
+release/
 
 # Electron specific
 *.log
@@ -17,4 +18,3 @@ Games/
 # OS files
 .DS_Store
 Thumbs.db
-

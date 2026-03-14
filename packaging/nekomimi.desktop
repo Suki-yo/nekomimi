@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Nekomimi
+Comment=Anime game launcher
+Exec=/home/jyq/dev/nekomimi/release/Nekomimi.AppImage
+Icon=applications-games
+Terminal=false
+Categories=Game;
+StartupNotify=true
