@@ -71,7 +71,14 @@ export const loadGameConfig = (configPath: string): Game | null => {
   }
 
   const content = fs.readFileSync(configPath, 'utf-8')
-  return yaml.parse(content) as Game
+  const parsed = yaml.parse(content) as Game
+  const migrated = migrateGamePaths(parsed)
+
+  if (migrated.changed) {
+    saveGameConfig(migrated.game)
+  }
+
+  return migrated.game
 }
 
 export const saveGameConfig = (game: Game): void => {
@@ -99,4 +106,48 @@ export const deleteGameConfig = (slug: string): void => {
 export const getGameConfigPath = (slug: string): string => {
   const paths = getPathsInstance()
   return path.join(paths.games, `${slug}.yml`)
+}
+
+function migrateGamePaths(game: Game): { game: Game; changed: boolean } {
+  const updatedRunnerPath = remapManagedPath(game.runner.path)
+  const updatedRunnerPrefix = remapManagedPath(game.runner.prefix)
+  const updatedCoverImage = game.coverImage ? remapManagedPath(game.coverImage) : game.coverImage
+
+  const changed =
+    updatedRunnerPath !== game.runner.path ||
+    updatedRunnerPrefix !== game.runner.prefix ||
+    updatedCoverImage !== game.coverImage
+
+  if (!changed) {
+    return { game, changed: false }
+  }
+
+  return {
+    changed: true,
+    game: {
+      ...game,
+      runner: {
+        ...game.runner,
+        path: updatedRunnerPath,
+        prefix: updatedRunnerPrefix,
+      },
+      coverImage: updatedCoverImage,
+    },
+  }
+}
+
+function remapManagedPath(value: string): string {
+  if (!value || fs.existsSync(value)) {
+    return value
+  }
+
+  const marker = `${path.sep}dev-data${path.sep}`
+  const markerIndex = value.lastIndexOf(marker)
+  if (markerIndex === -1) {
+    return value
+  }
+
+  const suffix = value.slice(markerIndex + marker.length)
+  const remapped = path.join(getPathsInstance().base, suffix)
+  return fs.existsSync(remapped) ? remapped : value
 }

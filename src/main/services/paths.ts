@@ -2,18 +2,33 @@
 // This file uses Node APIs, so it can ONLY be imported in main process
 
 import { app } from 'electron'
+import * as fs from 'fs'
 import * as path from 'path'
 import { APP_NAME } from '../../shared/constants'
 
-// Base directory for all app data
-// Using .local/share for data (runners, xxmi are large)
-// In production: ~/.local/share/nekomimi
-// In development: ./dev-data
+// Base directory for all app data.
+// Use one stable location in both dev and packaged runs so local testing sees
+// the same library/config without depending on the current working directory.
+// Set NEKOMIMI_DATA_DIR to override for isolated testing.
 const getBaseDir = (): string => {
-  if (app.isPackaged) {
-    return path.join(app.getPath('home'), '.local', 'share', APP_NAME)
+  const override = process.env.NEKOMIMI_DATA_DIR
+  if (override && override.trim().length > 0) {
+    return path.resolve(override)
   }
-  return path.join(process.cwd(), 'dev-data')
+
+  const defaultBase = path.join(app.getPath('home'), '.local', 'share', APP_NAME)
+
+  try {
+    const stat = fs.lstatSync(defaultBase)
+    if (stat.isSymbolicLink()) {
+      const symlinkTarget = fs.readlinkSync(defaultBase)
+      return path.resolve(path.dirname(defaultBase), symlinkTarget)
+    }
+  } catch {
+    // Default path does not exist yet; fall back to creating it normally.
+  }
+
+  return defaultBase
 }
 
 // Resolved paths - call this after app is ready

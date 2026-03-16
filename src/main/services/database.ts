@@ -115,6 +115,7 @@ export const createGame = (input: CreateGameInput): GameRow => {
 export interface UpdateGameInput {
   name?: string
   slug?: string
+  config_path?: string
   cover_path?: string
   installed?: boolean
   playtime?: number
@@ -132,6 +133,10 @@ export const updateGame = (id: string, input: UpdateGameInput): GameRow => {
   if (input.slug !== undefined) {
     fields.push('slug = ?')
     values.push(input.slug)
+  }
+  if (input.config_path !== undefined) {
+    fields.push('config_path = ?')
+    values.push(input.config_path)
   }
   if (input.cover_path !== undefined) {
     fields.push('cover_path = ?')

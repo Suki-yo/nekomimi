@@ -8,6 +8,7 @@ import { registerAllHandlers } from './ipc'
 
 let mainWindow: BrowserWindow | null = null
 const isDev = !app.isPackaged
+const DEV_SERVER_URL = 'http://127.0.0.1:5173'
 
 // Register custom protocol before app ready
 protocol.registerSchemesAsPrivileged([
@@ -23,10 +24,21 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 const createWindow = async (): Promise<void> => {
+  console.log('Starting Nekomimi main process', {
+    isDev,
+    cwd: process.cwd(),
+    dirname: __dirname,
+    devServerUrl: DEV_SERVER_URL,
+  })
+
   initPaths()
+  console.log('Paths initialized')
   initDatabase()
+  console.log('Database initialized')
   loadAppConfig()
+  console.log('Config loaded')
   registerAllHandlers()
+  console.log('IPC handlers registered')
 
   // Register local:// protocol handler
   protocol.handle('local', (request) => {
@@ -71,7 +83,7 @@ const createWindow = async (): Promise<void> => {
     minWidth: 800,
     minHeight: 600,
     title: 'Nekomimi',
-    show: false,
+    show: isDev,
     autoHideMenuBar: true,
     webPreferences: {
       contextIsolation: true,
@@ -83,6 +95,20 @@ const createWindow = async (): Promise<void> => {
   mainWindow.setMenu(null)
 
   mainWindow.once('ready-to-show', () => {
+    console.log('Window ready to show')
+    mainWindow?.show()
+  })
+
+  mainWindow.webContents.on('did-start-loading', () => {
+    console.log('Window started loading')
+  })
+
+  mainWindow.webContents.on('did-finish-load', () => {
+    console.log('Window finished loading')
+  })
+
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    console.error('Window failed to load:', { errorCode, errorDescription, validatedURL })
     mainWindow?.show()
   })
 
@@ -92,18 +118,25 @@ mainWindow.webContents.setWindowOpenHandler(({ url }) => {
   })
 
   if (isDev) {
-    await mainWindow.loadURL('http://localhost:5173')
+    console.log('Loading dev URL', DEV_SERVER_URL)
+    await mainWindow.loadURL(DEV_SERVER_URL)
   } else {
-    await mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'))
+    const rendererPath = path.join(__dirname, '../renderer/index.html')
+    console.log('Loading renderer file', rendererPath)
+    await mainWindow.loadFile(rendererPath)
   }
 }
 
 app.whenReady().then(() => {
-  createWindow()
+  createWindow().catch((error) => {
+    console.error('Failed to create window:', error)
+  })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow()
+      createWindow().catch((error) => {
+        console.error('Failed to recreate window:', error)
+      })
     }
   })
 })

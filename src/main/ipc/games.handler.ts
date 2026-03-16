@@ -24,6 +24,30 @@ import {
 import { detectGame, detectRunners } from '../services/game-detector'
 import { launchGame, getRunningGames, syncRunningGames } from '../services/game-launcher'
 import type { Game } from '../../shared/types'
+import type { GameRow } from '../services/database'
+
+const loadGameFromRow = (row: GameRow): Game | null => {
+  const directConfig = loadGameConfig(row.config_path)
+  if (directConfig) {
+    return directConfig
+  }
+
+  if (!row.slug) {
+    return null
+  }
+
+  const migratedConfigPath = getGameConfigPath(row.slug)
+  const migratedConfig = loadGameConfig(migratedConfigPath)
+  if (!migratedConfig) {
+    return null
+  }
+
+  if (migratedConfigPath !== row.config_path) {
+    dbUpdateGame(row.id, { config_path: migratedConfigPath })
+  }
+
+  return migratedConfig
+}
 
 export const registerGamesHandlers = () => {
   // List all games (returns full Game objects with config data)
@@ -32,7 +56,7 @@ export const registerGamesHandlers = () => {
     const games: Game[] = []
 
     for (const row of rows) {
-      const config = loadGameConfig(row.config_path)
+      const config = loadGameFromRow(row)
       if (config) {
         games.push(config)
       }
@@ -46,7 +70,7 @@ export const registerGamesHandlers = () => {
     const row = dbGetGame(id)
     if (!row) return null
 
-    return loadGameConfig(row.config_path)
+    return loadGameFromRow(row)
   })
 
   // Add a new game
@@ -167,9 +191,9 @@ export const registerGamesHandlers = () => {
     const knownGames: Array<{ id: string; configPath: string; game: Game }> = []
 
     for (const row of rows) {
-      const config = loadGameConfig(row.config_path)
+      const config = loadGameFromRow(row)
       if (config) {
-        knownGames.push({ id: row.id, configPath: row.config_path, game: config })
+        knownGames.push({ id: row.id, configPath: getGameConfigPath(config.slug), game: config })
       }
     }
 
