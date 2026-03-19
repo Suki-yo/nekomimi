@@ -1,46 +1,71 @@
-// Wuthering Waves official launcher API client (OS/Global server)
-// Index API: prod-alicdn-gamestarter.kurogame.com/launcher/game/G153/...
+// Wuthering Waves version manifest client
+// Uses Twintail's maintained manifest instead of Kuro's launcher-version-specific index URL.
 
 import * as https from 'https'
+import * as fs from 'fs'
+import * as path from 'path'
 import * as zlib from 'zlib'
 import type { ClientRequest, IncomingMessage } from 'http'
-import type { WuwaVersionInfo, WuwaFileEntry } from '../../../shared/types/download'
+import type { WuwaVersionInfo, WuwaFileEntry, WuwaDiffInfo } from '../../../shared/types/download'
+import { streamingMd5 } from './utils'
 
-// G153 = OS/Global server. The hash segment is tied to the launcher binary version
-// and will need updating if Kuro ships a new launcher.
-const WUWA_INDEX_URL =
-  'https://prod-alicdn-gamestarter.kurogame.com/launcher/game/G153/50004_obOHXFrFanqsaIEOmuKroCcbZkQRBC7c/index.json'
+const WUWA_MANIFEST_URL =
+  'https://raw.githubusercontent.com/TwintailTeam/game-manifests/main/wuwa_global.json'
 
 const REQUEST_TIMEOUT_MS = 15000
+const WUWA_VERSION_FILES = [
+  'Client/Binaries/Win64/Client-Win64-Shipping.exe',
+  'Wuthering Waves.exe',
+]
 
-// Shape of the index.json returned by Kuro's launcher API
-interface WuwaIndexCdn {
-  url: string
-  P: number
-}
+let manifestCache: WuwaTwintailManifest | null = null
+const indexCache = new Map<string, Promise<WuwaFileEntry[]>>()
 
-interface WuwaIndexChannel {
-  resources: string
-  resourcesBasePath: string
-  cdnList: WuwaIndexCdn[]
+interface WuwaTwintailVersionMetadata {
   version: string
-  totalSize?: string | number
+  index_file: string
+  res_list_url: string
 }
 
-interface WuwaIndexResponse {
-  default: WuwaIndexChannel
+interface WuwaTwintailDiffEntry {
+  file_url: string
+  file_hash: string
+  compressed_size: string | number
+  decompressed_size: string | number
+  diff_type: string
+  original_version: string
 }
 
-// Shape of each entry in resource.json
+interface WuwaTwintailVersionEntry {
+  metadata: WuwaTwintailVersionMetadata
+  game?: {
+    full?: Array<{
+      compressed_size?: string | number
+      decompressed_size?: string | number
+    }>
+    diff?: WuwaTwintailDiffEntry[]
+  }
+}
+
+interface WuwaTwintailManifest {
+  latest_version: string
+  game_versions: WuwaTwintailVersionEntry[]
+}
+
 interface WuwaResourceEntry {
   dest: string
   md5: string
   size: number | string
 }
 
-// Shape of the resource.json manifest
 interface WuwaResourceManifest {
   resource: WuwaResourceEntry[]
+}
+
+function toNumber(value: string | number | undefined): number {
+  if (typeof value === 'number') return value
+  if (typeof value === 'string') return parseInt(value, 10) || 0
+  return 0
 }
 
 function fetchJSON<T>(url: string): Promise<T> {
@@ -57,7 +82,7 @@ function fetchJSON<T>(url: string): Promise<T> {
       {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          Accept: 'application/json, */*',
+          Accept: 'application/json, text/plain, */*',
           'Accept-Encoding': 'gzip, deflate',
         },
       },
@@ -100,40 +125,55 @@ function fetchJSON<T>(url: string): Promise<T> {
   })
 }
 
-// Fetch the index.json and return WuwaVersionInfo with the best CDN pre-selected
+async function fetchWuwaTwintailManifest(): Promise<WuwaTwintailManifest> {
+  if (manifestCache) {
+    return manifestCache
+  }
+
+  manifestCache = await fetchJSON<WuwaTwintailManifest>(WUWA_MANIFEST_URL)
+  return manifestCache
+}
+
+function normalizeResListUrl(url: string): string {
+  return url.endsWith('/') ? url.slice(0, -1) : url
+}
+
+function mapDiffs(entry: WuwaTwintailVersionEntry): WuwaDiffInfo[] {
+  return (entry.game?.diff ?? [])
+    .filter((diff) => diff.diff_type === 'krdiff')
+    .map((diff) => ({
+      originalVersion: diff.original_version,
+      indexFileUrl: diff.file_url,
+      resListUrl: normalizeResListUrl(diff.file_hash),
+      downloadSize: toNumber(diff.compressed_size),
+      installedSize: toNumber(diff.decompressed_size),
+    }))
+}
+
+// Fetch current WuWa version info from Twintail's maintained manifest.
 export async function fetchWuwaVersionInfo(): Promise<WuwaVersionInfo | null> {
   try {
-    console.log('[wuwa-api] Fetching index...')
-    const index = await fetchJSON<WuwaIndexResponse>(WUWA_INDEX_URL)
-    const channel = index.default
-    if (!channel) {
-      console.error('[wuwa-api] No "default" channel in index response')
+    console.log('[wuwa-api] Fetching Twintail manifest...')
+    const manifest = await fetchWuwaTwintailManifest()
+
+    const latest = manifest.game_versions.find((entry) => entry.metadata.version === manifest.latest_version)
+      ?? manifest.game_versions[0]
+
+    if (!latest?.metadata?.index_file || !latest.metadata.res_list_url) {
+      console.error('[wuwa-api] Latest manifest entry is missing download metadata')
       return null
     }
 
-    // Select CDN with lowest P value (highest priority)
-    const sorted = [...channel.cdnList].sort((a, b) => a.P - b.P)
-    const bestCdn = sorted[0]
-    if (!bestCdn) {
-      console.error('[wuwa-api] No CDN entries in index response')
-      return null
-    }
-
-    // Fetch resources.json to compute total size
-    // channel.resources is already the full relative path to resource.json
-    const manifestUrl = `${bestCdn.url}/${channel.resources}`
-    console.log(`[wuwa-api] Fetching manifest from ${manifestUrl}`)
-    const manifest = await fetchJSON<WuwaResourceManifest>(manifestUrl)
-    const entries = manifest.resource
-
-    const totalSize = entries.reduce((sum, e) => sum + (typeof e.size === 'string' ? parseInt(e.size, 10) : e.size), 0)
+    const totalSize =
+      toNumber(latest.game?.full?.[0]?.compressed_size)
+      || toNumber(latest.game?.full?.[0]?.decompressed_size)
 
     return {
-      version: channel.version,
-      cdnUrl: bestCdn.url,
-      resources: channel.resources,
-      resourcesBasePath: channel.resourcesBasePath,
+      version: latest.metadata.version,
+      indexFileUrl: latest.metadata.index_file,
+      resListUrl: normalizeResListUrl(latest.metadata.res_list_url),
       totalSize,
+      diffs: mapDiffs(latest),
     }
   } catch (err) {
     console.error('[wuwa-api] Failed to fetch version info:', err)
@@ -141,14 +181,62 @@ export async function fetchWuwaVersionInfo(): Promise<WuwaVersionInfo | null> {
   }
 }
 
-// Fetch the full file manifest from the CDN
-// resources is already the full relative path to resource.json
-export async function fetchWuwaManifest(cdnUrl: string, resources: string): Promise<WuwaFileEntry[]> {
-  const url = `${cdnUrl}/${resources}`
-  const manifest = await fetchJSON<WuwaResourceManifest>(url)
-  return manifest.resource.map((e) => ({
-    dest: e.dest,
-    md5: e.md5,
-    size: typeof e.size === 'string' ? parseInt(e.size, 10) : e.size,
-  }))
+// Fetch the full file manifest from indexFile.json
+export async function fetchWuwaManifest(indexFileUrl: string): Promise<WuwaFileEntry[]> {
+  if (!indexCache.has(indexFileUrl)) {
+    indexCache.set(
+      indexFileUrl,
+      fetchJSON<WuwaResourceManifest>(indexFileUrl).then((manifest) =>
+        manifest.resource.map((entry) => ({
+          dest: entry.dest,
+          md5: entry.md5,
+          size: toNumber(entry.size),
+        }))
+      )
+    )
+  }
+
+  return indexCache.get(indexFileUrl)!
+}
+
+export async function detectWuwaInstalledVersion(installDir: string): Promise<string | null> {
+  const localFiles = await Promise.all(
+    WUWA_VERSION_FILES.map(async (relativePath) => {
+      const fullPath = path.join(installDir, relativePath)
+      if (!fs.existsSync(fullPath)) {
+        return null
+      }
+
+      const stat = fs.statSync(fullPath)
+      return {
+        relativePath,
+        size: stat.size,
+        md5: (await streamingMd5(fullPath)).toLowerCase(),
+      }
+    })
+  )
+
+  const availableFiles = localFiles.filter((file): file is NonNullable<typeof file> => file !== null)
+  if (availableFiles.length === 0) {
+    return null
+  }
+
+  const manifest = await fetchWuwaTwintailManifest()
+  for (const version of manifest.game_versions) {
+    const entries = await fetchWuwaManifest(version.metadata.index_file)
+    const entryMap = new Map(entries.map((entry) => [entry.dest, entry]))
+
+    for (const localFile of availableFiles) {
+      const manifestEntry = entryMap.get(localFile.relativePath)
+      if (!manifestEntry) {
+        continue
+      }
+
+      if (manifestEntry.size === localFile.size && manifestEntry.md5.toLowerCase() === localFile.md5) {
+        return version.metadata.version
+      }
+    }
+  }
+
+  return null
 }

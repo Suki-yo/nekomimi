@@ -201,6 +201,14 @@ export interface IPCChannels {
     request: { gameId: string; destDir: string }
     response: { success: boolean; error?: string }
   }
+  'download:check-wuwa-updates': {
+    request: { currentVersion?: string; installDir?: string }
+    response: {
+      hasUpdate: boolean
+      currentVersion: string | undefined
+      latestVersion: string | undefined
+    }
+  }
 }
 
 // Utility type - extracts request type for a channel

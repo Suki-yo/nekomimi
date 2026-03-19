@@ -4,9 +4,8 @@ import { join } from 'path'
 import { homedir } from 'os'
 import { getGame, updateGame } from './database'
 import { loadGameConfig, saveGameConfig } from './config'
-import { shouldUseXXMI, launchGameWithXXMI } from './mod-manager'
+import { shouldUseXXMI, launchGameWithXXMI, cleanupStandaloneWwmiRuntime } from './mod-manager'
 import { findSteamrt, downloadSteamrt } from './steamrt'
-import { syncGameFromTwintailIfNeeded } from './twintail-import'
 import type { Game } from '../../shared/types/game'
 
 function expandHome(p: string): string {
@@ -33,6 +32,24 @@ function shellSplit(input: string): string[] {
   return args
 }
 
+function isTwintailManagedPath(value: string | undefined): boolean {
+  return !!value && value.includes('/twintaillauncher/')
+}
+
+function validateStandaloneWuwaConfig(game: Game): string | null {
+  if (game.slug !== 'wuwa') return null
+
+  if (isTwintailManagedPath(game.runner.path)) {
+    return 'WuWa runner still points at Twintail-managed storage. Move it to a nekomimi-managed runner before launching.'
+  }
+
+  if (isTwintailManagedPath(game.runner.prefix)) {
+    return 'WuWa prefix still points at Twintail-managed storage. Move it to a nekomimi-managed prefix before launching.'
+  }
+
+  return null
+}
+
 interface RunningGame {
   exeName: string
   executablePath: string
@@ -44,6 +61,7 @@ interface RunningGame {
   gamePid?: number
   startTime: number
   lastCheck: number
+  cleanupWwmiRuntime?: boolean
 }
 
 const STEAM_APP_IDS: Record<string, string> = {
@@ -214,6 +232,10 @@ function finalizeRunningGame(gameId: string, running: RunningGame) {
     saveGameConfig(loadedGame)
   }
 
+  if (running.cleanupWwmiRuntime) {
+    cleanupStandaloneWwmiRuntime(running.executablePath)
+  }
+
   for (const cmd of running.postLaunch) {
     console.log(`[launch] Running post-launch: ${cmd}`)
     try {
@@ -296,6 +318,7 @@ function buildLaunchCommand(game: Game, useXXMI: boolean): { command: string; ar
     const prefixParent = prefix.replace(/\/pfx\/?$/, '')
     const shaderCache = join(prefixParent, 'shadercache')
     mkdirSync(shaderCache, { recursive: true })
+    env.SteamOS = '1'
 
     if (steamrt) {
       // Use Steam Runtime (pressure-vessel) + proton script directly — matches Twintail's approach
@@ -375,7 +398,12 @@ export async function launchGame(
   if (!loadedGame) {
     return { success: false, error: 'Game config not found' }
   }
-  const game = syncGameFromTwintailIfNeeded(loadedGame)
+  const game = loadedGame
+
+  const standaloneConfigError = validateStandaloneWuwaConfig(game)
+  if (standaloneConfigError) {
+    return { success: false, error: standaloneConfigError }
+  }
 
   const exeName = game.executable.split(/[/\\]/).pop() || game.executable
 
@@ -406,6 +434,9 @@ export async function launchGame(
 
   if (gameSupportsXXMI && !modsEnabled) {
     console.log(`[launch] Game supports mods but mods are disabled - launching vanilla`)
+    if (game.mods?.importer === 'WWMI') {
+      cleanupStandaloneWwmiRuntime(game.executable)
+    }
   }
 
   for (const cmd of game.launch.preLaunch || []) {
@@ -444,6 +475,7 @@ export async function launchGame(
       launcherPid: loaderResult.pid,
       startTime,
       lastCheck: Date.now(),
+      cleanupWwmiRuntime: game.mods?.importer === 'WWMI',
     })
 
     return { success: true, pid: loaderResult.pid }

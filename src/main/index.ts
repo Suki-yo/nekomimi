@@ -8,7 +8,7 @@ import { registerAllHandlers } from './ipc'
 
 let mainWindow: BrowserWindow | null = null
 const isDev = !app.isPackaged
-const DEV_SERVER_URL = 'http://127.0.0.1:5173'
+const DEV_SERVER_URL = 'http://127.0.0.1:5175'
 
 // Register custom protocol before app ready
 protocol.registerSchemesAsPrivileged([

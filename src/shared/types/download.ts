@@ -12,7 +12,7 @@ export type DownloadStatus =
   | 'error'
 
 // Download mode - how the game is delivered
-export type DownloadMode = 'zip' | 'sophon'
+export type DownloadMode = 'zip' | 'sophon' | 'raw'
 
 // Progress information sent to renderer
 export interface DownloadProgress {
@@ -43,13 +43,21 @@ export interface GameDownloadState {
 // HoYoverse API game identifiers
 export type HoyoGameBiz = 'genshin' | 'starrail' | 'zzz'
 
-// Wuthering Waves version info from official launcher API
+export interface WuwaDiffInfo {
+  originalVersion: string
+  indexFileUrl: string
+  resListUrl: string
+  downloadSize: number
+  installedSize: number
+}
+
+// Wuthering Waves version info from Twintail's maintained manifest
 export interface WuwaVersionInfo {
   version: string
-  cdnUrl: string         // best CDN URL (selected by lowest P value)
-  resources: string      // path to resources manifest (relative to cdnUrl)
-  resourcesBasePath: string // base path for file downloads (relative to cdnUrl)
+  indexFileUrl: string   // URL to the full indexFile.json manifest
+  resListUrl: string     // Base URL for raw file downloads
   totalSize: number      // sum of all file sizes (bytes)
+  diffs: WuwaDiffInfo[]
 }
 
 // A single file entry from the WuWa resources.json manifest

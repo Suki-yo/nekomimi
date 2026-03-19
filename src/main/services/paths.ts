@@ -67,6 +67,16 @@ let _paths: AppPaths | null = null
 
 export function initPaths(): AppPaths {
   _paths = getPaths()
+
+  // Ensure the managed app directories exist up front so packaged builds can
+  // start cleanly without depending on a pre-seeded dev-data tree.
+  fs.mkdirSync(_paths.base, { recursive: true })
+  fs.mkdirSync(_paths.games, { recursive: true })
+  fs.mkdirSync(_paths.runners, { recursive: true })
+  fs.mkdirSync(_paths.xxmi, { recursive: true })
+  fs.mkdirSync(_paths.cache, { recursive: true })
+  fs.mkdirSync(_paths.config, { recursive: true })
+
   return _paths
 }
 

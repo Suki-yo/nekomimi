@@ -12,7 +12,7 @@ import type {
   Mod,
   ModConfig,
 } from '../../shared/types/game'
-import type { DownloadProgress, HoyoVersionInfo, WuwaVersionInfo } from '../../shared/types/download'
+import type { DownloadProgress, HoyoVersionInfo, WuwaVersionInfo, GameDownloadState } from '../../shared/types/download'
 
 type Selection =
   | { type: 'home' }
@@ -296,6 +296,23 @@ function findCatalogEntryForGame(game: Game): CatalogEntry | undefined {
   )
 }
 
+function buildWuwaDownloadState(
+  currentVersion: string | undefined,
+  latestVersion: string | undefined,
+  installPath?: string,
+): GameDownloadState {
+  return {
+    status:
+      currentVersion && latestVersion && currentVersion !== latestVersion
+        ? 'update_available'
+        : 'installed',
+    mode: 'raw',
+    currentVersion,
+    latestVersion,
+    installPath,
+  }
+}
+
 function fileUrl(path: string): string {
   return `file://${encodeURI(path)}`
 }
@@ -314,9 +331,17 @@ function describeProgress(progress: DownloadProgress): string {
   return `${left} @ ${speed} ETA ${eta}`
 }
 
-function getInstallStatus(entry: CatalogEntry, progress: DownloadProgress | null, installed: boolean): string {
+function getInstallStatus(
+  entry: CatalogEntry,
+  progress: DownloadProgress | null,
+  installed: boolean,
+  installedGame?: Game,
+): string {
   if (progress && ['downloading', 'verifying', 'extracting'].includes(progress.status)) {
     return `[${progress.percent}%]`
+  }
+  if (installedGame?.download?.status === 'update_available') {
+    return '[UPDATE]'
   }
   if (installed) {
     return '[INSTALLED]'
@@ -586,7 +611,15 @@ function App(): JSX.Element {
       })
       const entry = CATALOG_ENTRIES.find((item) => item.id === gameId)
       if (entry) {
-        void autoAddCatalogGame(entry)
+        const existingGame = games.find((game) =>
+          entry.slugHints.some((hint) => game.slug.toLowerCase().includes(hint) || game.name.toLowerCase().includes(hint)),
+        )
+
+        if (entry.id === 'wuwa' && existingGame) {
+          void refreshSingleWuwaGame(existingGame)
+        } else {
+          void autoAddCatalogGame(entry)
+        }
       }
     })
 
@@ -670,7 +703,8 @@ function App(): JSX.Element {
     try {
       setGamesLoading(true)
       const nextGames = await window.api.invoke('game:list')
-      setGames(nextGames)
+      const syncedGames = await syncWuwaGames(nextGames)
+      setGames(syncedGames)
       setGamesError(null)
     } catch (error) {
       setGamesError(error instanceof Error ? error.message : 'Failed to load games')
@@ -696,6 +730,63 @@ function App(): JSX.Element {
       ...current,
       runnerPath: current.runnerPath || nextRunners[0]?.path || '',
     }))
+  }
+
+  async function syncWuwaGames(nextGames: Game[]): Promise<Game[]> {
+    const wuwaGames = nextGames.filter((game) => findCatalogEntryForGame(game)?.id === 'wuwa')
+    if (wuwaGames.length === 0) {
+      return nextGames
+    }
+
+    const updates = await Promise.all(
+      wuwaGames.map(async (game) => {
+        const result = await window.api.invoke('download:check-wuwa-updates', {
+          currentVersion: game.download?.currentVersion,
+          installDir: game.directory,
+        })
+
+        if (!result.currentVersion && !result.latestVersion) {
+          return game
+        }
+
+        const nextDownload = buildWuwaDownloadState(
+          result.currentVersion ?? game.download?.currentVersion,
+          result.latestVersion ?? game.download?.latestVersion,
+          game.directory,
+        )
+
+        const unchanged =
+          game.download?.status === nextDownload.status
+          && game.download?.mode === nextDownload.mode
+          && game.download?.currentVersion === nextDownload.currentVersion
+          && game.download?.latestVersion === nextDownload.latestVersion
+          && game.download?.installPath === nextDownload.installPath
+
+        if (unchanged) {
+          return game
+        }
+
+        const updated = await updateGame(game.id, { download: nextDownload })
+        return updated
+      }),
+    )
+
+    return nextGames.map((game) => updates.find((candidate) => candidate.id === game.id) ?? game)
+  }
+
+  async function refreshSingleWuwaGame(game: Game): Promise<Game> {
+    const result = await window.api.invoke('download:check-wuwa-updates', {
+      currentVersion: game.download?.currentVersion,
+      installDir: game.directory,
+    })
+
+    const nextDownload = buildWuwaDownloadState(
+      result.currentVersion ?? game.download?.currentVersion,
+      result.latestVersion ?? game.download?.latestVersion,
+      game.directory,
+    )
+
+    return updateGame(game.id, { download: nextDownload })
   }
 
   async function loadRunnerInfo(): Promise<void> {
@@ -1252,6 +1343,9 @@ function App(): JSX.Element {
     }
 
     const runnerPath = runners[0]?.path ?? ''
+    const wuwaVersionState = entry.id === 'wuwa'
+      ? await window.api.invoke('download:check-wuwa-updates', { installDir: form.locateDirectory })
+      : null
     const game = await window.api.invoke('game:add', {
       name: entry.name,
       slug: entry.slug,
@@ -1265,6 +1359,15 @@ function App(): JSX.Element {
       },
       launch: entry.launch,
       mods: entry.mods,
+      ...(entry.id === 'wuwa'
+        ? {
+            download: buildWuwaDownloadState(
+              wuwaVersionState?.currentVersion,
+              wuwaVersionState?.latestVersion,
+              form.locateDirectory,
+            ),
+          }
+        : {}),
     })
 
     setGames((current) => upsertGameList(current, game))
@@ -1275,18 +1378,24 @@ function App(): JSX.Element {
 
   async function handleCatalogStart(entry: CatalogEntry): Promise<void> {
     const form = catalogForms[entry.id]
-    if (!form.installDir) {
+    const existingGame = games.find((game) =>
+      entry.slugHints.some((hint) => game.slug.toLowerCase().includes(hint) || game.name.toLowerCase().includes(hint)),
+    )
+    const targetDir = entry.id === 'wuwa' && existingGame ? existingGame.directory : form.installDir
+    const actionLabel = entry.id === 'wuwa' && existingGame ? 'update' : 'install'
+
+    if (!targetDir) {
       reportStatus('install directory required', { type: 'catalog', catalogId: entry.id })
       return
     }
 
-    reportStatus(`starting ${entry.name.toLowerCase()} install...`, { type: 'catalog', catalogId: entry.id })
+    reportStatus(`starting ${entry.name.toLowerCase()} ${actionLabel}...`, { type: 'catalog', catalogId: entry.id })
 
     if (entry.kind === 'hoyo') {
       const result = await window.api.invoke('download:start', {
         gameId: entry.id,
         biz: entry.biz!,
-        destDir: form.installDir,
+        destDir: targetDir,
         useTwintail: true,
       })
       if (!result.success) {
@@ -1298,7 +1407,7 @@ function App(): JSX.Element {
     if (entry.kind === 'endfield') {
       const result = await window.api.invoke('download:start-endfield', {
         gameId: entry.id,
-        destDir: form.installDir,
+        destDir: targetDir,
       })
       if (!result.success) {
         reportStatus(`install failed: ${result.error || 'unknown error'}`, { type: 'catalog', catalogId: entry.id })
@@ -1308,7 +1417,7 @@ function App(): JSX.Element {
 
     const result = await window.api.invoke('download:start-wuwa', {
       gameId: entry.id,
-      destDir: form.installDir,
+      destDir: targetDir,
     })
     if (!result.success) {
       reportStatus(`install failed: ${result.error || 'unknown error'}`, { type: 'catalog', catalogId: entry.id })
@@ -1328,6 +1437,10 @@ function App(): JSX.Element {
   async function autoAddCatalogGame(entry: CatalogEntry): Promise<void> {
     const runnerPath = runners[0]?.path ?? ''
     const installDir = catalogForms[entry.id].installDir
+    const downloadState =
+      entry.id === 'wuwa'
+        ? buildWuwaDownloadState(catalogDetails.wuwa.version ?? undefined, catalogDetails.wuwa.version ?? undefined, installDir)
+        : undefined
     const game = await window.api.invoke('game:add', {
       name: entry.name,
       slug: entry.slug,
@@ -1341,6 +1454,7 @@ function App(): JSX.Element {
       },
       launch: entry.launch,
       mods: entry.mods,
+      ...(downloadState ? { download: downloadState } : {}),
     })
 
     setGames((current) => upsertGameList(current, game))
@@ -1473,6 +1587,9 @@ function App(): JSX.Element {
           <div className="tui-tree-block">
             {CATALOG_ENTRIES.map((entry) => {
               const progress = downloadProgresses[entry.id] ?? null
+              const installedGame = games.find((game) =>
+                entry.slugHints.some((hint) => game.slug.toLowerCase().includes(hint) || game.name.toLowerCase().includes(hint)),
+              )
               return (
                 <button
                   key={entry.id}
@@ -1482,7 +1599,7 @@ function App(): JSX.Element {
                 >
                   <span className="tui-tree-prefix">├──</span>
                   <span className="tui-tree-label">{entry.name}</span>
-                  <span className="tui-inline-status">{getInstallStatus(entry, progress, isCatalogInstalled(entry))}</span>
+                  <span className="tui-inline-status">{getInstallStatus(entry, progress, isCatalogInstalled(entry), installedGame)}</span>
                 </button>
               )
             })}
@@ -1526,6 +1643,18 @@ function App(): JSX.Element {
     const relatedProgress = mappedCatalog ? downloadProgresses[mappedCatalog.id] : null
     const modsSelected = selectedNode.type === 'mods' && selectedNode.gameId === game.id
     const configSelected = selectedNode.type === 'config' && selectedNode.gameId === game.id
+    const canUpdate =
+      mappedCatalog?.id === 'wuwa' && game.download?.status === 'update_available'
+    const versionLabel =
+      game.download?.currentVersion && game.download?.latestVersion && game.download.currentVersion !== game.download.latestVersion
+        ? `${game.download.currentVersion} -> ${game.download.latestVersion}`
+        : game.download?.currentVersion ?? game.update?.currentVersion ?? 'unknown'
+    const updateLabel =
+      game.download?.status === 'update_available'
+        ? 'AVAILABLE'
+        : game.download?.latestVersion
+          ? 'UP TO DATE'
+          : 'UNKNOWN'
 
     return (
       <div className="tui-detail-split tui-detail-split-game">
@@ -1540,7 +1669,8 @@ function App(): JSX.Element {
         <div className="tui-terminal-panel tui-game-panel">
           <div className="tui-terminal-header">{`> ${game.name.toUpperCase()}`}</div>
           <div className="tui-kv-list">
-            <div><span>version</span><span>{game.download?.currentVersion ?? game.update?.currentVersion ?? 'unknown'}</span></div>
+            <div><span>version</span><span>{versionLabel}</span></div>
+            <div><span>updates</span><span>{updateLabel}</span></div>
             <div><span>runner</span><span>{game.runner.path || game.runner.type}</span></div>
             <div><span>mods</span><span>{importer ? `${activeMods} active` : 'unsupported'}</span></div>
             <div><span>playtime</span><span>{formatPlaytimeHours(game.playtime)}</span></div>
@@ -1570,6 +1700,11 @@ function App(): JSX.Element {
             <button className="tui-command" onClick={() => void handleLaunchGame(game)} type="button">
               [PLAY]
             </button>
+            {canUpdate && mappedCatalog && (
+              <button className="tui-command" onClick={() => void handleCatalogStart(mappedCatalog)} type="button">
+                [UPDATE]
+              </button>
+            )}
             <button
               className={`tui-command ${modsSelected ? 'is-selected' : ''}`}
               onClick={() => setSelectedNode({ type: 'mods', gameId: game.id })}
@@ -1879,7 +2014,19 @@ function App(): JSX.Element {
     const form = catalogForms[entry.id]
     const progress = downloadProgresses[entry.id] ?? null
     const installed = isCatalogInstalled(entry)
+    const installedGame = games.find((game) =>
+      entry.slugHints.some((hint) => game.slug.toLowerCase().includes(hint) || game.name.toLowerCase().includes(hint)),
+    )
     const active = progress && ['downloading', 'verifying', 'extracting'].includes(progress.status)
+    const canUpdate = entry.id === 'wuwa' && installedGame?.download?.status === 'update_available'
+    const installedStatus =
+      installedGame?.download?.status === 'update_available'
+        ? 'UPDATE AVAILABLE'
+        : installed
+          ? 'INSTALLED'
+          : active
+            ? progress.status.toUpperCase()
+            : 'READY'
 
     return (
       <div className="tui-detail-split">
@@ -1896,7 +2043,7 @@ function App(): JSX.Element {
             <div><span>version</span><span>{details.version ?? 'unknown'}</span></div>
             <div><span>download</span><span>{details.sizeLabel}</span></div>
             {details.installedSizeLabel && <div><span>installed</span><span>{details.installedSizeLabel}</span></div>}
-            <div><span>status</span><span>{installed ? 'INSTALLED' : active ? progress.status.toUpperCase() : 'READY'}</span></div>
+            <div><span>status</span><span>{installedStatus}</span></div>
           </div>
 
           {details.error && <div className="tui-meta-line tui-error">{details.error}</div>}
@@ -1990,8 +2137,13 @@ function App(): JSX.Element {
                 [CANCEL]
               </button>
             ) : form.mode === 'download' ? (
-              <button className="tui-command" onClick={() => void handleCatalogStart(entry)} disabled={installed || !details.version} type="button">
-                [INSTALL]
+              <button
+                className="tui-command"
+                onClick={() => void handleCatalogStart(entry)}
+                disabled={(!canUpdate && installed) || !details.version}
+                type="button"
+              >
+                [{canUpdate ? 'UPDATE' : 'INSTALL'}]
               </button>
             ) : (
               <button className="tui-command" onClick={() => void handleCatalogLocateConfirm(entry)} type="button">

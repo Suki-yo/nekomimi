@@ -147,6 +147,9 @@ export function WuwaInstallModal({
     if (!locateDetected) return
     setLocating(true)
     try {
+      const versionState = await window.api.invoke('download:check-wuwa-updates', {
+        installDir: locateDetected.directory,
+      })
       await window.api.invoke('game:add', {
         name: WUWA_GAME.name,
         slug: WUWA_GAME.slug,
@@ -160,6 +163,16 @@ export function WuwaInstallModal({
         },
         launch: WUWA_GAME.launch,
         mods: WUWA_GAME.mods,
+        download: {
+          status:
+            versionState.currentVersion && versionState.latestVersion && versionState.currentVersion !== versionState.latestVersion
+              ? 'update_available'
+              : 'installed',
+          mode: 'raw',
+          currentVersion: versionState.currentVersion,
+          latestVersion: versionState.latestVersion,
+          installPath: locateDetected.directory,
+        },
       })
       onGameAdded?.()
       onClose()
@@ -206,6 +219,13 @@ export function WuwaInstallModal({
         runner: { type: 'proton' as const, path: runnerPath, prefix: WUWA_GAME.defaultPrefix },
         launch: WUWA_GAME.launch,
         mods: WUWA_GAME.mods,
+        download: {
+          status: 'installed',
+          mode: 'raw',
+          currentVersion: latestVersion,
+          latestVersion,
+          installPath: installDir,
+        },
       })
       onGameAdded?.()
     } catch (err) {

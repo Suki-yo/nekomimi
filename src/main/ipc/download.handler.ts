@@ -11,6 +11,7 @@ import {
   fetchEndfieldVersionInfo,
   startEndfieldDownload,
   fetchWuwaVersionInfo,
+  detectWuwaInstalledVersion,
   startWuwaDownload,
 } from '../services/download'
 import type { HoyoGameBiz, DownloadProgress } from '../../shared/types/download'
@@ -189,6 +190,37 @@ export const registerDownloadHandlers = () => {
       }
 
       return result
+    }
+  )
+
+  // Check Wuthering Waves updates
+  ipcMain.handle(
+    'download:check-wuwa-updates',
+    async (_event, { currentVersion, installDir }: { currentVersion?: string; installDir?: string }) => {
+      const latest = await fetchWuwaVersionInfo()
+      if (!latest) {
+        return {
+          hasUpdate: false,
+          currentVersion,
+          latestVersion: undefined,
+        }
+      }
+
+      const resolvedInstallDir = installDir
+        ? (installDir.startsWith('~') ? path.join(os.homedir(), installDir.slice(1)) : installDir)
+        : undefined
+
+      const detectedVersion = resolvedInstallDir
+        ? await detectWuwaInstalledVersion(resolvedInstallDir)
+        : null
+
+      const effectiveCurrentVersion = detectedVersion || currentVersion || undefined
+
+      return {
+        hasUpdate: !!effectiveCurrentVersion && effectiveCurrentVersion !== latest.version,
+        currentVersion: effectiveCurrentVersion,
+        latestVersion: latest.version,
+      }
     }
   )
 }

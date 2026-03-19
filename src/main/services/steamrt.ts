@@ -20,12 +20,11 @@ export function isSteamrtInstalled(): boolean {
 }
 
 /** Returns the path to the steamrt installation, checking nekomimi's managed path first,
- *  then umu-launcher's, then Twintail's, then vanilla Steam's. Returns null if none found. */
+ *  then umu-launcher's, then vanilla Steam's. Returns null if none found. */
 export function findSteamrt(): string | null {
   const candidates = [
     getSteamrtPath(),
     join(homedir(), '.local/share/umu/steamrt3'),
-    join(homedir(), '.local/share/twintaillauncher/compatibility/runners/steamrt'),
     join(homedir(), '.local/share/Steam/steamapps/common/SteamLinuxRuntime_sniper'),
   ]
   for (const p of candidates) {

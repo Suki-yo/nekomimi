@@ -163,8 +163,8 @@ export async function startWuwaDownload(
       currentFile: 'Fetching file manifest...',
     })
 
-    const entries = await fetchWuwaManifest(versionInfo.cdnUrl, versionInfo.resources)
-    const totalSize = entries.reduce((sum, e) => sum + e.size, 0)
+    const entries = await fetchWuwaManifest(versionInfo.indexFileUrl)
+    const totalSize = versionInfo.totalSize || entries.reduce((sum, e) => sum + e.size, 0)
 
     if (!fs.existsSync(destDir)) {
       fs.mkdirSync(destDir, { recursive: true })
@@ -192,7 +192,7 @@ export async function startWuwaDownload(
         return
       }
 
-      const fileUrl = `${versionInfo.cdnUrl}/${versionInfo.resourcesBasePath}/${entry.dest}`
+      const fileUrl = `${versionInfo.resListUrl}/${entry.dest}`
 
       const beforeBytes = bytesDownloaded
       const result = await downloadFile(fileUrl, filePath, signal)
