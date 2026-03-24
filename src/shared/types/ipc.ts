@@ -177,10 +177,10 @@ export interface IPCChannels {
     response: { inProgress: boolean }
   }
   'download:check-updates': {
-    request: { biz: 'genshin' | 'starrail' | 'zzz'; currentVersion: string }
+    request: { biz: 'genshin' | 'starrail' | 'zzz'; currentVersion?: string; installDir?: string }
     response: {
       hasUpdate: boolean
-      currentVersion: string
+      currentVersion: string | undefined
       latestVersion: string | undefined
       downloadMode: 'zip' | 'sophon' | undefined
     }

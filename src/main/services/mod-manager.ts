@@ -71,6 +71,10 @@ function usesInjectMode(importer: string): boolean {
   return importer === 'EFMI' || importer === 'GIMI'
 }
 
+function shouldDisableConfigureGame(importer: string): boolean {
+  return importer === 'WWMI' || importer === 'ZZMI'
+}
+
 function applyWWMILaunchSettings(importerConfig: Record<string, unknown>): void {
   importerConfig.custom_launch_enabled = false
   importerConfig.custom_launch = ''
@@ -729,6 +733,9 @@ function configureImporterGameFolder(importer: string, gameDirectory: string, _e
       }
       importerConfig.process_start_method = 'Shell'
       importerConfig.custom_launch_inject_mode = useInjectMode ? 'Inject' : 'Hook'
+      if (shouldDisableConfigureGame(importer)) {
+        importerConfig.configure_game = false
+      }
       if (importer === 'WWMI') {
         applyWWMILaunchSettings(importerConfig)
       }
@@ -743,6 +750,9 @@ function configureImporterGameFolder(importer: string, gameDirectory: string, _e
       }
       if (wineExePath) {
         importerConfig.game_exe_path = wineExePath
+      }
+      if (shouldDisableConfigureGame(importer)) {
+        importerConfig.configure_game = false
       }
 
       if (importer === 'WWMI') {
@@ -790,6 +800,11 @@ function ensureLinuxCompatibility(importer: string, _executablePath?: string): v
         needsSave = true
       }
 
+      if (shouldDisableConfigureGame(importer) && importerConfig.configure_game !== false) {
+        importerConfig.configure_game = false
+        needsSave = true
+      }
+
       if (importer === 'WWMI') {
         if (importerConfig.custom_launch_enabled !== false) {
           importerConfig.custom_launch_enabled = false
@@ -814,10 +829,6 @@ function ensureLinuxCompatibility(importer: string, _executablePath?: string): v
         const processExeNames = JSON.stringify(importerConfig.process_exe_names || [])
         if (processExeNames !== JSON.stringify(WWMI_PROCESS_EXE_NAMES)) {
           importerConfig.process_exe_names = WWMI_PROCESS_EXE_NAMES
-          needsSave = true
-        }
-        if (importerConfig.configure_game !== false) {
-          importerConfig.configure_game = false
           needsSave = true
         }
         if (importerConfig.xxmi_dll_init_delay !== WWMI_DLL_INIT_DELAY_MS) {

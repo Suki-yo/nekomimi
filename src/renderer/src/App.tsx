@@ -12,7 +12,7 @@ import type {
   Mod,
   ModConfig,
 } from '../../shared/types/game'
-import type { DownloadProgress, HoyoVersionInfo, WuwaVersionInfo, GameDownloadState } from '../../shared/types/download'
+import type { DownloadMode, DownloadProgress, HoyoVersionInfo, WuwaVersionInfo, GameDownloadState } from '../../shared/types/download'
 
 type Selection =
   | { type: 'home' }
@@ -296,7 +296,8 @@ function findCatalogEntryForGame(game: Game): CatalogEntry | undefined {
   )
 }
 
-function buildWuwaDownloadState(
+function buildTrackedDownloadState(
+  mode: DownloadMode,
   currentVersion: string | undefined,
   latestVersion: string | undefined,
   installPath?: string,
@@ -306,11 +307,28 @@ function buildWuwaDownloadState(
       currentVersion && latestVersion && currentVersion !== latestVersion
         ? 'update_available'
         : 'installed',
-    mode: 'raw',
+    mode,
     currentVersion,
     latestVersion,
     installPath,
   }
+}
+
+function buildHoyoDownloadState(
+  mode: 'zip' | 'sophon',
+  currentVersion: string | undefined,
+  latestVersion: string | undefined,
+  installPath?: string,
+): GameDownloadState {
+  return buildTrackedDownloadState(mode, currentVersion, latestVersion, installPath)
+}
+
+function buildWuwaDownloadState(
+  currentVersion: string | undefined,
+  latestVersion: string | undefined,
+  installPath?: string,
+): GameDownloadState {
+  return buildTrackedDownloadState('raw', currentVersion, latestVersion, installPath)
 }
 
 function fileUrl(path: string): string {
@@ -615,7 +633,9 @@ function App(): JSX.Element {
           entry.slugHints.some((hint) => game.slug.toLowerCase().includes(hint) || game.name.toLowerCase().includes(hint)),
         )
 
-        if (entry.id === 'wuwa' && existingGame) {
+        if (entry.kind === 'hoyo' && existingGame) {
+          void refreshSingleHoyoGame(existingGame)
+        } else if (entry.id === 'wuwa' && existingGame) {
           void refreshSingleWuwaGame(existingGame)
         } else {
           void autoAddCatalogGame(entry)
@@ -703,7 +723,7 @@ function App(): JSX.Element {
     try {
       setGamesLoading(true)
       const nextGames = await window.api.invoke('game:list')
-      const syncedGames = await syncWuwaGames(nextGames)
+      const syncedGames = await syncCatalogGames(nextGames)
       setGames(syncedGames)
       setGamesError(null)
     } catch (error) {
@@ -730,6 +750,79 @@ function App(): JSX.Element {
       ...current,
       runnerPath: current.runnerPath || nextRunners[0]?.path || '',
     }))
+  }
+
+  async function syncCatalogGames(nextGames: Game[]): Promise<Game[]> {
+    const syncedHoyoGames = await syncHoyoGames(nextGames)
+    return syncWuwaGames(syncedHoyoGames)
+  }
+
+  async function syncHoyoGames(nextGames: Game[]): Promise<Game[]> {
+    const hoyoGames = nextGames.filter((game) => findCatalogEntryForGame(game)?.kind === 'hoyo')
+    if (hoyoGames.length === 0) {
+      return nextGames
+    }
+
+    const infoRequests = new Map<string, Promise<HoyoVersionInfo | null>>()
+    const loadInfo = (biz: 'genshin' | 'starrail' | 'zzz') => {
+      if (!infoRequests.has(biz)) {
+        infoRequests.set(biz, window.api.invoke('download:fetch-info', { biz }))
+      }
+      return infoRequests.get(biz)!
+    }
+
+    const updates = await Promise.all(
+      hoyoGames.map(async (game) => {
+        const entry = findCatalogEntryForGame(game)
+        if (entry?.kind !== 'hoyo' || !entry.biz) {
+          return game
+        }
+
+        const [result, info] = await Promise.all([
+          window.api.invoke('download:check-updates', {
+            biz: entry.biz,
+            currentVersion: game.download?.currentVersion ?? game.update?.currentVersion,
+            installDir: game.directory,
+          }),
+          loadInfo(entry.biz),
+        ])
+
+        const nextCurrentVersion =
+          result.currentVersion ?? game.download?.currentVersion ?? game.update?.currentVersion
+        const nextLatestVersion =
+          result.latestVersion ?? info?.version ?? game.download?.latestVersion
+        const nextMode =
+          result.downloadMode
+          ?? info?.downloadMode
+          ?? (game.download?.mode === 'zip' || game.download?.mode === 'sophon' ? game.download.mode : 'sophon')
+
+        if (!nextCurrentVersion && !nextLatestVersion) {
+          return game
+        }
+
+        const nextDownload = buildHoyoDownloadState(
+          nextMode,
+          nextCurrentVersion,
+          nextLatestVersion,
+          game.directory,
+        )
+
+        const unchanged =
+          game.download?.status === nextDownload.status
+          && game.download?.mode === nextDownload.mode
+          && game.download?.currentVersion === nextDownload.currentVersion
+          && game.download?.latestVersion === nextDownload.latestVersion
+          && game.download?.installPath === nextDownload.installPath
+
+        if (unchanged) {
+          return game
+        }
+
+        return updateGame(game.id, { download: nextDownload })
+      }),
+    )
+
+    return nextGames.map((game) => updates.find((candidate) => candidate.id === game.id) ?? game)
   }
 
   async function syncWuwaGames(nextGames: Game[]): Promise<Game[]> {
@@ -772,6 +865,38 @@ function App(): JSX.Element {
     )
 
     return nextGames.map((game) => updates.find((candidate) => candidate.id === game.id) ?? game)
+  }
+
+  async function refreshSingleHoyoGame(game: Game): Promise<Game> {
+    const entry = findCatalogEntryForGame(game)
+    if (entry?.kind !== 'hoyo' || !entry.biz) {
+      return game
+    }
+
+    const result = await window.api.invoke('download:check-updates', {
+      biz: entry.biz,
+      currentVersion: game.download?.currentVersion ?? game.update?.currentVersion,
+      installDir: game.directory,
+    })
+
+    const nextCurrentVersion =
+      result.currentVersion
+      ?? result.latestVersion
+      ?? game.download?.currentVersion
+      ?? game.update?.currentVersion
+    const nextLatestVersion = result.latestVersion ?? game.download?.latestVersion
+    const nextMode =
+      result.downloadMode
+      ?? (game.download?.mode === 'zip' || game.download?.mode === 'sophon' ? game.download.mode : 'sophon')
+
+    const nextDownload = buildHoyoDownloadState(
+      nextMode,
+      nextCurrentVersion,
+      nextLatestVersion,
+      game.directory,
+    )
+
+    return updateGame(game.id, { download: nextDownload, installed: true })
   }
 
   async function refreshSingleWuwaGame(game: Game): Promise<Game> {
@@ -1343,6 +1468,12 @@ function App(): JSX.Element {
     }
 
     const runnerPath = runners[0]?.path ?? ''
+    const hoyoVersionState = entry.kind === 'hoyo'
+      ? await window.api.invoke('download:check-updates', {
+          biz: entry.biz!,
+          installDir: form.locateDirectory,
+        })
+      : null
     const wuwaVersionState = entry.id === 'wuwa'
       ? await window.api.invoke('download:check-wuwa-updates', { installDir: form.locateDirectory })
       : null
@@ -1359,15 +1490,26 @@ function App(): JSX.Element {
       },
       launch: entry.launch,
       mods: entry.mods,
-      ...(entry.id === 'wuwa'
-        ? {
-            download: buildWuwaDownloadState(
-              wuwaVersionState?.currentVersion,
-              wuwaVersionState?.latestVersion,
-              form.locateDirectory,
-            ),
-          }
-        : {}),
+      ...(
+        entry.kind === 'hoyo'
+          ? {
+              download: buildHoyoDownloadState(
+                hoyoVersionState?.downloadMode ?? 'sophon',
+                hoyoVersionState?.currentVersion,
+                hoyoVersionState?.latestVersion,
+                form.locateDirectory,
+              ),
+            }
+          : entry.id === 'wuwa'
+            ? {
+                download: buildWuwaDownloadState(
+                  wuwaVersionState?.currentVersion,
+                  wuwaVersionState?.latestVersion,
+                  form.locateDirectory,
+                ),
+              }
+            : {}
+      ),
     })
 
     setGames((current) => upsertGameList(current, game))
@@ -1381,8 +1523,9 @@ function App(): JSX.Element {
     const existingGame = games.find((game) =>
       entry.slugHints.some((hint) => game.slug.toLowerCase().includes(hint) || game.name.toLowerCase().includes(hint)),
     )
-    const targetDir = entry.id === 'wuwa' && existingGame ? existingGame.directory : form.installDir
-    const actionLabel = entry.id === 'wuwa' && existingGame ? 'update' : 'install'
+    const canUpdate = existingGame?.download?.status === 'update_available'
+    const targetDir = canUpdate && existingGame ? existingGame.directory : form.installDir
+    const actionLabel = canUpdate ? 'update' : 'install'
 
     if (!targetDir) {
       reportStatus('install directory required', { type: 'catalog', catalogId: entry.id })
@@ -1438,9 +1581,20 @@ function App(): JSX.Element {
     const runnerPath = runners[0]?.path ?? ''
     const installDir = catalogForms[entry.id].installDir
     const downloadState =
-      entry.id === 'wuwa'
-        ? buildWuwaDownloadState(catalogDetails.wuwa.version ?? undefined, catalogDetails.wuwa.version ?? undefined, installDir)
-        : undefined
+      entry.kind === 'hoyo'
+        ? buildHoyoDownloadState(
+            'sophon',
+            catalogDetails[entry.id].version ?? undefined,
+            catalogDetails[entry.id].version ?? undefined,
+            installDir,
+          )
+        : entry.id === 'wuwa'
+          ? buildWuwaDownloadState(
+              catalogDetails.wuwa.version ?? undefined,
+              catalogDetails.wuwa.version ?? undefined,
+              installDir,
+            )
+          : undefined
     const game = await window.api.invoke('game:add', {
       name: entry.name,
       slug: entry.slug,
@@ -1643,8 +1797,7 @@ function App(): JSX.Element {
     const relatedProgress = mappedCatalog ? downloadProgresses[mappedCatalog.id] : null
     const modsSelected = selectedNode.type === 'mods' && selectedNode.gameId === game.id
     const configSelected = selectedNode.type === 'config' && selectedNode.gameId === game.id
-    const canUpdate =
-      mappedCatalog?.id === 'wuwa' && game.download?.status === 'update_available'
+    const canUpdate = game.download?.status === 'update_available'
     const versionLabel =
       game.download?.currentVersion && game.download?.latestVersion && game.download.currentVersion !== game.download.latestVersion
         ? `${game.download.currentVersion} -> ${game.download.latestVersion}`
@@ -2018,7 +2171,7 @@ function App(): JSX.Element {
       entry.slugHints.some((hint) => game.slug.toLowerCase().includes(hint) || game.name.toLowerCase().includes(hint)),
     )
     const active = progress && ['downloading', 'verifying', 'extracting'].includes(progress.status)
-    const canUpdate = entry.id === 'wuwa' && installedGame?.download?.status === 'update_available'
+    const canUpdate = installedGame?.download?.status === 'update_available'
     const installedStatus =
       installedGame?.download?.status === 'update_available'
         ? 'UPDATE AVAILABLE'

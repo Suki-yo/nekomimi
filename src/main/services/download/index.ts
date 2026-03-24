@@ -6,6 +6,7 @@ import * as path from 'path'
 import * as https from 'https'
 import { spawn } from 'child_process'
 import { fetchGameResource } from './hoyo-api'
+import { detectHoyoInstalledVersion } from './hoyo-install'
 import { fetchEndfieldGame, fetchEndfieldVersionInfo } from './endfield-api'
 import { fetchWuwaVersionInfo, fetchWuwaManifest, detectWuwaInstalledVersion } from './wuwa-api'
 import { startWuwaDownload as _startWuwaDownload } from './wuwa-download'
@@ -18,7 +19,13 @@ import type {
   DownloadProgress,
 } from '../../../shared/types/download'
 
-export { fetchEndfieldVersionInfo, fetchWuwaVersionInfo, fetchWuwaManifest, detectWuwaInstalledVersion }
+export {
+  detectHoyoInstalledVersion,
+  fetchEndfieldVersionInfo,
+  fetchWuwaVersionInfo,
+  fetchWuwaManifest,
+  detectWuwaInstalledVersion,
+}
 
 // Active downloads tracking
 const activeDownloads = new Map<string, AbortController>()

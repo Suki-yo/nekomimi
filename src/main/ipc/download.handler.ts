@@ -8,6 +8,7 @@ import {
   startGameDownload,
   cancelDownload,
   isDownloadInProgress,
+  detectHoyoInstalledVersion,
   fetchEndfieldVersionInfo,
   startEndfieldDownload,
   fetchWuwaVersionInfo,
@@ -91,8 +92,8 @@ export const registerDownloadHandlers = () => {
   // Check for game updates
   ipcMain.handle(
     'download:check-updates',
-    async (_event, { biz, currentVersion }: { biz: HoyoGameBiz; currentVersion: string }) => {
-      console.log(`[download] Checking updates for ${biz} (current: ${currentVersion})`)
+    async (_event, { biz, currentVersion, installDir }: { biz: HoyoGameBiz; currentVersion?: string; installDir?: string }) => {
+      console.log(`[download] Checking updates for ${biz} (current: ${currentVersion ?? 'unknown'})`)
 
       // Use Twintail for update checks (more reliable)
       const latest = await getGameVersionInfo(biz)
@@ -107,12 +108,24 @@ export const registerDownloadHandlers = () => {
         }
       }
 
-      const hasUpdate = latest.version !== currentVersion
-      console.log(`[download] ${biz} - current: ${currentVersion}, latest: ${latest.version}, hasUpdate: ${hasUpdate}`)
+      const resolvedInstallDir = installDir
+        ? (installDir.startsWith('~') ? path.join(os.homedir(), installDir.slice(1)) : installDir)
+        : undefined
+
+      const detectedVersion = resolvedInstallDir
+        ? await detectHoyoInstalledVersion(resolvedInstallDir, biz)
+        : null
+
+      const effectiveCurrentVersion = detectedVersion || currentVersion || undefined
+      const hasUpdate = !!effectiveCurrentVersion && latest.version !== effectiveCurrentVersion
+
+      console.log(
+        `[download] ${biz} - current: ${effectiveCurrentVersion ?? 'unknown'}, latest: ${latest.version}, hasUpdate: ${hasUpdate}`
+      )
 
       return {
         hasUpdate,
-        currentVersion,
+        currentVersion: effectiveCurrentVersion,
         latestVersion: latest.version,
         downloadMode: latest.downloadMode,
       }
