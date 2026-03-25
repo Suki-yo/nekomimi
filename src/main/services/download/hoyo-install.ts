@@ -10,6 +10,24 @@ function readTextIfExists(filePath: string): string | null {
   return fs.readFileSync(filePath, 'utf-8')
 }
 
+function firstMatchingVersion(
+  contents: string | null,
+  patterns: RegExp[],
+): string | null {
+  if (!contents) {
+    return null
+  }
+
+  for (const pattern of patterns) {
+    const match = contents.match(pattern)
+    if (match?.[1]) {
+      return match[1]
+    }
+  }
+
+  return null
+}
+
 function detectGenshinVersion(installDir: string): string | null {
   const scriptVersion = readTextIfExists(
     path.join(installDir, 'GenshinImpact_Data', 'Persistent', 'ScriptVersion')
@@ -24,27 +42,41 @@ function detectGenshinVersion(installDir: string): string | null {
 }
 
 function detectStarRailVersion(installDir: string): string | null {
-  const binaryVersion = readTextIfExists(
-    path.join(installDir, 'StarRail_Data', 'StreamingAssets', 'BinaryVersion.bytes')
-  )
+  const directVersionPatterns = [
+    /OSPRODWin(\d+\.\d+\.\d+)/,
+    /\b(\d+\.\d+\.\d+)\b/,
+  ]
+  const installVersionPatterns = [
+    /,(\d+\.\d+)\.\d+/,
+    /\b(\d+\.\d+\.\d+)\b/,
+  ]
 
-  if (binaryVersion) {
-    const binaryMatch = binaryVersion.match(/OSPRODWin(\d+\.\d+\.\d+)/)
-    if (binaryMatch) {
-      return binaryMatch[1]
+  const directVersionFiles = [
+    path.join(installDir, 'version_info'),
+    path.join(installDir, 'StarRail_Data', 'StreamingAssets', 'BinaryVersion.bytes'),
+    path.join(installDir, 'StarRail_Data', 'Persistent', 'BinaryVersion.bytes'),
+  ]
+
+  for (const filePath of directVersionFiles) {
+    const version = firstMatchingVersion(readTextIfExists(filePath), directVersionPatterns)
+    if (version) {
+      return version
     }
   }
 
-  const installVersion = readTextIfExists(
-    path.join(installDir, 'StarRail_Data', 'Persistent', 'InstallVersion.bin')
-  )
+  const installVersionFiles = [
+    path.join(installDir, 'StarRail_Data', 'Persistent', 'InstallVersion.bin'),
+    path.join(installDir, 'InstallVersion.bin'),
+  ]
 
-  if (!installVersion) {
-    return null
+  for (const filePath of installVersionFiles) {
+    const version = firstMatchingVersion(readTextIfExists(filePath), installVersionPatterns)
+    if (version) {
+      return version.includes('.') && version.split('.').length === 2 ? `${version}.0` : version
+    }
   }
 
-  const installMatch = installVersion.match(/,(\d+\.\d+)\.\d+/)
-  return installMatch ? `${installMatch[1]}.0` : null
+  return null
 }
 
 function detectZzzVersion(installDir: string): string | null {

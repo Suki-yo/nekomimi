@@ -46,6 +46,12 @@ const WWMI_PROCESS_EXE_NAMES = ['Client-Win64-Shipping.exe']
 const WWMI_DLL_INIT_DELAY_MS = 500
 const WWMI_DIRECT_LAUNCH_ARGS = ['-dx11']
 const WWMI_KURO_DLL_OVERRIDES = 'lsteamclient=d;KRSDKExternal.exe=d'
+const STAR_RAIL_PATCH_CANDIDATES = [
+  path.join(process.cwd(), 'resources', 'hkrpg_patch.dll'),
+  path.join(process.resourcesPath || '', 'resources', 'hkrpg_patch.dll'),
+  path.join(process.resourcesPath || '', 'hkrpg_patch.dll'),
+  '/usr/lib/twintaillauncher/resources/hkrpg_patch.dll',
+]
 
 export function shouldUseXXMI(executablePath: string): boolean {
   const exeName = path.basename(executablePath).toLowerCase()
@@ -64,6 +70,47 @@ function getXXMIPaths() {
     launcherExe: path.join(paths.xxmi, 'Resources', 'Bin', 'XXMI Launcher.exe'),
     launcherPrefix: path.join(paths.xxmi, 'prefix'),
     runnersDir: paths.runners,
+  }
+}
+
+function ensureStarRailDbghelp(gameDirectory: string): { success: boolean; error?: string } {
+  const dbghelpPath = path.join(gameDirectory, 'dbghelp.dll')
+
+  try {
+    const stat = fs.statSync(dbghelpPath)
+    if (stat.isFile() && stat.size > 0) {
+      return { success: true }
+    }
+  } catch {
+    // Missing or unreadable; try to restore it from a known resource path.
+  }
+
+  const source = STAR_RAIL_PATCH_CANDIDATES.find((candidate) => {
+    try {
+      const stat = fs.statSync(candidate)
+      return stat.isFile() && stat.size > 0
+    } catch {
+      return false
+    }
+  })
+
+  if (!source) {
+    return {
+      success: false,
+      error: 'Star Rail requires dbghelp.dll (hkrpg_patch.dll) in the game directory, but no bundled patch resource was found.',
+    }
+  }
+
+  try {
+    fs.copyFileSync(source, dbghelpPath)
+    console.log(`[starrail] Restored dbghelp.dll from ${source}`)
+    return { success: true }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    return {
+      success: false,
+      error: `Failed to install Star Rail dbghelp.dll: ${message}`,
+    }
   }
 }
 
@@ -958,6 +1005,13 @@ export async function launchGameWithXXMI(
   // WWMI needs the dedicated Proton launch path so XXMI setup and the actual
   // game launch share the same Proton runtime instead of the generic umu path.
   const useUmu = !!gameId && !(importer === 'WWMI' && isProtonRunner)
+
+  if (exeName === 'starrail.exe') {
+    const dbghelpResult = ensureStarRailDbghelp(path.dirname(executablePath))
+    if (!dbghelpResult.success) {
+      return dbghelpResult
+    }
+  }
 
   // For non-HoYo games using a bundled wine runner (not a Proton runner), need the bundled runner
   if (!useUmu && !isProtonRunner) {
