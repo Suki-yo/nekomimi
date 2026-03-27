@@ -1970,7 +1970,7 @@ function App(): JSX.Element {
                 {modImportMenuGameId === game.id && (
                   <div className="tui-menu-list">
                     <button className="tui-menu-item" onClick={() => void handleAddMod(game, 'file')} type="button">
-                      import zip
+                      import archive
                     </button>
                     <button className="tui-menu-item" onClick={() => void handleAddMod(game, 'directory')} type="button">
                       import folder

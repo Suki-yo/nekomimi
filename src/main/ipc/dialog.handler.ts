@@ -93,7 +93,7 @@ export function registerDialogHandlers() {
     const result = await dialog.showOpenDialog({
       defaultPath: pickerRoot,
       properties: mode === 'directory' ? ["openDirectory"] : ["openFile"],
-      filters: mode === 'directory' ? undefined : [{ name: "Archives", extensions: ["zip", "7z"] }],
+      filters: mode === 'directory' ? undefined : [{ name: "Archives", extensions: ["zip", "7z", "rar"] }],
     });
 
     if (result.canceled || result.filePaths.length === 0) {

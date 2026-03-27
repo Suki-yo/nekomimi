@@ -12,6 +12,28 @@ function expandHome(p: string): string {
   return p.startsWith('~/') ? join(homedir(), p.slice(2)) : p
 }
 
+function resolveProtonCompatPaths(prefixPath: string): { winePrefix: string; compatDataPath: string } {
+  if (/\/pfx\/?$/.test(prefixPath)) {
+    return {
+      winePrefix: prefixPath,
+      compatDataPath: prefixPath.replace(/\/pfx\/?$/, ''),
+    }
+  }
+
+  const embeddedPrefix = join(prefixPath, 'pfx')
+  if (existsSync(embeddedPrefix)) {
+    return {
+      winePrefix: embeddedPrefix,
+      compatDataPath: prefixPath,
+    }
+  }
+
+  return {
+    winePrefix: prefixPath,
+    compatDataPath: prefixPath,
+  }
+}
+
 function shellSplit(input: string): string[] {
   const args: string[] = []
   let current = ''
@@ -79,32 +101,80 @@ interface ProcessInfo {
   args: string
 }
 
-function isProcessRunning(exeName: string): boolean {
-  if (!exeName) return false
-  try {
-    const result = execSync(`pgrep -fi "${exeName}"`, { stdio: 'pipe' })
-    return result.toString().trim().length > 0
-  } catch {
-    return false
-  }
+interface GameProcessTarget {
+  exeName: string
+  executablePath: string
 }
 
-function findPidByPattern(pattern: string): number | undefined {
-  if (!pattern) return undefined
+const WRAPPER_PROCESS_COMMANDS = new Set([
+  'bash',
+  'python',
+  'python3',
+  'pv-adverb',
+  'rundll32.exe',
+  'srt-bwrap',
+  'steam.exe',
+  'umu-run',
+  'wine',
+  'wine64',
+  'wineserver',
+])
 
-  try {
-    const output = execSync(`pgrep -fi "${pattern}"`, { stdio: 'pipe' }).toString().trim()
-    if (!output) return undefined
+function normalizeProcessValue(value: string): string {
+  return value.toLowerCase().replace(/\\/g, '/')
+}
 
-    const pids = output
-      .split('\n')
-      .map((value) => Number(value.trim()))
-      .filter((value) => Number.isFinite(value) && value > 0)
+function stripExeExtension(value: string): string {
+  return value.replace(/\.[^.]+$/, '')
+}
 
-    return pids.at(-1)
-  } catch {
-    return undefined
+function isWrapperProcess(proc: ProcessInfo): boolean {
+  const command = normalizeProcessValue(proc.command).split('/').pop() || ''
+  if (WRAPPER_PROCESS_COMMANDS.has(command)) {
+    return true
   }
+
+  const args = normalizeProcessValue(proc.args)
+  return (
+    args.includes('/pressure-vessel/') ||
+    args.includes(' waitforexitandrun ') ||
+    args.includes('/proton waitforexitandrun ') ||
+    args.includes('/steam.exe ') ||
+    args.includes(' setupapi,installhinfsection ') ||
+    args.includes('/wine.inf')
+  )
+}
+
+function matchesGameCommand(command: string, exeName: string): boolean {
+  const normalizedCommand = normalizeProcessValue(command).split('/').pop() || ''
+  const normalizedExeName = normalizeProcessValue(exeName)
+  const exeStem = stripExeExtension(normalizedExeName)
+
+  if (normalizedCommand === normalizedExeName || normalizedCommand === exeStem) {
+    return true
+  }
+
+  // Wine often truncates Linux-side comm names to 15 chars.
+  return exeStem.length > 15 && normalizedCommand === exeStem.slice(0, 15)
+}
+
+function matchesGameArgs(args: string, target: GameProcessTarget): boolean {
+  const normalizedArgs = normalizeProcessValue(args)
+  const normalizedExecutablePath = normalizeProcessValue(target.executablePath)
+  const normalizedExeName = normalizeProcessValue(target.exeName)
+
+  return (
+    normalizedArgs.includes(normalizedExecutablePath) ||
+    normalizedArgs.includes(`/${normalizedExeName}`) ||
+    normalizedArgs.includes(`\\${normalizedExeName}`) ||
+    normalizedArgs.includes(` ${normalizedExeName}`) ||
+    normalizedArgs.endsWith(normalizedExeName)
+  )
+}
+
+function isProcessRunning(target: GameProcessTarget): boolean {
+  if (!target.exeName) return false
+  return listProcesses().some((proc) => matchesGameProcess(proc, target))
 }
 
 function isPidRunning(pid?: number): boolean {
@@ -158,17 +228,14 @@ function getDescendantPids(rootPid: number, processes: ProcessInfo[]): Set<numbe
   return descendants
 }
 
-function matchesGameProcess(proc: ProcessInfo, running: RunningGame): boolean {
-  const args = proc.args.toLowerCase()
-  const command = proc.command.toLowerCase()
-  const exeName = running.exeName.toLowerCase()
-  const executablePath = running.executablePath.toLowerCase()
+function matchesGameProcess(proc: ProcessInfo, target: GameProcessTarget): boolean {
+  if (isWrapperProcess(proc)) {
+    return false
+  }
 
   return (
-    command === exeName ||
-    command.endsWith(`/${exeName}`) ||
-    args.includes(executablePath) ||
-    args.includes(exeName)
+    matchesGameCommand(proc.command, target.exeName) ||
+    matchesGameArgs(proc.args, target)
   )
 }
 
@@ -209,8 +276,7 @@ function resolveGamePid(running: RunningGame, processes: ProcessInfo[]): number 
     return globalMatch.pid
   }
 
-  const exeStem = running.exeName.replace(/\.[^.]+$/, '')
-  return findPidByPattern(running.exeName) ?? findPidByPattern(exeStem)
+  return undefined
 }
 
 function finalizeRunningGame(gameId: string, running: RunningGame) {
@@ -306,7 +372,6 @@ function buildLaunchCommand(game: Game, useXXMI: boolean): { command: string; ar
   const runnerPath = expandHome(game.runner.path)
 
   const env: Record<string, string> = {
-    WINEPREFIX: prefix,
     ...game.launch.env,
   }
 
@@ -314,11 +379,12 @@ function buildLaunchCommand(game: Game, useXXMI: boolean): { command: string; ar
   let args: string[]
 
   if (game.runner.type === 'proton') {
+    const { winePrefix, compatDataPath } = resolveProtonCompatPaths(prefix)
     const steamrt = findSteamrt()
-    const prefixParent = prefix.replace(/\/pfx\/?$/, '')
-    const shaderCache = join(prefixParent, 'shadercache')
+    const shaderCache = join(compatDataPath, 'shadercache')
     mkdirSync(shaderCache, { recursive: true })
     env.SteamOS = '1'
+    env.WINEPREFIX = winePrefix
 
     if (steamrt) {
       // Use Steam Runtime (pressure-vessel) + proton script directly — matches Twintail's approach
@@ -332,14 +398,13 @@ function buildLaunchCommand(game: Game, useXXMI: boolean): { command: string; ar
       env.PROTONFIXES_DISABLE = '1'
       env.STEAM_COMPAT_APP_ID = STEAM_APP_IDS[game.slug] || '0'
       env.STEAM_COMPAT_CLIENT_INSTALL_PATH = ''
-      env.STEAM_COMPAT_DATA_PATH = prefixParent
+      env.STEAM_COMPAT_DATA_PATH = compatDataPath
       env.STEAM_COMPAT_INSTALL_PATH = game.directory
-      env.STEAM_COMPAT_LIBRARY_PATHS = `${game.directory}:${prefix}`
+      env.STEAM_COMPAT_LIBRARY_PATHS = `${game.directory}:${winePrefix}`
       env.STEAM_COMPAT_SHADER_PATH = shaderCache
       env.STEAM_COMPAT_TOOL_PATHS = runnerPath
       env.STEAM_ZENITY = '/usr/bin/zenity'
       env.WINEARCH = 'win64'
-      env.WINEPREFIX = prefix
     } else {
       // Fallback to umu-run if Steam Runtime not found
       command = 'umu-run'
@@ -348,11 +413,12 @@ function buildLaunchCommand(game: Game, useXXMI: boolean): { command: string; ar
       if (game.slug === 'wuwa') {
         env.STEAM_COMPAT_APP_ID = STEAM_APP_IDS[game.slug]
       }
-      env.STEAM_COMPAT_DATA_PATH = prefixParent
+      env.STEAM_COMPAT_DATA_PATH = compatDataPath
       args = [game.executable]
     }
   } else if (game.runner.type === 'wine') {
     command = 'wine'
+    env.WINEPREFIX = prefix
     args = [game.executable]
   } else {
     command = game.executable
@@ -407,7 +473,7 @@ export async function launchGame(
 
   const exeName = game.executable.split(/[/\\]/).pop() || game.executable
 
-  if (isProcessRunning(exeName)) {
+  if (isProcessRunning({ exeName, executablePath: game.executable })) {
     console.log(`[launch] ${exeName} is already running`)
     return { success: false, error: 'Game is already running' }
   }

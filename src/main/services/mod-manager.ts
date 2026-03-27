@@ -737,6 +737,28 @@ function linuxToWinePath(linuxPath: string): string {
   return 'Z:' + linuxPath.replace(/\//g, '\\')
 }
 
+function resolveProtonCompatPaths(prefixPath: string): { winePrefix: string; compatDataPath: string } {
+  if (/\/pfx\/?$/.test(prefixPath)) {
+    return {
+      winePrefix: prefixPath,
+      compatDataPath: prefixPath.replace(/\/pfx\/?$/, ''),
+    }
+  }
+
+  const embeddedPrefix = path.join(prefixPath, 'pfx')
+  if (fs.existsSync(embeddedPrefix)) {
+    return {
+      winePrefix: embeddedPrefix,
+      compatDataPath: prefixPath,
+    }
+  }
+
+  return {
+    winePrefix: prefixPath,
+    compatDataPath: prefixPath,
+  }
+}
+
 export function isImporterInstalled(importer: string): boolean {
   const { xxmiDir } = getXXMIPaths()
   const dllPath = path.join(xxmiDir, importer, 'd3d11.dll')
@@ -909,9 +931,10 @@ function buildProtonLaunchSpec(
   gameDirectory: string,
   gameEnv: Record<string, string>,
   steamAppId: string,
-  windowsOverrides?: string
+  windowsOverrides?: string,
+  disableProtonFixes = true
 ): ProtonLaunchSpec {
-  const prefixParent = winePrefix.replace(/\/pfx\/?$/, '')
+  const { winePrefix: normalizedWinePrefix, compatDataPath } = resolveProtonCompatPaths(winePrefix)
   const steamrt = findSteamrt()
 
   const env: NodeJS.ProcessEnv = {
@@ -919,11 +942,16 @@ function buildProtonLaunchSpec(
     ...gameEnv,
     SteamOS: '1',
     PROTONPATH: runnerPath,
-    WINEPREFIX: winePrefix,
-    STEAM_COMPAT_DATA_PATH: prefixParent,
+    WINEPREFIX: normalizedWinePrefix,
+    STEAM_COMPAT_DATA_PATH: compatDataPath,
     STEAM_COMPAT_APP_ID: steamAppId,
-    PROTONFIXES_DISABLE: '1',
     WINEARCH: 'win64',
+  }
+
+  if (disableProtonFixes) {
+    env.PROTONFIXES_DISABLE = '1'
+  } else {
+    delete env.PROTONFIXES_DISABLE
   }
 
   if (windowsOverrides) {
@@ -931,7 +959,7 @@ function buildProtonLaunchSpec(
   }
 
   if (steamrt) {
-    const shaderCache = path.join(prefixParent, 'shadercache')
+    const shaderCache = path.join(compatDataPath, 'shadercache')
     fs.mkdirSync(shaderCache, { recursive: true })
 
     return {
@@ -947,7 +975,7 @@ function buildProtonLaunchSpec(
         ...env,
         STEAM_COMPAT_CLIENT_INSTALL_PATH: '',
         STEAM_COMPAT_INSTALL_PATH: gameDirectory,
-        STEAM_COMPAT_LIBRARY_PATHS: `${gameDirectory}:${winePrefix}`,
+        STEAM_COMPAT_LIBRARY_PATHS: `${gameDirectory}:${normalizedWinePrefix}`,
         STEAM_COMPAT_SHADER_PATH: shaderCache,
         STEAM_COMPAT_TOOL_PATHS: runnerPath,
         STEAM_ZENITY: '/usr/bin/zenity',
@@ -1002,6 +1030,7 @@ export async function launchGameWithXXMI(
   const exeName = path.basename(executablePath).toLowerCase()
   const gameId = GAME_TO_UMU_GAMEID[exeName]
   const isProtonRunner = fs.existsSync(path.join(runnerPath, 'proton'))
+  const { winePrefix: normalizedWinePrefix, compatDataPath } = resolveProtonCompatPaths(winePrefix)
   // WWMI needs the dedicated Proton launch path so XXMI setup and the actual
   // game launch share the same Proton runtime instead of the generic umu path.
   const useUmu = !!gameId && !(importer === 'WWMI' && isProtonRunner)
@@ -1057,8 +1086,8 @@ export async function launchGameWithXXMI(
         ...gameEnv,
         GAMEID: gameId,
         PROTONPATH: runnerPath,
-        WINEPREFIX: winePrefix,
-        STEAM_COMPAT_DATA_PATH: winePrefix.replace(/\/pfx\/?$/, ''),
+        WINEPREFIX: normalizedWinePrefix,
+        STEAM_COMPAT_DATA_PATH: compatDataPath,
         WINEDLLOVERRIDES: mergedOverrides,
       }
       console.log(`[xxmi] umu-run env: WINEDLLOVERRIDES=${env.WINEDLLOVERRIDES} STUB_WINTRUST=${gameEnv.STUB_WINTRUST} BLOCK_FIRST_REQ=${gameEnv.BLOCK_FIRST_REQ} STEAM_COMPAT_CONFIG=${gameEnv.STEAM_COMPAT_CONFIG}`)
@@ -1074,8 +1103,8 @@ export async function launchGameWithXXMI(
         ...process.env,
         ...gameEnv,
         PROTONPATH: runnerPath,
-        WINEPREFIX: winePrefix,
-        STEAM_COMPAT_DATA_PATH: winePrefix.replace(/\/pfx\/?$/, ''),
+        WINEPREFIX: normalizedWinePrefix,
+        STEAM_COMPAT_DATA_PATH: compatDataPath,
         GAMEID: gameId || '0',
         STEAM_COMPAT_APP_ID: GAME_TO_STEAM_APPID[exeName] || '0',
         PROTONFIXES_DISABLE: '1',
@@ -1092,7 +1121,8 @@ export async function launchGameWithXXMI(
           gameDirectory,
           gameEnv,
           steamAppId,
-          mergeWindowsOverrides(WWMI_KURO_DLL_OVERRIDES, gameEnv.WINEDLLOVERRIDES)
+          mergeWindowsOverrides(WWMI_KURO_DLL_OVERRIDES, gameEnv.WINEDLLOVERRIDES),
+          false
         )
 
         console.log(
@@ -1284,12 +1314,12 @@ export async function installMod(importer: string, sourcePath: string): Promise<
   }
 
   const ext = path.extname(sourcePath).toLowerCase()
-  if (ext !== '.zip' && ext !== '.7z') {
-    return { success: false, error: 'Only .zip, .7z, or folder sources are supported' }
+  if (ext !== '.zip' && ext !== '.7z' && ext !== '.rar') {
+    return { success: false, error: 'Only .zip, .7z, .rar, or folder sources are supported' }
   }
 
   return new Promise((resolve) => {
-    const extract = ext === '.7z'
+    const extract = ext === '.7z' || ext === '.rar'
       ? spawn('7z', ['x', '-y', `-o${destPath}`, sourcePath], { stdio: 'inherit' })
       : spawn('unzip', ['-o', sourcePath, '-d', destPath], { stdio: 'inherit' })
 

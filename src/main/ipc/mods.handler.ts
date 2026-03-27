@@ -128,7 +128,7 @@ export const registerModsHandlers = () => {
     return { success }
   })
 
-  // Install a mod from zip
+  // Install a mod from archive or folder
   ipcMain.handle('mods:install', async (_event, { importer, sourcePath }: { importer: string; sourcePath: string }) => {
     console.log(`[mods] Installing mod from ${sourcePath} to ${importer}`)
     ensureModsWatcher(importer)
