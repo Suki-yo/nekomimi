@@ -72,6 +72,71 @@ function validateStandaloneWuwaConfig(game: Game): string | null {
   return null
 }
 
+const GENSHIN_FPS_UNLOCK_SCRIPT = '/home/jyq/dev/suki-yo/nekomimi/dev-data/fps_unlock/start-genshin-keqing.sh'
+const DEFAULT_GENSHIN_FPS_UNLOCK_FPS = 200
+
+function isGenshinGame(game: Game): boolean {
+  return game.slug === 'genshinimpact' || game.executable.split(/[/\\]/).pop() === 'GenshinImpact.exe'
+}
+
+function isGenshinFpsUnlockCommand(command: string): boolean {
+  return command.trim().startsWith(GENSHIN_FPS_UNLOCK_SCRIPT)
+}
+
+function normalizeGenshinFps(value: number | undefined): number {
+  if (!Number.isFinite(value)) {
+    return DEFAULT_GENSHIN_FPS_UNLOCK_FPS
+  }
+
+  return Math.max(30, Math.round(value as number))
+}
+
+function resolvePreLaunchCommands(game: Game): string[] {
+  const commands = [...(game.launch.preLaunch || [])]
+
+  if (!isGenshinGame(game)) {
+    return commands
+  }
+
+  const nonUnlockerCommands = commands.filter((command) => !isGenshinFpsUnlockCommand(command))
+
+  const fpsUnlock = game.mods?.fpsUnlock
+  if (fpsUnlock?.enabled === false) {
+    return nonUnlockerCommands
+  }
+
+  // The unlocker must start after XXMI/vanilla launch begins; starting it here can
+  // interfere with the game bootstrap under the shared Proton prefix.
+  return nonUnlockerCommands
+}
+
+function resolveGenshinFpsUnlockCommand(game: Game): string | null {
+  if (!isGenshinGame(game)) {
+    return null
+  }
+
+  const fpsUnlock = game.mods?.fpsUnlock
+  if (fpsUnlock?.enabled === false) {
+    return null
+  }
+
+  return `${GENSHIN_FPS_UNLOCK_SCRIPT} ${normalizeGenshinFps(fpsUnlock?.fps)}`
+}
+
+function launchOptionalGenshinFpsUnlock(game: Game): void {
+  const command = resolveGenshinFpsUnlockCommand(game)
+  if (!command) {
+    return
+  }
+
+  console.log(`[launch] Starting Genshin FPS unlocker: ${command}`)
+  try {
+    execSync(command, { stdio: 'inherit' })
+  } catch (error) {
+    console.warn('[launch] Genshin FPS unlocker failed to start:', error)
+  }
+}
+
 interface RunningGame {
   exeName: string
   executablePath: string
@@ -505,7 +570,7 @@ export async function launchGame(
     }
   }
 
-  for (const cmd of game.launch.preLaunch || []) {
+  for (const cmd of resolvePreLaunchCommands(game)) {
     console.log(`[launch] Running pre-launch: ${cmd}`)
     try {
       execSync(cmd, { stdio: 'inherit' })
@@ -530,6 +595,8 @@ export async function launchGame(
     if (!loaderResult.success) {
       return { success: false, error: loaderResult.error }
     }
+
+    launchOptionalGenshinFpsUnlock(game)
 
     runningProcesses.set(gameId, {
       exeName,
@@ -571,6 +638,8 @@ export async function launchGame(
   // Unref the process so the parent doesn't wait for it and can exit cleanly
   // This prevents the launcher process from becoming a zombie
   proc.unref()
+
+  launchOptionalGenshinFpsUnlock(game)
 
   runningProcesses.set(gameId, {
     exeName,

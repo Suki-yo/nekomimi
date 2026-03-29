@@ -77,6 +77,7 @@ interface GameConfigDraft {
   prefix: string
   coverImage?: string
   modsEnabled: boolean
+  genshinFpsUnlock: string
 }
 
 interface LaunchPreparationState {
@@ -104,6 +105,8 @@ type ModImportMode = 'file' | 'directory'
 
 const EMPTY_MODS: Mod[] = []
 const SIDEBAR_MOD_PREVIEW_LIMIT = 4
+const GENSHIN_FPS_UNLOCK_OPTIONS = ['off', '60', '90', '120', '144', '165', '200', '240'] as const
+const DEFAULT_GENSHIN_FPS_UNLOCK_FPS = 200
 
 const DEFAULT_LAUNCH: LaunchConfig = {
   env: {},
@@ -134,11 +137,18 @@ const CATALOG_ENTRIES: CatalogEntry[] = [
         STEAM_COMPAT_CONFIG: 'noxalia',
         WINEDLLOVERRIDES: 'lsteamclient=d;KRSDKExternal.exe=d',
       },
-      preLaunch: [],
+      preLaunch: ['/home/jyq/dev/suki-yo/nekomimi/dev-data/fps_unlock/start-genshin-keqing.sh'],
       postLaunch: [],
       args: '',
     },
-    mods: { enabled: true, importer: 'GIMI' },
+    mods: {
+      enabled: true,
+      importer: 'GIMI',
+      fpsUnlock: {
+        enabled: true,
+        fps: DEFAULT_GENSHIN_FPS_UNLOCK_FPS,
+      },
+    },
     biz: 'genshin',
   },
   {
@@ -257,6 +267,24 @@ function getParentDirectory(filePath: string): string {
   const normalized = filePath.replace(/\\/g, '/')
   const index = normalized.lastIndexOf('/')
   return index === -1 ? filePath : normalized.slice(0, index)
+}
+
+function isGenshinGame(game: Pick<Game, 'slug' | 'executable'>): boolean {
+  return game.slug === 'genshinimpact' || game.executable.split(/[/\\]/).pop() === 'GenshinImpact.exe'
+}
+
+function getGenshinFpsUnlockDraftValue(game: Game): string {
+  if (!isGenshinGame(game)) {
+    return 'off'
+  }
+
+  const fpsUnlock = game.mods.fpsUnlock
+  if (fpsUnlock?.enabled === false) {
+    return 'off'
+  }
+
+  const fps = fpsUnlock?.fps ?? DEFAULT_GENSHIN_FPS_UNLOCK_FPS
+  return String(fps)
 }
 
 function createProgressBar(percent: number, width = 18): string {
@@ -591,6 +619,7 @@ function App(): JSX.Element {
       prefix: selectedGame.runner.prefix,
       coverImage: selectedGame.coverImage,
       modsEnabled: selectedGame.mods.enabled,
+      genshinFpsUnlock: getGenshinFpsUnlockDraftValue(selectedGame),
     })
   }, [selectedGame])
 
@@ -1333,6 +1362,16 @@ function App(): JSX.Element {
     setSavingConfig(true)
     try {
       const runner = runners.find((item) => item.path === configDraft.runnerPath)
+      const fpsUnlock =
+        isGenshinGame(selectedGame)
+          ? {
+              enabled: configDraft.genshinFpsUnlock !== 'off',
+              fps:
+                configDraft.genshinFpsUnlock === 'off'
+                  ? selectedGame.mods.fpsUnlock?.fps ?? DEFAULT_GENSHIN_FPS_UNLOCK_FPS
+                  : Number(configDraft.genshinFpsUnlock),
+            }
+          : selectedGame.mods.fpsUnlock
       const updated = await updateGame(selectedGame.id, {
         name: configDraft.name,
         coverImage: configDraft.coverImage,
@@ -1346,6 +1385,7 @@ function App(): JSX.Element {
           ...selectedGame.mods,
           enabled: configDraft.modsEnabled,
           importer: getGameImporter(selectedGame) ?? undefined,
+          fpsUnlock,
         },
       })
       setConfigDraft({
@@ -1354,6 +1394,7 @@ function App(): JSX.Element {
         prefix: updated.runner.prefix,
         coverImage: updated.coverImage,
         modsEnabled: updated.mods.enabled,
+        genshinFpsUnlock: getGenshinFpsUnlockDraftValue(updated),
       })
       reportStatus(`saved config for ${updated.name.toLowerCase()}`, { type: 'config', gameId: updated.id })
     } finally {
@@ -2037,6 +2078,22 @@ function App(): JSX.Element {
               <option value="disabled">disabled</option>
             </select>
           </label>
+          {isGenshinGame(game) && (
+            <label className="tui-field">
+              <span>fps unlock</span>
+              <select
+                className="tui-select"
+                value={configDraft.genshinFpsUnlock}
+                onChange={(event) => setConfigDraft({ ...configDraft, genshinFpsUnlock: event.target.value })}
+              >
+                {GENSHIN_FPS_UNLOCK_OPTIONS.map((option) => (
+                  <option key={option} value={option}>
+                    {option === 'off' ? 'off' : `${option} fps`}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
         </div>
 
         <div className="tui-config-section">
