@@ -36,10 +36,14 @@ function normalizeGenshinFps(value: number | undefined): number {
   return Math.max(30, Math.round(value as number))
 }
 
-function resolveGenshinFpsUnlockScriptPath(): string | null {
+function resolveGenshinFpsUnlockScriptPath(game: Game): string | null {
   const override = process.env.NEKOMIMI_GENSHIN_FPS_UNLOCK_SCRIPT
+  const runnerManagedBase = game.runner.path
+    ? join(dirname(dirname(game.runner.path)), 'fps_unlock', GENSHIN_FPS_UNLOCK_SCRIPT_NAME)
+    : null
   const candidates = [
     override,
+    runnerManagedBase,
     join(getPathsInstance().base, 'fps_unlock', GENSHIN_FPS_UNLOCK_SCRIPT_NAME),
     join(process.resourcesPath, 'fps_unlock', GENSHIN_FPS_UNLOCK_SCRIPT_NAME),
     join(process.cwd(), 'dev-data', 'fps_unlock', GENSHIN_FPS_UNLOCK_SCRIPT_NAME),
@@ -54,7 +58,10 @@ function resolveGenshinFpsUnlockScriptPath(): string | null {
   return null
 }
 
-function resolveGenshinFpsUnlockLaunch(game: Game): { scriptPath: string; fps: number } | null {
+function resolveGenshinFpsUnlockLaunch(
+  game: Game,
+  options?: { usingXXMI?: boolean }
+): { scriptPath: string; fps: number } | null {
   if (!isGenshinGame(game)) {
     return null
   }
@@ -64,7 +71,7 @@ function resolveGenshinFpsUnlockLaunch(game: Game): { scriptPath: string; fps: n
     return null
   }
 
-  const scriptPath = resolveGenshinFpsUnlockScriptPath()
+  const scriptPath = resolveGenshinFpsUnlockScriptPath(game)
   if (!scriptPath) {
     console.warn('[launch] Genshin FPS unlocker script not found; skipping optional hook')
     return null
@@ -134,15 +141,21 @@ export function resolvePreLaunchCommands(game: Game): string[] {
   return commands.filter((command) => !isLegacyGenshinFpsUnlockCommand(command))
 }
 
-export function runPostBootstrapHooks(game: Game): void {
-  const unlockLaunch = resolveGenshinFpsUnlockLaunch(game)
+export function runPostBootstrapHooks(game: Game, options?: { usingXXMI?: boolean }): void {
+  const unlockLaunch = resolveGenshinFpsUnlockLaunch(game, options)
   if (!unlockLaunch) {
     return
   }
 
   console.log(`[launch] Starting Genshin FPS unlocker: ${unlockLaunch.scriptPath} ${unlockLaunch.fps}`)
   try {
-    execFileSync(unlockLaunch.scriptPath, [String(unlockLaunch.fps)], { stdio: 'inherit' })
+    execFileSync(unlockLaunch.scriptPath, [String(unlockLaunch.fps)], {
+      stdio: 'inherit',
+      env: {
+        ...process.env,
+        NEKOMIMI_GENSHIN_FPS_ATTACH_ONLY: options?.usingXXMI ? '1' : '0',
+      },
+    })
   } catch (error) {
     console.warn('[launch] Genshin FPS unlocker failed to start:', error)
   }

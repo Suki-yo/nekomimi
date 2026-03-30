@@ -276,7 +276,7 @@ export async function launchGame(
       return { success: false, error: loaderResult.error }
     }
 
-    runPostBootstrapHooks(game)
+    runPostBootstrapHooks(game, { usingXXMI: true })
 
     processMonitor.set(gameId, {
       exeName,
@@ -321,7 +321,7 @@ export async function launchGame(
   // This prevents the launcher process from becoming a zombie
   proc.unref()
 
-  runPostBootstrapHooks(game)
+  runPostBootstrapHooks(game, { usingXXMI: false })
 
   processMonitor.set(gameId, {
     exeName,
