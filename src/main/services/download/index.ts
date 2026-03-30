@@ -11,7 +11,7 @@ import { fetchEndfieldGame, fetchEndfieldVersionInfo } from './endfield-api'
 import { fetchWuwaVersionInfo, fetchWuwaManifest, detectWuwaInstalledVersion } from './wuwa-api'
 import { startWuwaDownload as _startWuwaDownload } from './wuwa-download'
 import { downloadSophonGame } from './sophon'
-import { streamingMd5 } from './utils'
+import { downloadStream, streamingMd5 } from './utils'
 import type {
   HoyoGameBiz,
   HoyoVersionInfo,
@@ -82,84 +82,44 @@ async function downloadFile(
   destPath: string,
   onProgress?: (percent: number, speed: number) => void
 ): Promise<{ success: boolean; error?: string }> {
-  return new Promise((resolve) => {
+  try {
     let downloaded = 0
     let lastReportTime = Date.now()
     let lastReportBytes = 0
 
-    const followRedirect = (currentUrl: string, redirectCount = 0) => {
-      if (redirectCount > 5) {
-        resolve({ success: false, error: 'Too many redirects' })
-        return
-      }
+    await downloadStream(url, {
+      onResponse: (response, totalSize) => new Promise<void>((resolve, reject) => {
+        const fileStream = fs.createWriteStream(destPath)
 
-      https
-        .get(
-          currentUrl,
-          {
-            headers: {
-              'User-Agent': 'Mozilla/5.0',
-            },
-          },
-          (response) => {
-            if (response.statusCode === 301 || response.statusCode === 302) {
-              const location = response.headers.location
-              if (location) {
-                followRedirect(location, redirectCount + 1)
-                return
-              }
+        response.on('data', (chunk: Buffer) => {
+          downloaded += chunk.length
+
+          const now = Date.now()
+          if (now - lastReportTime >= 500) {
+            const timeDiff = (now - lastReportTime) / 1000
+            const bytesDiff = downloaded - lastReportBytes
+            const speed = bytesDiff / timeDiff
+
+            if (totalSize > 0 && onProgress) {
+              onProgress(Math.round((downloaded / totalSize) * 100), speed)
             }
 
-            if (response.statusCode !== 200) {
-              resolve({ success: false, error: `HTTP ${response.statusCode}` })
-              return
-            }
-
-            const totalSize = parseInt(response.headers['content-length'] || '0', 10)
-            const fileStream = fs.createWriteStream(destPath)
-
-            response.on('data', (chunk: Buffer) => {
-              downloaded += chunk.length
-
-              const now = Date.now()
-              if (now - lastReportTime >= 500) {
-                const timeDiff = (now - lastReportTime) / 1000
-                const bytesDiff = downloaded - lastReportBytes
-                const speed = bytesDiff / timeDiff
-
-                if (totalSize > 0 && onProgress) {
-                  onProgress(Math.round((downloaded / totalSize) * 100), speed)
-                }
-
-                lastReportTime = now
-                lastReportBytes = downloaded
-              }
-            })
-
-            response.pipe(fileStream)
-
-            fileStream.on('finish', () => {
-              fileStream.close()
-              resolve({ success: true })
-            })
-
-            fileStream.on('error', (err) => {
-              resolve({ success: false, error: err.message })
-            })
-
-            response.on('error', (err) => {
-              fileStream.destroy()
-              resolve({ success: false, error: err.message })
-            })
+            lastReportTime = now
+            lastReportBytes = downloaded
           }
-        )
-        .on('error', (err) => {
-          resolve({ success: false, error: err.message })
         })
-    }
 
-    followRedirect(url)
-  })
+        response.pipe(fileStream)
+        fileStream.once('finish', () => resolve())
+        fileStream.once('error', reject)
+        response.once('error', reject)
+      }),
+    })
+
+    return { success: true }
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) }
+  }
 }
 
 // Extract zip file (uses 7z for split-archive support, falls back to unzip)

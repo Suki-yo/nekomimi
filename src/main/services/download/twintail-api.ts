@@ -1,10 +1,8 @@
 // Twintail Launcher manifest client
 // Fetches game version info from Twintail's manifest repository
 
-import * as https from 'https'
-import type { ClientRequest } from 'http'
 import type { HoyoGameBiz, HoyoVersionInfo } from '../../../shared/types/download'
-import { USER_AGENT } from './utils'
+import { DownloadHttpError, fetchJSON } from './utils'
 
 // Twintail manifest URLs from GitHub
 const TWINTAIL_MANIFEST_URLS: Record<HoyoGameBiz, string> = {
@@ -12,9 +10,6 @@ const TWINTAIL_MANIFEST_URLS: Record<HoyoGameBiz, string> = {
   starrail: 'https://raw.githubusercontent.com/TwintailTeam/game-manifests/main/hkrpg_global.json',
   zzz: 'https://raw.githubusercontent.com/TwintailTeam/game-manifests/main/nap_global.json',
 }
-
-// Configuration
-const REQUEST_TIMEOUT_MS = 15000 // 15 seconds
 
 // Twintail manifest response structure
 interface TwintailGameVersion {
@@ -64,73 +59,16 @@ class TwintailApiError extends Error {
   }
 }
 
-// Fetch JSON from URL with timeout
-async function fetchJSON<T>(url: string): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timeoutId = setTimeout(() => {
-      const req = ongoingRequest
-      if (req) {
-        req.destroy()
-      }
-      reject(new TwintailApiError(`Request timeout after ${REQUEST_TIMEOUT_MS}ms`))
-    }, REQUEST_TIMEOUT_MS)
+function toTwintailApiError(err: unknown): TwintailApiError {
+  if (err instanceof TwintailApiError) {
+    return err
+  }
 
-    let ongoingRequest: ClientRequest | null = null
+  if (err instanceof DownloadHttpError) {
+    return new TwintailApiError(err.message, err.statusCode, err.responseBody)
+  }
 
-    ongoingRequest = https.get(
-      url,
-      {
-        headers: {
-          'User-Agent': USER_AGENT,
-          Accept: 'application/json, text/plain, */*',
-        },
-      },
-      (response) => {
-        clearTimeout(timeoutId)
-
-        // Check for HTTP errors
-        if (response.statusCode && response.statusCode >= 400) {
-          let errorBody = ''
-          response.on('data', (chunk) => (errorBody += chunk))
-          response.on('end', () => {
-            reject(
-              new TwintailApiError(
-                `HTTP ${response.statusCode}: ${response.statusMessage}`,
-                response.statusCode,
-                errorBody.substring(0, 500)
-              )
-            )
-          })
-          return
-        }
-
-        let data = ''
-        response.on('data', (chunk) => (data += chunk))
-        response.on('end', () => {
-          try {
-            // Check if response looks like HTML (error page)
-            const trimmedData = data.trim()
-            if (trimmedData.startsWith('<!') || trimmedData.startsWith('<html')) {
-              reject(new TwintailApiError('Received HTML instead of JSON', response.statusCode))
-              return
-            }
-
-            const parsed = JSON.parse(data)
-            resolve(parsed)
-          } catch (err) {
-            reject(new TwintailApiError(`Failed to parse JSON: ${err}`))
-          }
-        })
-      }
-    )
-
-    ongoingRequest.on('error', (err: Error) => {
-      clearTimeout(timeoutId)
-      reject(new TwintailApiError(`Network error: ${err.message}`))
-    })
-
-    ongoingRequest.end()
-  })
+  return new TwintailApiError(err instanceof Error ? err.message : String(err))
 }
 
 // Fetch Twintail manifest for a game
@@ -153,11 +91,8 @@ export async function fetchTwintailManifest(biz: HoyoGameBiz): Promise<TwintailM
     console.log(`[twintail] Found ${manifest.game_versions.length} versions for ${biz}`)
     return manifest
   } catch (err) {
-    if (err instanceof TwintailApiError) {
-      console.error(`[twintail] Failed to fetch ${biz}: ${err.message}`)
-    } else {
-      console.error(`[twintail] Failed to fetch ${biz} manifest:`, err)
-    }
+    const apiErr = toTwintailApiError(err)
+    console.error(`[twintail] Failed to fetch ${biz}: ${apiErr.message}`)
     return null
   }
 }

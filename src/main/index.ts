@@ -1,14 +1,35 @@
- import { app, BrowserWindow, shell, protocol } from 'electron'
+import { app, BrowserWindow, shell, protocol } from 'electron'
 import * as path from 'path'
 import * as fs from 'fs'
 import { initDatabase, closeDatabase } from './services/database'
 import { loadAppConfig } from './services/config'
+import { runGameConfigMigrations } from './services/game-config-migration'
 import { initPaths } from './services/paths'
 import { registerAllHandlers } from './ipc'
 
 let mainWindow: BrowserWindow | null = null
-const isDev = !app.isPackaged
+const shouldPreferDevServer = !app.isPackaged
 const DEV_SERVER_URL = 'http://127.0.0.1:5175'
+
+function getRendererPath(): string {
+  return path.join(__dirname, '../renderer/index.html')
+}
+
+async function loadRenderer(window: BrowserWindow): Promise<void> {
+  if (shouldPreferDevServer) {
+    try {
+      console.log('Loading dev URL', DEV_SERVER_URL)
+      await window.loadURL(DEV_SERVER_URL)
+      return
+    } catch (error) {
+      console.warn('Dev server unavailable, falling back to built renderer:', error)
+    }
+  }
+
+  const rendererPath = getRendererPath()
+  console.log('Loading renderer file', rendererPath)
+  await window.loadFile(rendererPath)
+}
 
 // Register custom protocol before app ready
 protocol.registerSchemesAsPrivileged([
@@ -25,10 +46,11 @@ protocol.registerSchemesAsPrivileged([
 
 const createWindow = async (): Promise<void> => {
   console.log('Starting Nekomimi main process', {
-    isDev,
+    shouldPreferDevServer,
     cwd: process.cwd(),
     dirname: __dirname,
     devServerUrl: DEV_SERVER_URL,
+    rendererPath: getRendererPath(),
   })
 
   initPaths()
@@ -37,6 +59,8 @@ const createWindow = async (): Promise<void> => {
   console.log('Database initialized')
   loadAppConfig()
   console.log('Config loaded')
+  runGameConfigMigrations()
+  console.log('Game config migrations complete')
   registerAllHandlers()
   console.log('IPC handlers registered')
 
@@ -83,7 +107,7 @@ const createWindow = async (): Promise<void> => {
     minWidth: 800,
     minHeight: 600,
     title: 'Nekomimi',
-    show: isDev,
+    show: false,
     autoHideMenuBar: true,
     webPreferences: {
       contextIsolation: true,
@@ -109,22 +133,14 @@ const createWindow = async (): Promise<void> => {
 
   mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
     console.error('Window failed to load:', { errorCode, errorDescription, validatedURL })
-    mainWindow?.show()
   })
 
-mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url)
     return { action: 'deny' }
   })
 
-  if (isDev) {
-    console.log('Loading dev URL', DEV_SERVER_URL)
-    await mainWindow.loadURL(DEV_SERVER_URL)
-  } else {
-    const rendererPath = path.join(__dirname, '../renderer/index.html')
-    console.log('Loading renderer file', rendererPath)
-    await mainWindow.loadFile(rendererPath)
-  }
+  await loadRenderer(mainWindow)
 }
 
 app.whenReady().then(() => {

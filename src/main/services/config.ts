@@ -108,6 +108,9 @@ export const getGameConfigPath = (slug: string): string => {
   return path.join(paths.games, `${slug}.yml`)
 }
 
+const protonRunnerResolutionCache = new Map<string, string>()
+const protonPrefixResolutionCache = new Map<string, string>()
+
 function migrateGamePaths(game: Game): { game: Game; changed: boolean } {
   const remappedRunnerPath = remapManagedPath(game.runner.path)
   const updatedRunnerPath =
@@ -160,21 +163,34 @@ function remapManagedPath(value: string): string {
   return fs.existsSync(remapped) ? remapped : value
 }
 
+interface ProtonRunnerCandidate {
+  path: string
+  name: string
+  valid: boolean
+}
+
 function resolveValidProtonRunner(runnerPath: string): string {
   if (!runnerPath) {
     return runnerPath
   }
 
-  if (!isBrokenProtonRunner(runnerPath)) {
+  const cached = protonRunnerResolutionCache.get(runnerPath)
+  if (cached) {
+    return cached
+  }
+
+  if (!fs.existsSync(runnerPath)) {
+    protonRunnerResolutionCache.set(runnerPath, runnerPath)
     return runnerPath
   }
 
-  const replacement = findReplacementProtonRunner(runnerPath)
-  if (replacement) {
-    return replacement
-  }
+  const currentRunner = inspectProtonRunner(runnerPath)
+  const resolvedRunner = currentRunner.valid
+    ? runnerPath
+    : findReplacementProtonRunner(currentRunner) || runnerPath
 
-  return runnerPath
+  protonRunnerResolutionCache.set(runnerPath, resolvedRunner)
+  return resolvedRunner
 }
 
 function normalizeProtonPrefixPath(prefixPath: string): string {
@@ -200,63 +216,33 @@ function resolveValidProtonPrefix(prefixPath: string): string {
     return normalizedPrefix
   }
 
-  if (!isBrokenProtonPrefix(normalizedPrefix)) {
+  const cached = protonPrefixResolutionCache.get(normalizedPrefix)
+  if (cached) {
+    return cached
+  }
+
+  const currentPrefix = inspectProtonPrefix(normalizedPrefix)
+  if (!currentPrefix || currentPrefix.valid) {
+    protonPrefixResolutionCache.set(normalizedPrefix, normalizedPrefix)
     return normalizedPrefix
   }
 
-  const replacement = findReplacementProtonPrefix(normalizedPrefix)
-  return replacement || normalizedPrefix
+  const replacement = findReplacementProtonPrefix(currentPrefix)
+  const resolvedPrefix = replacement || normalizedPrefix
+  protonPrefixResolutionCache.set(prefixPath, resolvedPrefix)
+  protonPrefixResolutionCache.set(normalizedPrefix, resolvedPrefix)
+  return resolvedPrefix
 }
 
-function isBrokenProtonPrefix(prefixPath: string): boolean {
-  if (!prefixPath || !fs.existsSync(prefixPath)) {
-    return false
-  }
-
-  const steamExe = path.join(prefixPath, 'drive_c', 'windows', 'system32', 'steam.exe')
-  if (!fs.existsSync(steamExe)) {
-    return true
-  }
-
-  const cDrive = path.join(prefixPath, 'dosdevices', 'c:')
-  try {
-    const resolvedCDrive = fs.realpathSync.native(cDrive)
-    const localDrive = fs.realpathSync.native(path.join(prefixPath, 'drive_c'))
-    return resolvedCDrive !== localDrive || resolvedCDrive.includes(`${path.sep}twintaillauncher${path.sep}`)
-  } catch {
-    return true
-  }
+interface ProtonPrefixCandidate {
+  path: string
+  compatRoot: string
+  mtimeMs: number
+  valid: boolean
 }
 
-function findReplacementProtonPrefix(brokenPrefixPath: string): string | null {
-  const compatRoot = brokenPrefixPath.replace(/\/pfx\/?$/, '')
-  const prefixesDir = path.dirname(compatRoot)
-  if (!fs.existsSync(prefixesDir)) {
-    return null
-  }
-
-  const candidates = fs
-    .readdirSync(prefixesDir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => normalizeProtonPrefixPath(path.join(prefixesDir, entry.name)))
-    .filter((candidatePath) => candidatePath !== brokenPrefixPath)
-    .filter((candidatePath) => fs.existsSync(candidatePath))
-    .filter((candidatePath) => !isBrokenProtonPrefix(candidatePath))
-    .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)
-
-  return candidates[0] || null
-}
-
-function isBrokenProtonRunner(runnerPath: string): boolean {
-  if (!runnerPath || !fs.existsSync(runnerPath)) {
-    return false
-  }
-
+function inspectProtonRunner(runnerPath: string): ProtonRunnerCandidate {
   const protonScript = path.join(runnerPath, 'proton')
-  if (!fs.existsSync(protonScript)) {
-    return true
-  }
-
   const requiredPaths = [
     path.join(runnerPath, 'files', 'share', 'default_pfx', 'drive_c', 'windows', 'system32', 'd3d8.dll'),
     path.join(
@@ -272,33 +258,74 @@ function isBrokenProtonRunner(runnerPath: string): boolean {
     ),
   ]
 
-  return requiredPaths.some((requiredPath) => !fs.existsSync(requiredPath))
+  return {
+    path: runnerPath,
+    name: path.basename(runnerPath).toLowerCase(),
+    valid: fs.existsSync(protonScript) && requiredPaths.every((requiredPath) => fs.existsSync(requiredPath)),
+  }
 }
 
-function findReplacementProtonRunner(brokenRunnerPath: string): string | null {
+function findReplacementProtonRunner(brokenRunner: ProtonRunnerCandidate): string | null {
   const runnersDir = getPathsInstance().runners
   if (!fs.existsSync(runnersDir)) {
     return null
   }
 
-  const brokenName = path.basename(brokenRunnerPath).toLowerCase()
   const familyHints = ['proton-cachyos', 'cachyos']
-  const entries = fs
+  const candidates = fs
     .readdirSync(runnersDir, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
-    .map((entry) => path.join(runnersDir, entry.name))
-    .filter((candidatePath) => candidatePath !== brokenRunnerPath)
-    .filter((candidatePath) => fs.existsSync(path.join(candidatePath, 'proton')))
-    .filter((candidatePath) => !isBrokenProtonRunner(candidatePath))
+    .map((entry) => inspectProtonRunner(path.join(runnersDir, entry.name)))
+    .filter((candidate) => candidate.path !== brokenRunner.path && candidate.valid)
 
-  const sameFamily = entries.filter((candidatePath) => {
-    const candidateName = path.basename(candidatePath).toLowerCase()
-    return familyHints.some((hint) => brokenName.includes(hint) && candidateName.includes(hint))
-  })
-
-  const candidates = (sameFamily.length > 0 ? sameFamily : entries).sort((a, b) =>
-    path.basename(b).localeCompare(path.basename(a))
+  const sameFamily = candidates.filter((candidate) =>
+    familyHints.some((hint) => brokenRunner.name.includes(hint) && candidate.name.includes(hint))
   )
+  const pool = sameFamily.length > 0 ? sameFamily : candidates
+  pool.sort((a, b) => path.basename(b.path).localeCompare(path.basename(a.path)))
+  return pool[0]?.path || null
+}
 
-  return candidates[0] || null
+function inspectProtonPrefix(prefixPath: string): ProtonPrefixCandidate | null {
+  if (!prefixPath || !fs.existsSync(prefixPath)) {
+    return null
+  }
+
+  const compatRoot = prefixPath.replace(/\/pfx\/?$/, '')
+  const steamExe = path.join(prefixPath, 'drive_c', 'windows', 'system32', 'steam.exe')
+  let valid = fs.existsSync(steamExe)
+
+  const cDrive = path.join(prefixPath, 'dosdevices', 'c:')
+  try {
+    const resolvedCDrive = fs.realpathSync.native(cDrive)
+    const localDrive = fs.realpathSync.native(path.join(prefixPath, 'drive_c'))
+    valid = valid && resolvedCDrive === localDrive && !resolvedCDrive.includes(`${path.sep}twintaillauncher${path.sep}`)
+  } catch {
+    valid = false
+  }
+
+  return {
+    path: prefixPath,
+    compatRoot,
+    mtimeMs: fs.statSync(compatRoot).mtimeMs,
+    valid,
+  }
+}
+
+function findReplacementProtonPrefix(brokenPrefix: ProtonPrefixCandidate): string | null {
+  const prefixesDir = path.dirname(brokenPrefix.compatRoot)
+  if (!fs.existsSync(prefixesDir)) {
+    return null
+  }
+
+  const candidates = fs
+    .readdirSync(prefixesDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => normalizeProtonPrefixPath(path.join(prefixesDir, entry.name)))
+    .filter((candidatePath) => candidatePath !== brokenPrefix.path)
+    .map((candidatePath) => inspectProtonPrefix(candidatePath))
+    .filter((candidate): candidate is ProtonPrefixCandidate => candidate !== null && candidate.valid)
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)
+
+  return candidates[0]?.path || null
 }

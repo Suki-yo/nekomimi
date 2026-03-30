@@ -1,18 +1,14 @@
 // Wuthering Waves version manifest client
 // Uses Twintail's maintained manifest instead of Kuro's launcher-version-specific index URL.
 
-import * as https from 'https'
 import * as fs from 'fs'
 import * as path from 'path'
-import * as zlib from 'zlib'
-import type { ClientRequest, IncomingMessage } from 'http'
 import type { WuwaVersionInfo, WuwaFileEntry, WuwaDiffInfo } from '../../../shared/types/download'
-import { streamingMd5 } from './utils'
+import { fetchJSON, streamingMd5 } from './utils'
 
 const WUWA_MANIFEST_URL =
   'https://raw.githubusercontent.com/TwintailTeam/game-manifests/main/wuwa_global.json'
 
-const REQUEST_TIMEOUT_MS = 15000
 const WUWA_VERSION_FILES = [
   'Client/Binaries/Win64/Client-Win64-Shipping.exe',
   'Wuthering Waves.exe',
@@ -66,63 +62,6 @@ function toNumber(value: string | number | undefined): number {
   if (typeof value === 'number') return value
   if (typeof value === 'string') return parseInt(value, 10) || 0
   return 0
-}
-
-function fetchJSON<T>(url: string): Promise<T> {
-  return new Promise((resolve, reject) => {
-    let ongoingRequest: ClientRequest | null = null
-
-    const timeoutId = setTimeout(() => {
-      ongoingRequest?.destroy()
-      reject(new Error(`Request timeout after ${REQUEST_TIMEOUT_MS}ms`))
-    }, REQUEST_TIMEOUT_MS)
-
-    ongoingRequest = https.get(
-      url,
-      {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          Accept: 'application/json, text/plain, */*',
-          'Accept-Encoding': 'gzip, deflate',
-        },
-      },
-      (response: IncomingMessage) => {
-        clearTimeout(timeoutId)
-
-        if (response.statusCode && response.statusCode >= 400) {
-          reject(new Error(`HTTP ${response.statusCode}: ${response.statusMessage}`))
-          return
-        }
-
-        const encoding = response.headers['content-encoding']
-        let stream: NodeJS.ReadableStream = response
-
-        if (encoding === 'gzip') {
-          stream = response.pipe(zlib.createGunzip())
-        } else if (encoding === 'deflate') {
-          stream = response.pipe(zlib.createInflate())
-        }
-
-        let data = ''
-        stream.on('data', (chunk) => (data += chunk))
-        stream.on('end', () => {
-          try {
-            resolve(JSON.parse(data))
-          } catch {
-            reject(new Error(`Failed to parse JSON: ${data.substring(0, 100)}`))
-          }
-        })
-        stream.on('error', reject)
-      }
-    )
-
-    ongoingRequest.on('error', (err) => {
-      clearTimeout(timeoutId)
-      reject(err)
-    })
-
-    ongoingRequest.end()
-  })
 }
 
 async function fetchWuwaTwintailManifest(): Promise<WuwaTwintailManifest> {

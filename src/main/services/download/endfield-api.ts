@@ -1,17 +1,14 @@
 // Arknights: Endfield official launcher API client (OS/Global server)
 // API: launcher.gryphline.com/api
 
-import * as https from 'https'
-import type { ClientRequest } from 'http'
 import type { HoyoVersionInfo } from '../../../shared/types/download'
+import { fetchJSON } from './utils'
 
 const ENDFIELD_API_BASE = 'https://launcher.gryphline.com/api'
 const ENDFIELD_GAME_APP_CODE = 'YDUTE5gscDZ229CW'
 const ENDFIELD_LAUNCHER_APP_CODE = 'TiaytKBUIEdoEwRT'
 const ENDFIELD_CHANNEL = 6
 const ENDFIELD_SUB_CHANNEL = 6
-
-const REQUEST_TIMEOUT_MS = 15000
 
 interface EndfieldPack {
   url: string
@@ -41,53 +38,6 @@ interface EndfieldGameResponse {
   }
   state: number
   launcher_action: number
-}
-
-function fetchJSON<T>(url: string): Promise<T> {
-  return new Promise((resolve, reject) => {
-    let ongoingRequest: ClientRequest | null = null
-
-    const timeoutId = setTimeout(() => {
-      ongoingRequest?.destroy()
-      reject(new Error(`Request timeout after ${REQUEST_TIMEOUT_MS}ms`))
-    }, REQUEST_TIMEOUT_MS)
-
-    ongoingRequest = https.get(
-      url,
-      {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          Accept: 'application/json, */*',
-        },
-      },
-      (response) => {
-        clearTimeout(timeoutId)
-
-        if (response.statusCode && response.statusCode >= 400) {
-          reject(new Error(`HTTP ${response.statusCode}: ${response.statusMessage}`))
-          return
-        }
-
-        let data = ''
-        response.on('data', (chunk) => (data += chunk))
-        response.on('end', () => {
-          try {
-            resolve(JSON.parse(data))
-          } catch {
-            reject(new Error(`Failed to parse JSON: ${data.substring(0, 100)}`))
-          }
-        })
-        response.on('error', reject)
-      }
-    )
-
-    ongoingRequest.on('error', (err) => {
-      clearTimeout(timeoutId)
-      reject(err)
-    })
-
-    ongoingRequest.end()
-  })
 }
 
 // Fetch Endfield game version info (for Explore tab display)

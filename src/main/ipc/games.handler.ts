@@ -27,26 +27,7 @@ import type { Game } from '../../shared/types'
 import type { GameRow } from '../services/database'
 
 const loadGameFromRow = (row: GameRow): Game | null => {
-  const directConfig = loadGameConfig(row.config_path)
-  if (directConfig) {
-    return directConfig
-  }
-
-  if (!row.slug) {
-    return null
-  }
-
-  const migratedConfigPath = getGameConfigPath(row.slug)
-  const migratedConfig = loadGameConfig(migratedConfigPath)
-  if (!migratedConfig) {
-    return null
-  }
-
-  if (migratedConfigPath !== row.config_path) {
-    dbUpdateGame(row.id, { config_path: migratedConfigPath })
-  }
-
-  return migratedConfig
+  return loadGameConfig(row.config_path)
 }
 
 export const registerGamesHandlers = () => {

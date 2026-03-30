@@ -1,10 +1,10 @@
-import { useEffect, useState, useRef, type JSX } from 'react'
+import { useEffect, useState, type JSX } from 'react'
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogDescription,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -19,117 +19,118 @@ import {
   type InstallMode,
   type InstallStatus,
 } from '@/components/install-modal-utils'
-import { FolderOpen, X, Download, Search } from 'lucide-react'
+import { Download, FolderOpen, Search, X } from 'lucide-react'
 import type { DownloadProgress } from '../../../shared/types/download'
+import type { Game, LaunchConfig, ModConfig } from '../../../shared/types/game'
+import type { IPCRequest } from '../../../shared/types/ipc'
 
-const BIZ_CONFIG = {
-  genshin: {
-    slug: 'genshinimpact',
-    exe: 'GenshinImpact.exe',
-    env: {
-      STEAM_COMPAT_CONFIG: 'noxalia',
-      WINEDLLOVERRIDES: 'lsteamclient=d;KRSDKExternal.exe=d',
-    },
-    mods: { enabled: true, importer: 'GIMI' },
-    args: '',
-  },
-  starrail: {
-    slug: 'starrail',
-    exe: 'StarRail.exe',
-    env: {
-      STEAM_COMPAT_CONFIG: 'noxalia',
-      WINEDLLOVERRIDES: 'wintrust=b;dbghelp=n,b',
-      STUB_WINTRUST: '1',
-      BLOCK_FIRST_REQ: '1',
-    },
-    mods: { enabled: true, importer: 'SRMI' },
-    args: '',
-  },
-  zzz: {
-    slug: 'zenlesszonezero',
-    exe: 'ZenlessZoneZero.exe',
-    env: {
-      STEAM_COMPAT_CONFIG: 'noxalia,gamedrive',
-      WINEDLLOVERRIDES: 'lsteamclient=d;KRSDKExternal.exe=d;jsproxy=n,b',
-    },
-    mods: { enabled: true, importer: 'ZZMI' },
-    args: '',
-  },
-} as const
+type DownloadStartChannel = 'download:start' | 'download:start-endfield' | 'download:start-wuwa'
+type AddGameRequest = Omit<Game, 'id' | 'playtime' | 'lastPlayed'>
+
+interface InstallDetectionResult {
+  directory: string
+  prefix: string | null
+}
+
+export interface InstallConfig<K extends DownloadStartChannel = DownloadStartChannel> {
+  gameId: string
+  slug: string
+  name: string
+  latestVersion: string
+  defaultInstallDir: string
+  defaultPrefix: string
+  executable: string
+  launch: LaunchConfig
+  mods: ModConfig
+  startChannel: K
+  buildDownloadArgs: (destDir: string) => IPCRequest<K>
+  downloadDetails?: string
+  installDirPlaceholder?: string
+  locateExePlaceholder?: string
+  buildLocateGameOverrides?: (directory: string) => Promise<Partial<AddGameRequest> | void>
+  buildAutoAddOverrides?: (directory: string) => Promise<Partial<AddGameRequest> | void>
+}
 
 interface GameInstallModalProps {
   open: boolean
   onClose: () => void
-  gameName: string
-  gameBiz: 'genshin' | 'starrail' | 'zzz'
-  latestVersion: string
-  downloadSize?: string
+  config: InstallConfig | null
   onGameAdded?: () => void
 }
 
 export function GameInstallModal({
   open,
   onClose,
-  gameName,
-  gameBiz,
-  latestVersion,
-  downloadSize,
+  config,
   onGameAdded,
 }: GameInstallModalProps): JSX.Element {
   const [mode, setMode] = useState<InstallMode>('download')
   const [installDir, setInstallDir] = useState('')
   const [status, setStatus] = useState<InstallStatus>('idle')
   const [progress, setProgress] = useState<DownloadProgress | null>(null)
-  const hasStartedRef = useRef(false)
 
-  // Locate mode state
   const [locateExePath, setLocateExePath] = useState('')
-  const [locateDetected, setLocateDetected] = useState<{ directory: string; prefix: string | null } | null>(null)
+  const [locateDetected, setLocateDetected] = useState<InstallDetectionResult | null>(null)
   const [locating, setLocating] = useState(false)
   const [locateError, setLocateError] = useState<string | null>(null)
 
-  // Reset state when modal opens (but preserve downloading state if resuming)
+  const setDownloadError = (gameId: string, error: string | undefined) => {
+    if (!error) return
+
+    setProgress((prev) => prev ? { ...prev, error } : {
+      gameId,
+      status: 'error',
+      percent: 0,
+      bytesDownloaded: 0,
+      bytesTotal: 0,
+      downloadSpeed: 0,
+      timeRemaining: 0,
+      error,
+    })
+  }
+
   useEffect(() => {
-    if (!open) return
-    window.api.invoke('download:status', { gameId: gameBiz }).then((result: { inProgress: boolean }) => {
+    if (!open || !config) return
+
+    window.api.invoke('download:status', { gameId: config.gameId }).then((result) => {
       if (result.inProgress) {
         setMode('download')
         setStatus('downloading')
-        hasStartedRef.current = true
-      } else {
-        setMode('download')
-        setStatus('idle')
-        setProgress(null)
-        hasStartedRef.current = false
-        setInstallDir(`~/Games/${gameName}`)
-        setLocateExePath('')
-        setLocateDetected(null)
-        setLocateError(null)
+        return
       }
-    })
-  }, [open, gameName, gameBiz])
 
-  // Listen for download progress
+      setMode('download')
+      setInstallDir(config.defaultInstallDir)
+      setStatus('idle')
+      setProgress(null)
+      setLocateExePath('')
+      setLocateDetected(null)
+      setLocateError(null)
+    })
+  }, [open, config])
+
   useEffect(() => {
+    if (!config) return
+
     const unsubProgress = window.api.on('download:progress', (data) => {
-      const p = data as DownloadProgress
-      if (p.gameId === gameBiz) {
-        setProgress(p)
+      const nextProgress = data as DownloadProgress
+      if (nextProgress.gameId === config.gameId) {
+        setProgress(nextProgress)
       }
     })
 
     const unsubComplete = window.api.on('download:complete', (data) => {
-      if ((data as { gameId: string }).gameId === gameBiz) {
+      if ((data as { gameId: string }).gameId === config.gameId) {
         setStatus('complete')
         setProgress((prev) => prev ? { ...prev, percent: 100, status: 'installed' } : null)
-        handleAutoAdd()
+        void handleAutoAdd(config)
       }
     })
 
     const unsubError = window.api.on('download:error', (data) => {
-      if ((data as { gameId: string }).gameId === gameBiz) {
+      if ((data as { gameId: string; error: string }).gameId === config.gameId) {
         setStatus('error')
-        setProgress((prev) => prev ? { ...prev, error: (data as { error: string }).error } : null)
+        setDownloadError(config.gameId, (data as { error: string }).error)
       }
     })
 
@@ -138,7 +139,39 @@ export function GameInstallModal({
       unsubComplete()
       unsubError()
     }
-  }, [gameBiz])
+  }, [config, installDir, onGameAdded])
+
+  const buildGamePayload = async ({
+    config,
+    directory,
+    executable,
+    runnerPath,
+    prefix,
+    overrides,
+  }: {
+    config: InstallConfig
+    directory: string
+    executable: string
+    runnerPath: string
+    prefix: string
+    overrides?: Partial<AddGameRequest> | void
+  }): Promise<AddGameRequest> => {
+    return {
+      name: config.name,
+      slug: config.slug,
+      installed: true,
+      directory,
+      executable,
+      runner: {
+        type: 'proton',
+        path: runnerPath,
+        prefix,
+      },
+      launch: config.launch,
+      mods: config.mods,
+      ...overrides,
+    }
+  }
 
   const handleBrowse = async () => {
     const path = await window.api.openFile()
@@ -150,10 +183,12 @@ export function GameInstallModal({
   const handleBrowseLocate = async () => {
     const exePath = await window.api.openFile()
     if (!exePath) return
+
     setLocateExePath(exePath)
     setLocateDetected(null)
     setLocateError(null)
     setLocating(true)
+
     try {
       const detected = await window.api.invoke('game:detect', { exePath })
       setLocateDetected({ directory: detected.directory, prefix: detected.prefix })
@@ -165,24 +200,22 @@ export function GameInstallModal({
   }
 
   const handleLocateConfirm = async () => {
-    if (!locateDetected) return
+    if (!config || !locateDetected) return
+
     setLocating(true)
-    const config = BIZ_CONFIG[gameBiz]
+
     try {
-      await window.api.invoke('game:add', {
-        name: gameName,
-        slug: config.slug,
-        installed: true,
+      const overrides = await config.buildLocateGameOverrides?.(locateDetected.directory)
+      const payload = await buildGamePayload({
+        config,
         directory: locateDetected.directory,
         executable: locateExePath,
-        runner: {
-          type: 'proton' as const,
-          path: '',
-          prefix: locateDetected.prefix || `~/Games/prefixes/${config.slug}/pfx`,
-        },
-        launch: { env: config.env, preLaunch: [], postLaunch: [], args: config.args },
-        mods: config.mods,
+        runnerPath: '',
+        prefix: locateDetected.prefix || config.defaultPrefix,
+        overrides,
       })
+
+      await window.api.invoke('game:add', payload)
       onGameAdded?.()
       onClose()
     } catch (err) {
@@ -192,58 +225,55 @@ export function GameInstallModal({
     }
   }
 
-  const handleAutoAdd = async () => {
-    const config = BIZ_CONFIG[gameBiz]
-    const runners: { path: string }[] = await window.api.invoke('runner:list')
-    const runnerPath = runners.length > 0 ? runners[0].path : ''
+  const handleAutoAdd = async (activeConfig: InstallConfig) => {
     try {
-      await window.api.invoke('game:add', {
-        name: gameName,
-        slug: config.slug,
-        installed: true,
+      const runners = await window.api.invoke('runner:list')
+      const runnerPath = runners.length > 0 ? runners[0].path : ''
+      const overrides = await activeConfig.buildAutoAddOverrides?.(installDir)
+      const payload = await buildGamePayload({
+        config: activeConfig,
         directory: installDir,
-        executable: `${installDir}/${config.exe}`,
-        runner: {
-          type: 'proton' as const,
-          path: runnerPath,
-          prefix: `~/Games/prefixes/${config.slug}/pfx`,
-        },
-        launch: { env: config.env, preLaunch: [], postLaunch: [], args: config.args },
-        mods: config.mods,
+        executable: `${installDir}/${activeConfig.executable}`,
+        runnerPath,
+        prefix: activeConfig.defaultPrefix,
+        overrides,
       })
+
+      await window.api.invoke('game:add', payload)
       onGameAdded?.()
     } catch (err) {
       console.error('Failed to auto-add game:', err)
     }
   }
 
-  const handleStartDownload = async () => {
-    if (!installDir) return
-
-    hasStartedRef.current = true
-    setStatus('downloading')
-
-    const result = await window.api.invoke('download:start', {
-      gameId: gameBiz,
-      biz: gameBiz,
-      destDir: installDir,
-      useTwintail: true,
-    })
-
+  const startDownload = async <K extends DownloadStartChannel>(activeConfig: InstallConfig<K>) => {
+    const result = await window.api.invoke(activeConfig.startChannel, activeConfig.buildDownloadArgs(installDir))
     if (!result.success) {
       setStatus('error')
-      setProgress((prev) => prev ? { ...prev, error: result.error } : null)
+      setDownloadError(activeConfig.gameId, result.error)
     }
   }
 
+  const handleStartDownload = async () => {
+    if (!config || !installDir) return
+
+    setStatus('downloading')
+    await startDownload(config)
+  }
+
   const handleCancel = async () => {
-    await window.api.invoke('download:cancel', { gameId: gameBiz })
+    if (!config) return
+
+    await window.api.invoke('download:cancel', { gameId: config.gameId })
     setStatus('idle')
     setProgress(null)
   }
 
+  const gameName = config?.name ?? ''
+  const latestVersion = config?.latestVersion ?? ''
+
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+    <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && onClose()}>
       <DialogContent className="w-full sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{getInstallDialogTitle(status, gameName)}</DialogTitle>
@@ -252,20 +282,19 @@ export function GameInstallModal({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="py-4 space-y-4">
-          {status === 'idle' && (
+        <div className="space-y-4 py-4">
+          {status === 'idle' && config && (
             <>
-              {/* Mode toggle */}
-              <div className="flex gap-1 p-1 bg-muted rounded-lg">
+              <div className="flex gap-1 rounded-lg bg-muted p-1">
                 <button
-                  className={`flex-1 flex items-center justify-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${getInstallModeButtonClass(mode === 'download')}`}
+                  className={`flex-1 flex items-center justify-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${getInstallModeButtonClass(mode === 'download')}`}
                   onClick={() => setMode('download')}
                 >
                   <Download className="h-4 w-4" />
                   Download
                 </button>
                 <button
-                  className={`flex-1 flex items-center justify-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${getInstallModeButtonClass(mode === 'locate')}`}
+                  className={`flex-1 flex items-center justify-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${getInstallModeButtonClass(mode === 'locate')}`}
                   onClick={() => setMode('locate')}
                 >
                   <Search className="h-4 w-4" />
@@ -281,8 +310,8 @@ export function GameInstallModal({
                       <Input
                         id="install-dir"
                         value={installDir}
-                        onChange={(e) => setInstallDir(e.target.value)}
-                        placeholder="/home/user/Games/GameName"
+                        onChange={(event) => setInstallDir(event.target.value)}
+                        placeholder={config.installDirPlaceholder ?? '/home/user/Games/GameName'}
                         className="flex-1"
                       />
                       <Button type="button" variant="outline" onClick={handleBrowse}>
@@ -291,10 +320,8 @@ export function GameInstallModal({
                     </div>
                   </div>
 
-                  {downloadSize && (
-                    <div className="text-sm text-muted-foreground">
-                      Download size: ~{downloadSize}
-                    </div>
+                  {config.downloadDetails && (
+                    <div className="text-sm text-muted-foreground">{config.downloadDetails}</div>
                   )}
 
                   <div className="flex justify-end gap-2">
@@ -316,7 +343,7 @@ export function GameInstallModal({
                       <Input
                         value={locateExePath}
                         readOnly
-                        placeholder="Browse to the game .exe file..."
+                        placeholder={config.locateExePlaceholder ?? 'Browse to the game .exe file...'}
                         className="flex-1"
                       />
                       <Button type="button" variant="outline" onClick={handleBrowseLocate} disabled={locating}>
@@ -330,15 +357,15 @@ export function GameInstallModal({
                   )}
 
                   {locateDetected && (
-                    <div className="text-sm space-y-1 p-3 bg-muted rounded-md">
+                    <div className="space-y-1 rounded-md bg-muted p-3 text-sm">
                       <div>
                         <span className="text-muted-foreground">Directory: </span>
-                        <span className="font-mono text-xs break-all">{locateDetected.directory}</span>
+                        <span className="break-all font-mono text-xs">{locateDetected.directory}</span>
                       </div>
                       {locateDetected.prefix && (
                         <div>
                           <span className="text-muted-foreground">Prefix: </span>
-                          <span className="font-mono text-xs break-all">{locateDetected.prefix}</span>
+                          <span className="break-all font-mono text-xs">{locateDetected.prefix}</span>
                         </div>
                       )}
                     </div>
@@ -362,16 +389,14 @@ export function GameInstallModal({
           )}
 
           {status === 'downloading' && progress && (
-            <div className="min-h-[160px] flex flex-col gap-4">
-              {/* Progress bar */}
-              <div className="w-full bg-muted rounded-full h-4 overflow-hidden">
+            <div className="flex min-h-[160px] flex-col gap-4">
+              <div className="h-4 w-full overflow-hidden rounded-full bg-muted">
                 <div
-                  className="bg-primary h-full transition-all duration-200"
+                  className="h-full bg-primary transition-all duration-200"
                   style={{ width: `${progress.percent}%` }}
                 />
               </div>
 
-              {/* Stats */}
               <div className="grid grid-cols-2 gap-2 text-sm">
                 <div>
                   <span className="text-muted-foreground">Progress: </span>
@@ -393,15 +418,13 @@ export function GameInstallModal({
                 </div>
               </div>
 
-              {/* Current file */}
-              <div className="min-w-0 text-xs text-muted-foreground truncate">
+              <div className="min-w-0 truncate text-xs text-muted-foreground">
                 {progress.currentFile || <>&nbsp;</>}
               </div>
 
-              {/* Cancel button */}
               <div className="flex justify-end">
                 <Button type="button" variant="destructive" onClick={handleCancel}>
-                  <X className="h-4 w-4 mr-2" />
+                  <X className="mr-2 h-4 w-4" />
                   Cancel Download
                 </Button>
               </div>

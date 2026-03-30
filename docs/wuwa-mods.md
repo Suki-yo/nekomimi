@@ -5,9 +5,18 @@
 - nekomimi now treats WuWa as Steam app `3513350` / `umu-3513350` and writes `Client/Binaries/Win64/steam_appid.txt`
 - nekomimi's WWMI Proton path now prefers direct `steamrt -> proton waitforexitandrun` instead of always going through `umu-run`
 - nekomimi now forces WWMI `custom_launch_enabled = false`, clears `custom_launch_signature`, and split-launches WuWa itself after XXMI setup
+- nekomimi now forces WWMI `configure_game = false` and `xxmi_dll_init_delay = 500` to avoid 3.2 config-monitor churn and use a safer hook timing baseline
 - **Still broken:** WuWa still trips the false-positive ACE path under nekomimi
 - **New concrete mismatch:** XXMI's WWMI custom launch is spawning `C:\\windows\\system32\\cmd.exe /C ...Client-Win64-Shipping.exe -dx11`, and that `cmd.exe` stays alive as the parent of the game process
 - **Why this matters:** Twintail does not leave that hanging `cmd.exe` layer around, so XXMI custom launch is still not matching Twintail's working launch architecture
+
+## 3.2 Regression Notes (2026-03-18)
+- Last confirmed good WWMI hook pass: `2026-03-18 20:21:56`
+- First confirmed failed WWMI hook verify: `2026-03-18 21:19:33`
+- The game binary changed at `2026-03-18 20:24:21`, exactly between those states
+- XXMI's first failed `VerifyHook` window (`21:19:28` to `21:19:33`) ends before the game reaches D3D11 startup (`LogRHI: Using Forced RHI: D3D11` at `21:19:35`)
+- Later failed 3.2 sessions do reach D3D11 before XXMI gives up, so the regression is not just "verify started too early"
+- 3.2 also started enforcing config-monitor cleanup against `DeviceProfiles.ini` and `Hardware.ini`, stripping `42` forbidden CVars from `DeviceProfiles.ini`
 
 ## Twintail Alignment Work Completed
 - Copied Twintail's WuWa Proton runner `10.0-20260227-proton-cachyos` into nekomimi-local storage

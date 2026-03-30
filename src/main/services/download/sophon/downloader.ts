@@ -3,15 +3,14 @@
 
 import * as fs from 'fs'
 import * as path from 'path'
-import * as https from 'https'
 import * as crypto from 'crypto'
 import { fetchManifest, getFilesOnly, calculateChunkDownloadSize } from './manifest'
 import {
   decompressZstd,
+  downloadStream,
   sanitizePath,
   streamingMd5,
   createLruCache,
-  USER_AGENT,
 } from '../utils'
 import type { SophonManifestFile, SophonFileChunk, DownloadProgress } from '../../../../shared/types/download'
 
@@ -46,93 +45,60 @@ async function downloadChunk(
   state: DownloadState,
   onProgress?: (progress: Partial<DownloadProgress>) => void
 ): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = []
+  const chunks: Buffer[] = []
 
-    const followRedirect = (currentUrl: string, redirectCount = 0) => {
-      if (redirectCount > 5) {
-        reject(new Error('Too many redirects'))
-        return
-      }
+  await downloadStream(url, {
+    onResponse: (response) => new Promise<void>((resolve, reject) => {
+      response.on('data', (chunk: Buffer) => {
+        chunks.push(chunk)
+        state.downloadedBytes += chunk.length
 
-      https
-        .get(
-          currentUrl,
-          {
-            headers: {
-              'User-Agent': USER_AGENT,
-            },
-          },
-          (response) => {
-            if (response.statusCode === 301 || response.statusCode === 302) {
-              const location = response.headers.location
-              if (location) {
-                followRedirect(location, redirectCount + 1)
-                return
-              }
-            }
+        // Update speed calculation
+        const now = Date.now()
+        state.speedSamples.push({ time: now, bytes: state.downloadedBytes })
+        if (state.speedSamples.length > 10) {
+          state.speedSamples.shift()
+        }
 
-            if (response.statusCode !== 200) {
-              reject(new Error(`HTTP ${response.statusCode}`))
-              return
-            }
-
-            response.on('data', (chunk: Buffer) => {
-              chunks.push(chunk)
-              state.downloadedBytes += chunk.length
-
-              // Update speed calculation
-              const now = Date.now()
-              state.speedSamples.push({ time: now, bytes: state.downloadedBytes })
-              // Keep only last 10 samples
-              if (state.speedSamples.length > 10) {
-                state.speedSamples.shift()
-              }
-
-              // Calculate speed
-              if (state.speedSamples.length >= 2) {
-                const first = state.speedSamples[0]
-                const last = state.speedSamples[state.speedSamples.length - 1]
-                const timeDiff = (last.time - first.time) / 1000
-                if (timeDiff > 0) {
-                  state.speed = (last.bytes - first.bytes) / timeDiff
-                }
-              }
-
-              // Report progress
-              if (onProgress) {
-                const remaining = state.speed > 0 ? (state.totalBytes - state.downloadedBytes) / state.speed : 0
-
-                onProgress({
-                  bytesDownloaded: state.downloadedBytes,
-                  bytesTotal: state.totalBytes,
-                  percent: Math.round((state.downloadedBytes / state.totalBytes) * 100),
-                  downloadSpeed: Math.round(state.speed),
-                  timeRemaining: Math.round(remaining),
-                })
-              }
-            })
-
-            response.on('end', () => {
-              const buffer = Buffer.concat(chunks)
-              const md5 = calculateMd5(buffer)
-
-              if (md5 !== expectedMd5) {
-                reject(new Error(`MD5 mismatch: expected ${expectedMd5}, got ${md5}`))
-                return
-              }
-
-              resolve(buffer)
-            })
-
-            response.on('error', reject)
+        if (state.speedSamples.length >= 2) {
+          const first = state.speedSamples[0]
+          const last = state.speedSamples[state.speedSamples.length - 1]
+          const timeDiff = (last.time - first.time) / 1000
+          if (timeDiff > 0) {
+            state.speed = (last.bytes - first.bytes) / timeDiff
           }
-        )
-        .on('error', reject)
-    }
+        }
 
-    followRedirect(url)
+        if (onProgress) {
+          const remaining = state.speed > 0 ? (state.totalBytes - state.downloadedBytes) / state.speed : 0
+
+          onProgress({
+            bytesDownloaded: state.downloadedBytes,
+            bytesTotal: state.totalBytes,
+            percent: Math.round((state.downloadedBytes / state.totalBytes) * 100),
+            downloadSpeed: Math.round(state.speed),
+            timeRemaining: Math.round(remaining),
+          })
+        }
+      })
+
+      response.once('end', () => {
+        const buffer = Buffer.concat(chunks)
+        const md5 = calculateMd5(buffer)
+
+        if (md5 !== expectedMd5) {
+          reject(new Error(`MD5 mismatch: expected ${expectedMd5}, got ${md5}`))
+          return
+        }
+
+        resolve()
+      })
+
+      response.once('error', reject)
+    }),
   })
+
+  return Buffer.concat(chunks)
 }
 
 // Chunk cache to avoid re-downloading (LRU to limit memory)

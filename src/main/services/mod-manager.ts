@@ -3,49 +3,24 @@ import type { ChildProcess } from 'child_process'
 import * as path from 'path'
 import * as fs from 'fs'
 import * as https from 'https'
+import { getGameModConfig, getImporterConfig, getImporterReleaseApi } from './game-registry'
 import { getPathsInstance } from './paths'
 import { findSteamrt } from './steamrt'
+import {
+  applyWwmiLaunchSettings,
+  ensureWwmiLinuxCompatibility,
+  mergeWindowsOverrides,
+  prepareStandaloneWwmiRuntime,
+  WWMI_DIRECT_LAUNCH_ARGS,
+  WWMI_KURO_DLL_OVERRIDES,
+} from './wuwa-mod-config'
 import type { Mod } from '../../shared/types/game'
 
 const XXMI_RELEASES_API = 'https://api.github.com/repos/SpectrumQT/XXMI-Launcher/releases/latest'
 const PROTON_GE_RELEASES_API = 'https://api.github.com/repos/GloriousEggroll/proton-ge-custom/releases/latest'
 const XXMI_LIBS_RELEASES_API = 'https://api.github.com/repos/SpectrumQT/XXMI-Libs-Package/releases/latest'
 
-const IMPORTER_RELEASES_API: Record<string, string> = {
-  GIMI: 'https://api.github.com/repos/SilentNightSound/GIMI-Package/releases/latest',
-  SRMI: 'https://api.github.com/repos/SpectrumQT/SRMI-Package/releases/latest',
-  ZZMI: 'https://api.github.com/repos/leotorrez/ZZMI-Package/releases/latest',
-  EFMI: 'https://api.github.com/repos/SpectrumQT/EFMI-Package/releases/latest',
-  HIMI: 'https://api.github.com/repos/leotorrez/HIMI-Package/releases/latest',
-  WWMI: 'https://api.github.com/repos/SpectrumQT/WWMI-Package/releases/latest',
-}
-
-const GAME_TO_XXMI_IMPORTER: Record<string, string> = {
-  'endfield.exe': 'EFMI',
-  'genshinimpact.exe': 'GIMI',
-  'starrail.exe': 'SRMI',
-  'zenlesszonezero.exe': 'ZZMI',
-  'bh3.exe': 'HIMI',
-  'client-win64-shipping.exe': 'WWMI',
-}
-
-// HoYo games need umu-run (for UMU_USE_STEAM=1 anti-cheat fix)
-const GAME_TO_UMU_GAMEID: Record<string, string> = {
-  'genshinimpact.exe': 'umu-genshin',
-  'zenlesszonezero.exe': 'umu-zenlesszonezero',
-  'starrail.exe': '0',
-  'client-win64-shipping.exe': 'umu-3513350',
-}
-
-const GAME_TO_STEAM_APPID: Record<string, string> = {
-  'client-win64-shipping.exe': '3513350',
-}
-
 const DISABLED_MOD_PREFIX = 'DISABLED_'
-const WWMI_PROCESS_EXE_NAMES = ['Client-Win64-Shipping.exe']
-const WWMI_DLL_INIT_DELAY_MS = 500
-const WWMI_DIRECT_LAUNCH_ARGS = ['-dx11']
-const WWMI_KURO_DLL_OVERRIDES = 'lsteamclient=d;KRSDKExternal.exe=d'
 const STAR_RAIL_PATCH_CANDIDATES = [
   path.join(process.cwd(), 'resources', 'hkrpg_patch.dll'),
   path.join(process.resourcesPath || '', 'resources', 'hkrpg_patch.dll'),
@@ -54,13 +29,11 @@ const STAR_RAIL_PATCH_CANDIDATES = [
 ]
 
 export function shouldUseXXMI(executablePath: string): boolean {
-  const exeName = path.basename(executablePath).toLowerCase()
-  return !!GAME_TO_XXMI_IMPORTER[exeName]
+  return getGameModConfig(executablePath) !== null
 }
 
 export function getXXMIImporter(executablePath: string): string | null {
-  const exeName = path.basename(executablePath).toLowerCase()
-  return GAME_TO_XXMI_IMPORTER[exeName] || null
+  return getGameModConfig(executablePath)?.importer ?? null
 }
 
 function getXXMIPaths() {
@@ -114,31 +87,6 @@ function ensureStarRailDbghelp(gameDirectory: string): { success: boolean; error
   }
 }
 
-function usesInjectMode(importer: string): boolean {
-  return importer === 'EFMI' || importer === 'GIMI'
-}
-
-function shouldDisableConfigureGame(importer: string): boolean {
-  return importer === 'WWMI' || importer === 'ZZMI'
-}
-
-function applyWWMILaunchSettings(importerConfig: Record<string, unknown>): void {
-  importerConfig.custom_launch_enabled = false
-  importerConfig.custom_launch = ''
-  importerConfig.custom_launch_signature = ''
-  // XXMI uses this toggle to decide whether WWMI starts the real client exe
-  // directly or falls back to the top-level launcher exe. Keep it enabled, but
-  // leave the options string empty so WWMI's own built-in DX11 arg is not
-  // duplicated during Shell start.
-  importerConfig.use_launch_options = true
-  importerConfig.launch_options = ''
-  importerConfig.process_exe_names = WWMI_PROCESS_EXE_NAMES
-  // WuWa 3.2 started rejecting XXMI's DeviceProfiles mutations, so keep XXMI
-  // focused on hook setup and use a safer non-zero DLL init delay.
-  importerConfig.configure_game = false
-  importerConfig.xxmi_dll_init_delay = WWMI_DLL_INIT_DELAY_MS
-}
-
 function stripDisabledModPrefix(folderName: string): string {
   if (folderName.startsWith(DISABLED_MOD_PREFIX)) {
     return folderName.substring(DISABLED_MOD_PREFIX.length)
@@ -159,23 +107,6 @@ function removeFileIfExists(filePath: string): void {
   if (fs.existsSync(filePath)) {
     fs.unlinkSync(filePath)
   }
-}
-
-// Twintail keeps WWMI configured for XXMI Launcher ownership rather than directly
-// rewriting the package into a standalone 3dmloader flow.
-function configureWWMILaunchPath(_gameExecutable: string): void {
-  const { xxmiDir } = getXXMIPaths()
-  const d3dxIni = path.join(xxmiDir, 'WWMI', 'd3dx.ini')
-  if (!fs.existsSync(d3dxIni)) return
-
-  let content = fs.readFileSync(d3dxIni, 'utf-8')
-  content = content.replace(/^loader\s*=.*$/m, 'loader = XXMI Launcher.exe')
-  content = content.replace(/^;?\s*require_admin\s*=.*$/m, 'require_admin = true')
-  content = content.replace(/^;launch\s*=.*$/m, 'launch = $\\xxmi\\config\\game_exe_path')
-  content = content.replace(/^;?delay\s*=.*$/m, 'delay = 0')
-
-  fs.writeFileSync(d3dxIni, content)
-  console.log('[wwmi] d3dx.ini: restored XXMI launcher mode')
 }
 
 function findInstalledRunner(): { name: string; path: string; wine: string } | null {
@@ -254,101 +185,6 @@ function ensureImporterRootSymlinks(importerDir: string): void {
       console.warn(`[xxmi] Failed to create shared DLL symlink ${importerName}:`, err)
     }
   }
-}
-
-function ensureSymlinkPath(targetPath: string, linkPath: string): void {
-  try {
-    if (fs.existsSync(linkPath)) {
-      const stat = fs.lstatSync(linkPath)
-      if (stat.isSymbolicLink()) {
-        const currentTarget = fs.readlinkSync(linkPath)
-        if (path.resolve(path.dirname(linkPath), currentTarget) === targetPath || currentTarget === targetPath) {
-          return
-        }
-
-        fs.unlinkSync(linkPath)
-      } else {
-        console.warn(`[wwmi] Leaving existing non-symlink path in place: ${linkPath}`)
-        return
-      }
-    }
-
-    fs.symlinkSync(targetPath, linkPath)
-    console.log(`[wwmi] Linked runtime asset: ${path.basename(linkPath)}`)
-  } catch (err) {
-    console.warn(`[wwmi] Failed to link runtime asset ${linkPath}:`, err)
-  }
-}
-
-function prepareStandaloneWwmiRuntime(gameExecutable: string): void {
-  const { xxmiDir } = getXXMIPaths()
-  const gameDir = path.dirname(gameExecutable)
-  const wwmiDir = path.join(xxmiDir, 'WWMI')
-
-  const fileLinks: Array<[string, string]> = [
-    [path.join(xxmiDir, 'd3d11.dll'), path.join(gameDir, 'd3d11.dll')],
-    [path.join(xxmiDir, 'd3dcompiler_47.dll'), path.join(gameDir, 'd3dcompiler_47.dll')],
-    [path.join(wwmiDir, 'd3dx.ini'), path.join(gameDir, 'd3dx.ini')],
-    [path.join(wwmiDir, 'd3dx_user.ini'), path.join(gameDir, 'd3dx_user.ini')],
-  ]
-
-  const dirLinks: Array<[string, string]> = [
-    [path.join(wwmiDir, 'Core'), path.join(gameDir, 'Core')],
-    [path.join(wwmiDir, 'Mods'), path.join(gameDir, 'Mods')],
-    [path.join(wwmiDir, 'ShaderFixes'), path.join(gameDir, 'ShaderFixes')],
-    [path.join(wwmiDir, 'ShaderCache'), path.join(gameDir, 'ShaderCache')],
-  ]
-
-  for (const [target, link] of fileLinks) {
-    if (fs.existsSync(target)) {
-      ensureSymlinkPath(target, link)
-    }
-  }
-
-  for (const [target, link] of dirLinks) {
-    if (fs.existsSync(target)) {
-      ensureSymlinkPath(target, link)
-    }
-  }
-}
-
-export function cleanupStandaloneWwmiRuntime(gameExecutable: string): void {
-  const gameDir = path.dirname(gameExecutable)
-  const runtimePaths = [
-    'd3d11.dll',
-    'd3dcompiler_47.dll',
-    'd3dx.ini',
-    'd3dx_user.ini',
-    'Core',
-    'Mods',
-    'ShaderFixes',
-    'ShaderCache',
-  ].map((entry) => path.join(gameDir, entry))
-
-  for (const runtimePath of runtimePaths) {
-    try {
-      if (!fs.existsSync(runtimePath)) continue
-
-      const stat = fs.lstatSync(runtimePath)
-      if (!stat.isSymbolicLink()) continue
-
-      fs.unlinkSync(runtimePath)
-      console.log(`[wwmi] Removed staged runtime asset: ${path.basename(runtimePath)}`)
-    } catch (err) {
-      console.warn(`[wwmi] Failed to remove staged runtime asset ${runtimePath}:`, err)
-    }
-  }
-}
-
-function mergeWindowsOverrides(...values: Array<string | undefined>): string | undefined {
-  const parts = values
-    .flatMap((value) => (value || '').split(';'))
-    .map((value) => value.trim())
-    .filter(Boolean)
-
-  if (parts.length === 0) return undefined
-
-  return Array.from(new Set(parts)).join(';')
 }
 
 export function isXXMIInstalled(): boolean {
@@ -597,7 +433,7 @@ export async function downloadImporter(
   importer: string,
   onProgress?: (percent: number) => void
 ): Promise<DownloadResult> {
-  const apiUrl = IMPORTER_RELEASES_API[importer]
+  const apiUrl = getImporterReleaseApi(importer)
   if (!apiUrl) return { success: false, error: `Unknown importer: ${importer}` }
 
   const { xxmiDir } = getXXMIPaths()
@@ -776,8 +612,9 @@ export function isImporterInstalled(importer: string): boolean {
 function configureImporterGameFolder(importer: string, gameDirectory: string, _executablePath?: string): boolean {
   const { xxmiDir } = getXXMIPaths()
   const configPath = path.join(xxmiDir, 'XXMI Launcher Config.json')
+  const importerSettings = getImporterConfig(importer)
 
-  if (!fs.existsSync(configPath)) return false
+  if (!fs.existsSync(configPath) || !importerSettings) return false
 
   try {
     const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
@@ -794,38 +631,36 @@ function configureImporterGameFolder(importer: string, gameDirectory: string, _e
 
     if (config?.Importers?.[importer]?.Importer) {
       // Importer already installed — update game folder and mode
-      const useInjectMode = usesInjectMode(importer)
       const importerConfig = config.Importers[importer].Importer
       importerConfig.game_folder = winePath
       if (wineExePath) {
         importerConfig.game_exe_path = wineExePath
       }
       importerConfig.process_start_method = 'Shell'
-      importerConfig.custom_launch_inject_mode = useInjectMode ? 'Inject' : 'Hook'
-      if (shouldDisableConfigureGame(importer)) {
+      importerConfig.custom_launch_inject_mode = importerSettings.launchMode
+      if (!importerSettings.configureGame) {
         importerConfig.configure_game = false
       }
       if (importer === 'WWMI') {
-        applyWWMILaunchSettings(importerConfig)
+        applyWwmiLaunchSettings(importerConfig)
       }
     } else {
       // Importer just installed via downloadImporter — seed a minimal config stub so
       // XXMI finds a valid Importers section and doesn't show its own install dialog.
-      const useInjectMode = usesInjectMode(importer)
       const importerConfig: Record<string, unknown> = {
         game_folder: winePath,
         process_start_method: 'Shell',
-        custom_launch_inject_mode: useInjectMode ? 'Inject' : 'Hook',
+        custom_launch_inject_mode: importerSettings.launchMode,
       }
       if (wineExePath) {
         importerConfig.game_exe_path = wineExePath
       }
-      if (shouldDisableConfigureGame(importer)) {
+      if (!importerSettings.configureGame) {
         importerConfig.configure_game = false
       }
 
       if (importer === 'WWMI') {
-        applyWWMILaunchSettings(importerConfig)
+        applyWwmiLaunchSettings(importerConfig)
       }
 
       if (!config.Importers) config.Importers = {}
@@ -846,8 +681,9 @@ function configureImporterGameFolder(importer: string, gameDirectory: string, _e
 function ensureLinuxCompatibility(importer: string, _executablePath?: string): void {
   const { xxmiDir } = getXXMIPaths()
   const configPath = path.join(xxmiDir, 'XXMI Launcher Config.json')
+  const importerSettings = getImporterConfig(importer)
 
-  if (!fs.existsSync(configPath)) return
+  if (!fs.existsSync(configPath) || !importerSettings) return
 
   try {
     const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'))
@@ -861,49 +697,18 @@ function ensureLinuxCompatibility(importer: string, _executablePath?: string): v
         needsSave = true
       }
 
-      // EFMI and GIMI use Inject mode; WWMI uses Hook mode (DLL loaded before d3d11 initializes)
-      const useInjectMode = usesInjectMode(importer)
-      const targetMode = useInjectMode ? 'Inject' : 'Hook'
-      if (importerConfig.custom_launch_inject_mode !== targetMode) {
-        importerConfig.custom_launch_inject_mode = targetMode
+      if (importerConfig.custom_launch_inject_mode !== importerSettings.launchMode) {
+        importerConfig.custom_launch_inject_mode = importerSettings.launchMode
         needsSave = true
       }
 
-      if (shouldDisableConfigureGame(importer) && importerConfig.configure_game !== false) {
+      if (!importerSettings.configureGame && importerConfig.configure_game !== false) {
         importerConfig.configure_game = false
         needsSave = true
       }
 
       if (importer === 'WWMI') {
-        if (importerConfig.custom_launch_enabled !== false) {
-          importerConfig.custom_launch_enabled = false
-          needsSave = true
-        }
-        if (importerConfig.custom_launch !== '') {
-          importerConfig.custom_launch = ''
-          needsSave = true
-        }
-        if (importerConfig.custom_launch_signature !== '') {
-          importerConfig.custom_launch_signature = ''
-          needsSave = true
-        }
-        if (importerConfig.use_launch_options !== true) {
-          importerConfig.use_launch_options = true
-          needsSave = true
-        }
-        if (importerConfig.launch_options !== '') {
-          importerConfig.launch_options = ''
-          needsSave = true
-        }
-        const processExeNames = JSON.stringify(importerConfig.process_exe_names || [])
-        if (processExeNames !== JSON.stringify(WWMI_PROCESS_EXE_NAMES)) {
-          importerConfig.process_exe_names = WWMI_PROCESS_EXE_NAMES
-          needsSave = true
-        }
-        if (importerConfig.xxmi_dll_init_delay !== WWMI_DLL_INIT_DELAY_MS) {
-          importerConfig.xxmi_dll_init_delay = WWMI_DLL_INIT_DELAY_MS
-          needsSave = true
-        }
+        needsSave = ensureWwmiLinuxCompatibility(importerConfig) || needsSave
       }
 
       if (needsSave) {
@@ -1011,7 +816,8 @@ export async function launchGameWithXXMI(
   winePrefix: string,
   gameEnv: Record<string, string> = {}
 ): Promise<{ success: boolean; pid?: number; error?: string }> {
-  const importer = getXXMIImporter(executablePath)
+  const gameModConfig = getGameModConfig(executablePath)
+  const importer = gameModConfig?.importer ?? null
 
   if (!importer) {
     return { success: false, error: 'No XXMI importer found for this game' }
@@ -1027,13 +833,13 @@ export async function launchGameWithXXMI(
     }
   }
 
-  const exeName = path.basename(executablePath).toLowerCase()
-  const gameId = GAME_TO_UMU_GAMEID[exeName]
   const isProtonRunner = fs.existsSync(path.join(runnerPath, 'proton'))
   const { winePrefix: normalizedWinePrefix, compatDataPath } = resolveProtonCompatPaths(winePrefix)
   // WWMI needs the dedicated Proton launch path so XXMI setup and the actual
   // game launch share the same Proton runtime instead of the generic umu path.
-  const useUmu = !!gameId && !(importer === 'WWMI' && isProtonRunner)
+  const useUmu = !!gameModConfig?.umuGameId && !(importer === 'WWMI' && isProtonRunner)
+
+  const exeName = path.basename(executablePath).toLowerCase()
 
   if (exeName === 'starrail.exe') {
     const dbghelpResult = ensureStarRailDbghelp(path.dirname(executablePath))
@@ -1084,7 +890,7 @@ export async function launchGameWithXXMI(
       const env = {
         ...process.env,
         ...gameEnv,
-        GAMEID: gameId,
+        GAMEID: gameModConfig?.umuGameId,
         PROTONPATH: runnerPath,
         WINEPREFIX: normalizedWinePrefix,
         STEAM_COMPAT_DATA_PATH: compatDataPath,
@@ -1105,13 +911,13 @@ export async function launchGameWithXXMI(
         PROTONPATH: runnerPath,
         WINEPREFIX: normalizedWinePrefix,
         STEAM_COMPAT_DATA_PATH: compatDataPath,
-        GAMEID: gameId || '0',
-        STEAM_COMPAT_APP_ID: GAME_TO_STEAM_APPID[exeName] || '0',
+        GAMEID: gameModConfig?.umuGameId || '0',
+        STEAM_COMPAT_APP_ID: gameModConfig?.steamAppId || '0',
         PROTONFIXES_DISABLE: '1',
       }
 
       if (importer === 'WWMI') {
-        const steamAppId = GAME_TO_STEAM_APPID[exeName] || '0'
+        const steamAppId = gameModConfig?.steamAppId || '0'
         prepareStandaloneWwmiRuntime(executablePath)
         const gameLaunch = buildProtonLaunchSpec(
           executablePath,

@@ -14,9 +14,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { DownloadModal } from '@/components/DownloadModal'
-import { GameInstallModal } from '@/components/GameInstallModal'
-import { EndfieldInstallModal } from '@/components/EndfieldInstallModal'
-import { WuwaInstallModal } from '@/components/WuwaInstallModal'
+import { GameInstallModal, type InstallConfig } from '@/components/GameInstallModal'
 import GameConfigModal from '@/components/GameConfigModal'
 import CoverImage from '@/components/CoverImage'
 import { formatBytes } from '@/components/install-modal-utils'
@@ -59,6 +57,93 @@ const HOYO_GAMES = [
   },
 ]
 
+const HOYO_INSTALL_BASE = {
+  genshin: {
+    slug: 'genshinimpact',
+    executable: 'GenshinImpact.exe',
+    launch: {
+      env: {
+        STEAM_COMPAT_CONFIG: 'noxalia',
+        WINEDLLOVERRIDES: 'lsteamclient=d;KRSDKExternal.exe=d',
+      },
+      preLaunch: [],
+      postLaunch: [],
+      args: '',
+    },
+    mods: { enabled: true, importer: 'GIMI' },
+  },
+  starrail: {
+    slug: 'starrail',
+    executable: 'StarRail.exe',
+    launch: {
+      env: {
+        STEAM_COMPAT_CONFIG: 'noxalia',
+        WINEDLLOVERRIDES: 'wintrust=b;dbghelp=n,b',
+        STUB_WINTRUST: '1',
+        BLOCK_FIRST_REQ: '1',
+      },
+      preLaunch: [],
+      postLaunch: [],
+      args: '',
+    },
+    mods: { enabled: true, importer: 'SRMI' },
+  },
+  zzz: {
+    slug: 'zenlesszonezero',
+    executable: 'ZenlessZoneZero.exe',
+    launch: {
+      env: {
+        STEAM_COMPAT_CONFIG: 'noxalia,gamedrive',
+        WINEDLLOVERRIDES: 'lsteamclient=d;KRSDKExternal.exe=d;jsproxy=n,b',
+      },
+      preLaunch: [],
+      postLaunch: [],
+      args: '',
+    },
+    mods: { enabled: true, importer: 'ZZMI' },
+  },
+} as const
+
+const ENDFIELD_INSTALL_BASE = {
+  gameId: 'endfield',
+  name: 'Arknights: Endfield',
+  slug: 'endfield',
+  defaultInstallDir: '~/Games/Endfield',
+  defaultPrefix: '~/Games/prefixes/endfield/pfx',
+  executable: 'Endfield.exe',
+  launch: {
+    env: {
+      STEAM_COMPAT_CONFIG: 'noxalia',
+      WINEDLLOVERRIDES: 'lsteamclient=d;KRSDKExternal.exe=d',
+    },
+    preLaunch: [],
+    postLaunch: [],
+    args: '-force-d3d11',
+  },
+  mods: { enabled: true, importer: 'EFMI' },
+  startChannel: 'download:start-endfield',
+  installDirPlaceholder: '/home/user/Games/Endfield',
+} as const
+
+const WUWA_INSTALL_BASE = {
+  gameId: 'wuwa',
+  name: 'Wuthering Waves',
+  slug: 'wuwa',
+  defaultInstallDir: '~/Games/WutheringWaves',
+  defaultPrefix: '~/Games/prefixes/wuwa/pfx',
+  executable: 'Client/Binaries/Win64/Client-Win64-Shipping.exe',
+  launch: {
+    env: { STEAM_COMPAT_CONFIG: 'noopwr,noxalia' },
+    preLaunch: [],
+    postLaunch: [],
+    args: '',
+  },
+  mods: { enabled: false, importer: 'WWMI' },
+  startChannel: 'download:start-wuwa',
+  installDirPlaceholder: '/home/user/Games/WutheringWaves',
+  locateExePlaceholder: 'Browse to Client-Win64-Shipping.exe...',
+} as const
+
 type LibraryTab = 'my-games' | 'explore'
 
 function getInstallButtonLabel(isInstalled: boolean, isAvailable: boolean): string {
@@ -95,17 +180,14 @@ function Library(): JSX.Element {
   const [selectedGame, setSelectedGame] = useState<Game | null>(null)
 
   // Explore tab state
-  const [installModalOpen, setInstallModalOpen] = useState(false)
-  const [selectedHoyoGame, setSelectedHoyoGame] = useState<typeof HOYO_GAMES[0] | null>(null)
+  const [selectedInstallConfig, setSelectedInstallConfig] = useState<InstallConfig | null>(null)
   const [hoyoVersionInfo, setHoyoVersionInfo] = useState<Record<string, HoyoVersionInfo>>({})
   const [hoyoVersionErrors, setHoyoVersionErrors] = useState<Record<string, string>>({})
   const [loadingVersions, setLoadingVersions] = useState(false)
   const [endfieldInfo, setEndfieldInfo] = useState<{ version: string; totalSize: number; installedSize: number } | null>(null)
   const [endfieldInfoError, setEndfieldInfoError] = useState<string | null>(null)
-  const [endfieldInstallOpen, setEndfieldInstallOpen] = useState(false)
   const [wuwaInfo, setWuwaInfo] = useState<WuwaVersionInfo | null>(null)
   const [wuwaInfoError, setWuwaInfoError] = useState<string | null>(null)
-  const [wuwaInstallOpen, setWuwaInstallOpen] = useState(false)
 
   const [formName, setFormName] = useState('')
   const [formDirectory, setFormDirectory] = useState('')
@@ -389,9 +471,88 @@ function Library(): JSX.Element {
     launchGame(game.id)
   }
 
+  const buildHoyoInstallConfig = (hoyoGame: typeof HOYO_GAMES[0]): InstallConfig => {
+    const base = HOYO_INSTALL_BASE[hoyoGame.biz]
+
+    return {
+      gameId: hoyoGame.biz,
+      name: hoyoGame.name,
+      slug: base.slug,
+      latestVersion: hoyoVersionInfo[hoyoGame.biz]?.version || 'Unknown',
+      defaultInstallDir: `~/Games/${hoyoGame.name}`,
+      defaultPrefix: `~/Games/prefixes/${base.slug}/pfx`,
+      executable: base.executable,
+      launch: base.launch,
+      mods: base.mods,
+      startChannel: 'download:start',
+      buildDownloadArgs: (destDir) => ({
+        gameId: hoyoGame.biz,
+        biz: hoyoGame.biz,
+        destDir,
+        useTwintail: true,
+      }),
+      downloadDetails: `Download size: ~${hoyoGame.estimatedSize}`,
+      installDirPlaceholder: `/home/user/Games/${hoyoGame.name}`,
+    }
+  }
+
+  const buildEndfieldInstallConfig = (): InstallConfig<'download:start-endfield'> => {
+    return {
+      ...ENDFIELD_INSTALL_BASE,
+      latestVersion: endfieldInfo?.version ?? '',
+      buildDownloadArgs: (destDir) => ({
+        gameId: ENDFIELD_INSTALL_BASE.gameId,
+        destDir,
+      }),
+      downloadDetails: endfieldInfo
+        ? `Download: ~${formatBytes(endfieldInfo.totalSize)} · Installed: ~${formatBytes(endfieldInfo.installedSize)}`
+        : undefined,
+    }
+  }
+
+  const buildWuwaInstallConfig = (): InstallConfig<'download:start-wuwa'> => {
+    const latestVersion = wuwaInfo?.version ?? ''
+
+    return {
+      ...WUWA_INSTALL_BASE,
+      latestVersion,
+      buildDownloadArgs: (destDir) => ({
+        gameId: WUWA_INSTALL_BASE.gameId,
+        destDir,
+      }),
+      downloadDetails: wuwaInfo ? `Download: ~${formatBytes(wuwaInfo.totalSize)}` : undefined,
+      buildLocateGameOverrides: async (directory) => {
+        const versionState = await window.api.invoke('download:check-wuwa-updates', {
+          installDir: directory,
+        })
+
+        return {
+          download: {
+            status:
+              versionState.currentVersion && versionState.latestVersion && versionState.currentVersion !== versionState.latestVersion
+                ? 'update_available'
+                : 'installed',
+            mode: 'raw',
+            currentVersion: versionState.currentVersion,
+            latestVersion: versionState.latestVersion,
+            installPath: directory,
+          },
+        }
+      },
+      buildAutoAddOverrides: async (directory) => ({
+        download: {
+          status: 'installed',
+          mode: 'raw',
+          currentVersion: latestVersion,
+          latestVersion,
+          installPath: directory,
+        },
+      }),
+    }
+  }
+
   const handleInstallGame = (hoyoGame: typeof HOYO_GAMES[0]) => {
-    setSelectedHoyoGame(hoyoGame)
-    setInstallModalOpen(true)
+    setSelectedInstallConfig(buildHoyoInstallConfig(hoyoGame))
   }
 
   const BIZ_SLUG_HINTS: Record<string, string[]> = {
@@ -450,12 +611,9 @@ function Library(): JSX.Element {
       />
 
       <GameInstallModal
-        open={installModalOpen}
-        onClose={() => setInstallModalOpen(false)}
-        gameName={selectedHoyoGame?.name || ''}
-        gameBiz={selectedHoyoGame?.biz || 'genshin'}
-        latestVersion={hoyoVersionInfo[selectedHoyoGame?.biz || '']?.version || 'Unknown'}
-        downloadSize={selectedHoyoGame?.estimatedSize}
+        open={selectedInstallConfig !== null}
+        onClose={() => setSelectedInstallConfig(null)}
+        config={selectedInstallConfig}
         onGameAdded={loadGames}
       />
 
@@ -804,7 +962,7 @@ function Library(): JSX.Element {
 
               <Button
                 className="w-full mt-auto"
-                onClick={() => setEndfieldInstallOpen(true)}
+                onClick={() => setSelectedInstallConfig(buildEndfieldInstallConfig())}
                 disabled={checkGameInstalled('endfield') || !endfieldInfo}
                 title={!endfieldInfo ? 'Version info required to install' : undefined}
               >
@@ -865,7 +1023,7 @@ function Library(): JSX.Element {
 
               <Button
                 className="w-full mt-auto"
-                onClick={() => setWuwaInstallOpen(true)}
+                onClick={() => setSelectedInstallConfig(buildWuwaInstallConfig())}
                 disabled={checkGameInstalled('wuwa') || !wuwaInfo}
                 title={!wuwaInfo ? 'Version info required to install' : undefined}
               >
@@ -875,25 +1033,6 @@ function Library(): JSX.Element {
             </CardContent>
           </Card>
           </div>
-
-          {/* Endfield Install Modal */}
-          <EndfieldInstallModal
-            open={endfieldInstallOpen}
-            onClose={() => setEndfieldInstallOpen(false)}
-            latestVersion={endfieldInfo?.version ?? ''}
-            totalSize={endfieldInfo?.totalSize ?? 0}
-            installedSize={endfieldInfo?.installedSize ?? 0}
-            onGameAdded={loadGames}
-          />
-
-          {/* Wuthering Waves Install Modal */}
-          <WuwaInstallModal
-            open={wuwaInstallOpen}
-            onClose={() => setWuwaInstallOpen(false)}
-            latestVersion={wuwaInfo?.version ?? ''}
-            totalSize={wuwaInfo?.totalSize ?? 0}
-            onGameAdded={loadGames}
-          />
         </>
       )}
     </div>

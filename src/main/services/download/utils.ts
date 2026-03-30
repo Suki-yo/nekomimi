@@ -3,11 +3,299 @@
 
 import * as crypto from 'crypto'
 import * as fs from 'fs'
+import * as http from 'http'
+import type { ClientRequest, IncomingMessage } from 'http'
+import * as https from 'https'
 import * as path from 'path'
 import { spawn } from 'child_process'
+import * as zlib from 'zlib'
 
 // Configurable user agent
-export const USER_AGENT = 'NekomimiLauncher/0.1.0'
+export const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+export const REQUEST_TIMEOUT_MS = 15000
+
+const MAX_REDIRECTS = 5
+
+type DownloadHttpErrorCode = 'abort' | 'http' | 'network' | 'parse' | 'timeout'
+
+export class DownloadHttpError extends Error {
+  code: DownloadHttpErrorCode
+  statusCode?: number
+  responseBody?: string
+
+  constructor(
+    message: string,
+    options: {
+      code: DownloadHttpErrorCode
+      statusCode?: number
+      responseBody?: string
+    }
+  ) {
+    super(message)
+    this.name = 'DownloadHttpError'
+    this.code = options.code
+    this.statusCode = options.statusCode
+    this.responseBody = options.responseBody
+  }
+}
+
+function isRedirectStatus(statusCode?: number): boolean {
+  return statusCode === 301
+    || statusCode === 302
+    || statusCode === 303
+    || statusCode === 307
+    || statusCode === 308
+}
+
+function getTransport(url: string): typeof http | typeof https {
+  const protocol = new URL(url).protocol
+  if (protocol === 'http:') {
+    return http
+  }
+  if (protocol === 'https:') {
+    return https
+  }
+  throw new DownloadHttpError(`Unsupported protocol: ${protocol}`, { code: 'http' })
+}
+
+function normalizeError(err: unknown, fallbackCode: DownloadHttpErrorCode = 'network'): DownloadHttpError {
+  if (err instanceof DownloadHttpError) {
+    return err
+  }
+
+  if (err instanceof Error) {
+    const code = err.message === 'Request aborted' ? 'abort' : fallbackCode
+    return new DownloadHttpError(err.message, { code })
+  }
+
+  return new DownloadHttpError(String(err), { code: fallbackCode })
+}
+
+function getResponseStream(response: IncomingMessage, decodeContentEncoding: boolean): NodeJS.ReadableStream {
+  if (!decodeContentEncoding) {
+    return response
+  }
+
+  const encoding = response.headers['content-encoding']
+  if (typeof encoding !== 'string') {
+    return response
+  }
+
+  if (encoding.includes('gzip')) {
+    return response.pipe(zlib.createGunzip())
+  }
+
+  if (encoding.includes('deflate')) {
+    return response.pipe(zlib.createInflate())
+  }
+
+  return response
+}
+
+async function readResponseText(
+  response: IncomingMessage,
+  decodeContentEncoding = false
+): Promise<string> {
+  const stream = getResponseStream(response, decodeContentEncoding)
+  let data = ''
+
+  for await (const chunk of stream) {
+    data += typeof chunk === 'string' ? chunk : chunk.toString()
+  }
+
+  return data
+}
+
+function withResponse<T>(
+  url: string,
+  options: {
+    headers?: Record<string, string>
+    signal?: AbortSignal
+  },
+  onResponse: (response: IncomingMessage, contentLength: number) => Promise<T> | T
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    let activeRequest: ClientRequest | null = null
+    let activeResponse: IncomingMessage | null = null
+    let settled = false
+
+    const cleanup = () => {
+      options.signal?.removeEventListener('abort', onAbort)
+    }
+
+    const fail = (err: unknown) => {
+      if (settled) {
+        return
+      }
+      settled = true
+      cleanup()
+      reject(normalizeError(err))
+    }
+
+    const succeed = (value: T) => {
+      if (settled) {
+        return
+      }
+      settled = true
+      cleanup()
+      resolve(value)
+    }
+
+    const onAbort = () => {
+      const err = new DownloadHttpError('Request aborted', { code: 'abort' })
+      activeResponse?.destroy(err)
+      activeRequest?.destroy(err)
+      fail(err)
+    }
+
+    if (options.signal?.aborted) {
+      fail(new DownloadHttpError('Request aborted', { code: 'abort' }))
+      return
+    }
+
+    options.signal?.addEventListener('abort', onAbort, { once: true })
+
+    const requestUrl = (currentUrl: string, redirectCount: number) => {
+      if (redirectCount > MAX_REDIRECTS) {
+        fail(new DownloadHttpError(`Too many redirects for URL: ${url}`, { code: 'http' }))
+        return
+      }
+
+      let request: ClientRequest
+
+      try {
+        request = getTransport(currentUrl).request(
+          currentUrl,
+          {
+            method: 'GET',
+            headers: {
+              'User-Agent': USER_AGENT,
+              ...options.headers,
+            },
+          },
+          (response) => {
+            activeResponse = response
+            clearTimeout(timeoutId)
+
+            if (isRedirectStatus(response.statusCode)) {
+              const location = response.headers.location
+              if (!location) {
+                fail(
+                  new DownloadHttpError('Redirect response missing location header', {
+                    code: 'http',
+                    statusCode: response.statusCode,
+                  })
+                )
+                return
+              }
+
+              response.resume()
+              activeResponse = null
+              requestUrl(new URL(location, currentUrl).toString(), redirectCount + 1)
+              return
+            }
+
+            if (!response.statusCode || response.statusCode < 200 || response.statusCode >= 300) {
+              void readResponseText(response)
+                .then((body) => {
+                  fail(
+                    new DownloadHttpError(
+                      `HTTP ${response.statusCode}: ${response.statusMessage ?? 'Request failed'}`,
+                      {
+                        code: 'http',
+                        statusCode: response.statusCode,
+                        responseBody: body.substring(0, 500),
+                      }
+                    )
+                  )
+                })
+                .catch((err) => fail(err))
+              return
+            }
+
+            const contentLength = parseInt(response.headers['content-length'] || '0', 10) || 0
+            Promise.resolve(onResponse(response, contentLength)).then(succeed, fail)
+          }
+        )
+      } catch (err) {
+        fail(err)
+        return
+      }
+
+      activeRequest = request
+
+      const timeoutId = setTimeout(() => {
+        const err = new DownloadHttpError(`Request timeout after ${REQUEST_TIMEOUT_MS}ms`, {
+          code: 'timeout',
+        })
+        activeResponse?.destroy(err)
+        request.destroy(err)
+        fail(err)
+      }, REQUEST_TIMEOUT_MS)
+
+      request.on('error', (err) => {
+        clearTimeout(timeoutId)
+        if (settled) {
+          return
+        }
+        fail(normalizeError(err))
+      })
+
+      request.end()
+    }
+
+    requestUrl(url, 0)
+  })
+}
+
+export async function fetchJSON<T>(url: string, signal?: AbortSignal): Promise<T> {
+  return withResponse(
+    url,
+    {
+      headers: {
+        Accept: 'application/json, text/plain, */*',
+        'Accept-Encoding': 'gzip, deflate',
+      },
+      signal,
+    },
+    async (response) => {
+      const data = await readResponseText(response, true)
+      const trimmedData = data.trim()
+
+      if (trimmedData.startsWith('<!') || trimmedData.startsWith('<html')) {
+        throw new DownloadHttpError('Received HTML instead of JSON', {
+          code: 'parse',
+          statusCode: response.statusCode,
+          responseBody: trimmedData.substring(0, 500),
+        })
+      }
+
+      try {
+        return JSON.parse(data) as T
+      } catch {
+        throw new DownloadHttpError(`Failed to parse JSON: ${data.substring(0, 100)}`, {
+          code: 'parse',
+          statusCode: response.statusCode,
+          responseBody: data.substring(0, 500),
+        })
+      }
+    }
+  )
+}
+
+export function downloadStream(
+  url: string,
+  options: {
+    headers?: Record<string, string>
+    onResponse: (res: IncomingMessage, contentLength: number) => Promise<void> | void
+    signal?: AbortSignal
+  }
+): Promise<void> {
+  return withResponse(url, {
+    headers: options.headers,
+    signal: options.signal,
+  }, options.onResponse)
+}
 
 // Streaming MD5 for large files - avoids loading GB-scale files into memory
 export async function streamingMd5(filePath: string): Promise<string> {

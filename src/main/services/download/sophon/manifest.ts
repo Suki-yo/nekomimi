@@ -1,9 +1,8 @@
 // Sophon manifest parser
 // Fetches, decompresses (zstd), and parses protobuf manifests
 
-import * as https from 'https'
 import { decodeManifest } from './proto'
-import { decompressZstd, USER_AGENT } from '../utils'
+import { decompressZstd, downloadStream } from '../utils'
 import type { SophonManifest, SophonManifestFile } from '../../../../shared/types/download'
 
 // Simple progress callback type
@@ -11,64 +10,25 @@ export type ProgressCallback = (percent: number) => void
 
 // Fetch raw data from URL
 function fetchBuffer(url: string, onProgress?: ProgressCallback): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = []
+  const chunks: Buffer[] = []
 
-    const followRedirect = (currentUrl: string, redirectCount = 0) => {
-      if (redirectCount > 5) {
-        reject(new Error(`Too many redirects for URL: ${url}`))
-        return
-      }
+  console.log(`[sophon] Fetching: ${url}`)
+  return downloadStream(url, {
+    onResponse: (response, totalSize) => new Promise<void>((resolve, reject) => {
+      let downloaded = 0
 
-      https
-        .get(
-          currentUrl,
-          {
-            headers: {
-              'User-Agent': USER_AGENT,
-            },
-          },
-          (response) => {
-            if (response.statusCode === 301 || response.statusCode === 302) {
-              const location = response.headers.location
-              if (location) {
-                console.log(`[sophon] Redirecting to: ${location}`)
-                followRedirect(location, redirectCount + 1)
-                return
-              }
-            }
+      response.on('data', (chunk: Buffer) => {
+        chunks.push(chunk)
+        downloaded += chunk.length
+        if (totalSize > 0 && onProgress) {
+          onProgress(Math.round((downloaded / totalSize) * 100))
+        }
+      })
 
-            if (response.statusCode !== 200) {
-              reject(new Error(`HTTP ${response.statusCode} - Failed to fetch: ${currentUrl}`))
-              return
-            }
-
-            const totalSize = parseInt(response.headers['content-length'] || '0', 10)
-            let downloaded = 0
-
-            response.on('data', (chunk: Buffer) => {
-              chunks.push(chunk)
-              downloaded += chunk.length
-              if (totalSize > 0 && onProgress) {
-                onProgress(Math.round((downloaded / totalSize) * 100))
-              }
-            })
-
-            response.on('end', () => {
-              resolve(Buffer.concat(chunks))
-            })
-
-            response.on('error', reject)
-          }
-        )
-        .on('error', (err) => {
-          reject(new Error(`Network error for ${url}: ${err.message}`))
-        })
-    }
-
-    console.log(`[sophon] Fetching: ${url}`)
-    followRedirect(url)
-  })
+      response.once('end', () => resolve())
+      response.once('error', reject)
+    }),
+  }).then(() => Buffer.concat(chunks))
 }
 
 // Fetch and parse Sophon manifest

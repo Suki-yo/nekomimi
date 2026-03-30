@@ -1,8 +1,6 @@
 // IPC handlers for game downloads
 
 import { ipcMain, BrowserWindow } from 'electron'
-import * as os from 'os'
-import * as path from 'path'
 import {
   getGameVersionInfo,
   startGameDownload,
@@ -15,7 +13,61 @@ import {
   detectWuwaInstalledVersion,
   startWuwaDownload,
 } from '../services/download'
+import { expandHome } from '../services/paths'
 import type { HoyoGameBiz, DownloadProgress } from '../../shared/types/download'
+
+type DownloadStartResult = { success: boolean; error?: string }
+
+function canSendToWindow(win: BrowserWindow | null): win is BrowserWindow {
+  return !!win && !win.isDestroyed() && !win.webContents.isDestroyed()
+}
+
+function sendToWindow(win: BrowserWindow | null, channel: string, payload: unknown): void {
+  if (canSendToWindow(win)) {
+    win.webContents.send(channel, payload)
+  }
+}
+
+function registerDownloadStartHandler<TArgs extends { gameId: string; destDir: string }>(
+  channel: string,
+  logMessage: (args: TArgs) => string,
+  startFn: (
+    args: TArgs & { destDir: string; onProgress: (progress: DownloadProgress) => void }
+  ) => Promise<DownloadStartResult>,
+): void {
+  ipcMain.handle(channel, async (event, args: TArgs) => {
+    console.log(logMessage(args))
+    const win = BrowserWindow.fromWebContents(event.sender)
+
+    const result = await startFn({
+      ...args,
+      destDir: expandHome(args.destDir),
+      onProgress: (progress: DownloadProgress) => {
+        sendToWindow(win, 'download:progress', progress)
+      },
+    })
+
+    if (result.success) {
+      sendToWindow(win, 'download:complete', { gameId: args.gameId })
+    } else {
+      sendToWindow(win, 'download:error', { gameId: args.gameId, error: result.error })
+    }
+
+    return result
+  })
+}
+
+function registerUpdateCheckHandler<TArgs extends { installDir?: string }, TResult>(
+  channel: string,
+  checkFn: (args: TArgs) => Promise<TResult>,
+): void {
+  ipcMain.handle(channel, async (_event, args: TArgs) => {
+    return await checkFn({
+      ...args,
+      installDir: args.installDir ? expandHome(args.installDir) : undefined,
+    } as TArgs)
+  })
+}
 
 export const registerDownloadHandlers = () => {
   // Fetch game version info from official API
@@ -27,49 +79,20 @@ export const registerDownloadHandlers = () => {
     }
   )
 
-  // Start a game download
-  ipcMain.handle(
+  registerDownloadStartHandler(
     'download:start',
-    async (event, { gameId, biz, destDir, manifestUrl, useTwintail, preferVersion }: {
+    ({ gameId, biz }) => `[download] Starting download for ${gameId} (${biz})`,
+    async (args: {
       gameId: string
       biz: HoyoGameBiz
       destDir: string
       manifestUrl?: string
       useTwintail?: boolean
       preferVersion?: string
+      onProgress: (progress: DownloadProgress) => void
     }) => {
-      console.log(`[download] Starting download for ${gameId} (${biz})`)
-      const win = BrowserWindow.fromWebContents(event.sender)
-
-      // Expand ~ to actual home directory
-      const resolvedDestDir = destDir.startsWith('~')
-        ? path.join(os.homedir(), destDir.slice(1))
-        : destDir
-
-      const result = await startGameDownload({
-        gameId,
-        biz,
-        destDir: resolvedDestDir,
-        manifestUrl,
-        useTwintail,
-        preferVersion,
-        onProgress: (progress: DownloadProgress) => {
-          if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
-            win.webContents.send('download:progress', progress)
-          }
-        },
-      })
-
-      if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
-        if (result.success) {
-          win.webContents.send('download:complete', { gameId })
-        } else {
-          win.webContents.send('download:error', { gameId, error: result.error })
-        }
-      }
-
-      return result
-    }
+      return await startGameDownload(args)
+    },
   )
 
   // Cancel an active download
@@ -89,10 +112,9 @@ export const registerDownloadHandlers = () => {
     }
   )
 
-  // Check for game updates
-  ipcMain.handle(
+  registerUpdateCheckHandler(
     'download:check-updates',
-    async (_event, { biz, currentVersion, installDir }: { biz: HoyoGameBiz; currentVersion?: string; installDir?: string }) => {
+    async ({ biz, currentVersion, installDir }: { biz: HoyoGameBiz; currentVersion?: string; installDir?: string }) => {
       console.log(`[download] Checking updates for ${biz} (current: ${currentVersion ?? 'unknown'})`)
 
       // Use Twintail for update checks (more reliable)
@@ -108,12 +130,8 @@ export const registerDownloadHandlers = () => {
         }
       }
 
-      const resolvedInstallDir = installDir
-        ? (installDir.startsWith('~') ? path.join(os.homedir(), installDir.slice(1)) : installDir)
-        : undefined
-
-      const detectedVersion = resolvedInstallDir
-        ? await detectHoyoInstalledVersion(resolvedInstallDir, biz)
+      const detectedVersion = installDir
+        ? await detectHoyoInstalledVersion(installDir, biz)
         : null
 
       const effectiveCurrentVersion = detectedVersion || currentVersion || undefined
@@ -137,36 +155,12 @@ export const registerDownloadHandlers = () => {
     return await fetchEndfieldVersionInfo()
   })
 
-  // Start Endfield download
-  ipcMain.handle(
+  registerDownloadStartHandler(
     'download:start-endfield',
-    async (event, { gameId, destDir }: { gameId: string; destDir: string }) => {
-      console.log(`[download] Starting Endfield download to ${destDir}`)
-      const win = BrowserWindow.fromWebContents(event.sender)
-      const resolvedDestDir = destDir.startsWith('~')
-        ? path.join(os.homedir(), destDir.slice(1))
-        : destDir
-
-      const result = await startEndfieldDownload({
-        gameId,
-        destDir: resolvedDestDir,
-        onProgress: (progress: DownloadProgress) => {
-          if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
-            win.webContents.send('download:progress', progress)
-          }
-        },
-      })
-
-      if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
-        if (result.success) {
-          win.webContents.send('download:complete', { gameId })
-        } else {
-          win.webContents.send('download:error', { gameId, error: result.error })
-        }
-      }
-
-      return result
-    }
+    ({ destDir }) => `[download] Starting Endfield download to ${destDir}`,
+    async (args: { gameId: string; destDir: string; onProgress: (progress: DownloadProgress) => void }) => {
+      return await startEndfieldDownload(args)
+    },
   )
 
   // Fetch Wuthering Waves version info
@@ -174,42 +168,17 @@ export const registerDownloadHandlers = () => {
     return await fetchWuwaVersionInfo()
   })
 
-  // Start Wuthering Waves download
-  ipcMain.handle(
+  registerDownloadStartHandler(
     'download:start-wuwa',
-    async (event, { gameId, destDir }: { gameId: string; destDir: string }) => {
-      console.log(`[download] Starting Wuthering Waves download to ${destDir}`)
-      const win = BrowserWindow.fromWebContents(event.sender)
-      const resolvedDestDir = destDir.startsWith('~')
-        ? path.join(os.homedir(), destDir.slice(1))
-        : destDir
-
-      const result = await startWuwaDownload({
-        gameId,
-        destDir: resolvedDestDir,
-        onProgress: (progress: DownloadProgress) => {
-          if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
-            win.webContents.send('download:progress', progress)
-          }
-        },
-      })
-
-      if (win && !win.isDestroyed() && !win.webContents.isDestroyed()) {
-        if (result.success) {
-          win.webContents.send('download:complete', { gameId })
-        } else {
-          win.webContents.send('download:error', { gameId, error: result.error })
-        }
-      }
-
-      return result
-    }
+    ({ destDir }) => `[download] Starting Wuthering Waves download to ${destDir}`,
+    async (args: { gameId: string; destDir: string; onProgress: (progress: DownloadProgress) => void }) => {
+      return await startWuwaDownload(args)
+    },
   )
 
-  // Check Wuthering Waves updates
-  ipcMain.handle(
+  registerUpdateCheckHandler(
     'download:check-wuwa-updates',
-    async (_event, { currentVersion, installDir }: { currentVersion?: string; installDir?: string }) => {
+    async ({ currentVersion, installDir }: { currentVersion?: string; installDir?: string }) => {
       const latest = await fetchWuwaVersionInfo()
       if (!latest) {
         return {
@@ -219,12 +188,8 @@ export const registerDownloadHandlers = () => {
         }
       }
 
-      const resolvedInstallDir = installDir
-        ? (installDir.startsWith('~') ? path.join(os.homedir(), installDir.slice(1)) : installDir)
-        : undefined
-
-      const detectedVersion = resolvedInstallDir
-        ? await detectWuwaInstalledVersion(resolvedInstallDir)
+      const detectedVersion = installDir
+        ? await detectWuwaInstalledVersion(installDir)
         : null
 
       const effectiveCurrentVersion = detectedVersion || currentVersion || undefined

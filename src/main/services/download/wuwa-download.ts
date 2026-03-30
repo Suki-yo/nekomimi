@@ -3,9 +3,8 @@
 
 import * as fs from 'fs'
 import * as path from 'path'
-import * as https from 'https'
 import { fetchWuwaVersionInfo, fetchWuwaManifest } from './wuwa-api'
-import { streamingMd5 } from './utils'
+import { downloadStream, streamingMd5 } from './utils'
 import type { DownloadProgress, WuwaFileEntry } from '../../../shared/types/download'
 
 const CONCURRENCY = 4
@@ -23,80 +22,38 @@ function downloadFile(
   destPath: string,
   signal?: AbortSignal
 ): Promise<{ success: boolean; error?: string }> {
-  return new Promise((resolve) => {
-    if (signal?.aborted) {
-      resolve({ success: false, error: 'Aborted' })
-      return
-    }
-
+  return (async () => {
     const dir = path.dirname(destPath)
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true })
     }
 
-    const followRedirect = (currentUrl: string, redirectCount = 0) => {
-      if (redirectCount > 5) {
-        resolve({ success: false, error: 'Too many redirects' })
-        return
-      }
+    if (signal?.aborted) {
+      return { success: false, error: 'Aborted' }
+    }
 
-      const req = https.get(
-        currentUrl,
-        { headers: { 'User-Agent': 'Mozilla/5.0' } },
-        (response) => {
-          if (response.statusCode === 301 || response.statusCode === 302) {
-            const location = response.headers.location
-            if (location) {
-              followRedirect(location, redirectCount + 1)
-              return
-            }
-          }
+    const tmp = destPath + '.tmp'
 
-          if (response.statusCode !== 200) {
-            resolve({ success: false, error: `HTTP ${response.statusCode}` })
-            return
-          }
-
-          const tmp = destPath + '.tmp'
+    try {
+      await downloadStream(url, {
+        signal,
+        onResponse: (response) => new Promise<void>((resolveStream, rejectStream) => {
           const fileStream = fs.createWriteStream(tmp)
 
           response.pipe(fileStream)
+          fileStream.once('finish', () => resolveStream())
+          fileStream.once('error', rejectStream)
+          response.once('error', rejectStream)
+        }),
+      })
 
-          fileStream.on('finish', () => {
-            fileStream.close()
-            try {
-              fs.renameSync(tmp, destPath)
-              resolve({ success: true })
-            } catch (err) {
-              resolve({ success: false, error: String(err) })
-            }
-          })
-
-          fileStream.on('error', (err) => {
-            fs.existsSync(tmp) && fs.unlinkSync(tmp)
-            resolve({ success: false, error: err.message })
-          })
-
-          response.on('error', (err) => {
-            fileStream.destroy()
-            fs.existsSync(tmp) && fs.unlinkSync(tmp)
-            resolve({ success: false, error: err.message })
-          })
-
-          signal?.addEventListener('abort', () => {
-            req.destroy()
-            fileStream.destroy()
-            fs.existsSync(tmp) && fs.unlinkSync(tmp)
-            resolve({ success: false, error: 'Aborted' })
-          }, { once: true })
-        }
-      )
-
-      req.on('error', (err) => resolve({ success: false, error: err.message }))
+      fs.renameSync(tmp, destPath)
+      return { success: true }
+    } catch (err) {
+      fs.rmSync(tmp, { force: true })
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
     }
-
-    followRedirect(url)
-  })
+  })()
 }
 
 // Check if a file is already correctly downloaded

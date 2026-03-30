@@ -6,6 +6,18 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { APP_NAME } from '../../shared/constants'
 
+export function expandHome(value: string): string {
+  if (value === '~') {
+    return app.getPath('home')
+  }
+
+  if (value.startsWith('~/') || value.startsWith('~\\')) {
+    return path.join(app.getPath('home'), value.slice(2))
+  }
+
+  return value
+}
+
 // Base directory for all app data.
 // Use one stable location in both dev and packaged runs so local testing sees
 // the same library/config without depending on the current working directory.

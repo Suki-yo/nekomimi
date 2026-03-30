@@ -1,16 +1,23 @@
 import { spawn, execSync } from 'child_process'
-import { mkdirSync, existsSync, writeFileSync } from 'fs'
-import { join } from 'path'
+import { existsSync, mkdirSync } from 'fs'
 import { homedir } from 'os'
+import { join } from 'path'
 import { getGame, updateGame } from './database'
 import { loadGameConfig, saveGameConfig } from './config'
-import { shouldUseXXMI, launchGameWithXXMI, cleanupStandaloneWwmiRuntime } from './mod-manager'
+import {
+  getSteamCompatAppId,
+  getUmuGameId as resolveUmuGameId,
+  prepareGameForLaunch,
+  resolvePreLaunchCommands,
+  runPostBootstrapHooks,
+  validateGameLaunchConfig,
+} from './game-launch-hooks'
+import { shouldUseXXMI, launchGameWithXXMI } from './mod-manager'
+import { ProcessMonitor, type ProcessMonitorEntry } from './process-monitor'
 import { findSteamrt, downloadSteamrt } from './steamrt'
+import { expandHome } from './paths'
+import { cleanupStandaloneWwmiRuntime } from './wuwa-mod-config'
 import type { Game } from '../../shared/types/game'
-
-function expandHome(p: string): string {
-  return p.startsWith('~/') ? join(homedir(), p.slice(2)) : p
-}
 
 function resolveProtonCompatPaths(prefixPath: string): { winePrefix: string; compatDataPath: string } {
   if (/\/pfx\/?$/.test(prefixPath)) {
@@ -54,320 +61,40 @@ function shellSplit(input: string): string[] {
   return args
 }
 
-function isTwintailManagedPath(value: string | undefined): boolean {
-  return !!value && value.includes('/twintaillauncher/')
-}
-
-function validateStandaloneWuwaConfig(game: Game): string | null {
-  if (game.slug !== 'wuwa') return null
-
-  if (isTwintailManagedPath(game.runner.path)) {
-    return 'WuWa runner still points at Twintail-managed storage. Move it to a nekomimi-managed runner before launching.'
-  }
-
-  if (isTwintailManagedPath(game.runner.prefix)) {
-    return 'WuWa prefix still points at Twintail-managed storage. Move it to a nekomimi-managed prefix before launching.'
-  }
-
-  return null
-}
-
-const GENSHIN_FPS_UNLOCK_SCRIPT = '/home/jyq/dev/suki-yo/nekomimi/dev-data/fps_unlock/start-genshin-keqing.sh'
-const DEFAULT_GENSHIN_FPS_UNLOCK_FPS = 200
-
-function isGenshinGame(game: Game): boolean {
-  return game.slug === 'genshinimpact' || game.executable.split(/[/\\]/).pop() === 'GenshinImpact.exe'
-}
-
-function isGenshinFpsUnlockCommand(command: string): boolean {
-  return command.trim().startsWith(GENSHIN_FPS_UNLOCK_SCRIPT)
-}
-
-function normalizeGenshinFps(value: number | undefined): number {
-  if (!Number.isFinite(value)) {
-    return DEFAULT_GENSHIN_FPS_UNLOCK_FPS
-  }
-
-  return Math.max(30, Math.round(value as number))
-}
-
-function resolvePreLaunchCommands(game: Game): string[] {
-  const commands = [...(game.launch.preLaunch || [])]
-
-  if (!isGenshinGame(game)) {
-    return commands
-  }
-
-  const nonUnlockerCommands = commands.filter((command) => !isGenshinFpsUnlockCommand(command))
-
-  const fpsUnlock = game.mods?.fpsUnlock
-  if (fpsUnlock?.enabled === false) {
-    return nonUnlockerCommands
-  }
-
-  // The unlocker must start after XXMI/vanilla launch begins; starting it here can
-  // interfere with the game bootstrap under the shared Proton prefix.
-  return nonUnlockerCommands
-}
-
-function resolveGenshinFpsUnlockCommand(game: Game): string | null {
-  if (!isGenshinGame(game)) {
-    return null
-  }
-
-  const fpsUnlock = game.mods?.fpsUnlock
-  if (fpsUnlock?.enabled === false) {
-    return null
-  }
-
-  return `${GENSHIN_FPS_UNLOCK_SCRIPT} ${normalizeGenshinFps(fpsUnlock?.fps)}`
-}
-
-function launchOptionalGenshinFpsUnlock(game: Game): void {
-  const command = resolveGenshinFpsUnlockCommand(game)
-  if (!command) {
-    return
-  }
-
-  console.log(`[launch] Starting Genshin FPS unlocker: ${command}`)
-  try {
-    execSync(command, { stdio: 'inherit' })
-  } catch (error) {
-    console.warn('[launch] Genshin FPS unlocker failed to start:', error)
-  }
-}
-
-interface RunningGame {
-  exeName: string
-  executablePath: string
+interface RunningGameMetadata {
   gameName: string
   configPath: string
   initialPlaytime: number
   postLaunch: string[]
-  launcherPid?: number
-  gamePid?: number
-  startTime: number
-  lastCheck: number
   cleanupWwmiRuntime?: boolean
 }
 
-const STEAM_APP_IDS: Record<string, string> = {
-  wuwa: '3513350',
-}
-
-const runningProcesses = new Map<string, RunningGame>()
-const POLL_INTERVAL = 5000
-
-interface ProcessInfo {
-  pid: number
-  ppid: number
-  etimes: number
-  command: string
-  args: string
-}
-
-interface GameProcessTarget {
-  exeName: string
-  executablePath: string
-}
-
-const WRAPPER_PROCESS_COMMANDS = new Set([
-  'bash',
-  'python',
-  'python3',
-  'pv-adverb',
-  'rundll32.exe',
-  'srt-bwrap',
-  'steam.exe',
-  'umu-run',
-  'wine',
-  'wine64',
-  'wineserver',
-])
-
-function normalizeProcessValue(value: string): string {
-  return value.toLowerCase().replace(/\\/g, '/')
-}
-
-function stripExeExtension(value: string): string {
-  return value.replace(/\.[^.]+$/, '')
-}
-
-function isWrapperProcess(proc: ProcessInfo): boolean {
-  const command = normalizeProcessValue(proc.command).split('/').pop() || ''
-  if (WRAPPER_PROCESS_COMMANDS.has(command)) {
-    return true
-  }
-
-  const args = normalizeProcessValue(proc.args)
-  return (
-    args.includes('/pressure-vessel/') ||
-    args.includes(' waitforexitandrun ') ||
-    args.includes('/proton waitforexitandrun ') ||
-    args.includes('/steam.exe ') ||
-    args.includes(' setupapi,installhinfsection ') ||
-    args.includes('/wine.inf')
-  )
-}
-
-function matchesGameCommand(command: string, exeName: string): boolean {
-  const normalizedCommand = normalizeProcessValue(command).split('/').pop() || ''
-  const normalizedExeName = normalizeProcessValue(exeName)
-  const exeStem = stripExeExtension(normalizedExeName)
-
-  if (normalizedCommand === normalizedExeName || normalizedCommand === exeStem) {
-    return true
-  }
-
-  // Wine often truncates Linux-side comm names to 15 chars.
-  return exeStem.length > 15 && normalizedCommand === exeStem.slice(0, 15)
-}
-
-function matchesGameArgs(args: string, target: GameProcessTarget): boolean {
-  const normalizedArgs = normalizeProcessValue(args)
-  const normalizedExecutablePath = normalizeProcessValue(target.executablePath)
-  const normalizedExeName = normalizeProcessValue(target.exeName)
-
-  return (
-    normalizedArgs.includes(normalizedExecutablePath) ||
-    normalizedArgs.includes(`/${normalizedExeName}`) ||
-    normalizedArgs.includes(`\\${normalizedExeName}`) ||
-    normalizedArgs.includes(` ${normalizedExeName}`) ||
-    normalizedArgs.endsWith(normalizedExeName)
-  )
-}
-
-function isProcessRunning(target: GameProcessTarget): boolean {
-  if (!target.exeName) return false
-  return listProcesses().some((proc) => matchesGameProcess(proc, target))
-}
-
-function isPidRunning(pid?: number): boolean {
-  if (!pid) return false
-
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch {
-    return false
-  }
-}
-
-function listProcesses(): ProcessInfo[] {
-  try {
-    const output = execSync('ps -eo pid=,ppid=,etimes=,comm=,args=', { stdio: 'pipe' }).toString()
-    return output
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => {
-        const match = line.match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/)
-        if (!match) return null
-        return {
-          pid: Number(match[1]),
-          ppid: Number(match[2]),
-          etimes: Number(match[3]),
-          command: match[4],
-          args: match[5],
-        }
-      })
-      .filter((proc): proc is ProcessInfo => proc !== null)
-  } catch {
-    return []
-  }
-}
-
-function getDescendantPids(rootPid: number, processes: ProcessInfo[]): Set<number> {
-  const descendants = new Set<number>()
-  const queue = [rootPid]
-
-  while (queue.length > 0) {
-    const current = queue.shift()!
-    for (const proc of processes) {
-      if (proc.ppid !== current || descendants.has(proc.pid)) continue
-      descendants.add(proc.pid)
-      queue.push(proc.pid)
-    }
-  }
-
-  return descendants
-}
-
-function matchesGameProcess(proc: ProcessInfo, target: GameProcessTarget): boolean {
-  if (isWrapperProcess(proc)) {
-    return false
-  }
-
-  return (
-    matchesGameCommand(proc.command, target.exeName) ||
-    matchesGameArgs(proc.args, target)
-  )
-}
-
-function pickBestGameProcess(candidates: ProcessInfo[], running: RunningGame): ProcessInfo | undefined {
-  if (candidates.length === 0) return undefined
-
-  const sessionAgeSeconds = Math.max(1, Math.ceil((Date.now() - running.startTime) / 1000))
-  const recentCandidates = candidates.filter((proc) => proc.etimes <= sessionAgeSeconds + 15)
-  const pool = recentCandidates.length > 0 ? recentCandidates : candidates
-
-  return pool.sort((a, b) => {
-    const aScore = Number(a.command.toLowerCase() === running.exeName.toLowerCase()) * 2 + Number(a.args.toLowerCase().includes(running.executablePath.toLowerCase()))
-    const bScore = Number(b.command.toLowerCase() === running.exeName.toLowerCase()) * 2 + Number(b.args.toLowerCase().includes(running.executablePath.toLowerCase()))
-    if (aScore !== bScore) return bScore - aScore
-    return a.etimes - b.etimes
-  })[0]
-}
-
-function resolveGamePid(running: RunningGame, processes: ProcessInfo[]): number | undefined {
-  if (running.gamePid && processes.some((proc) => proc.pid === running.gamePid)) {
-    return running.gamePid
-  }
-
-  const descendantPids = running.launcherPid ? getDescendantPids(running.launcherPid, processes) : null
-  const descendantCandidates = descendantPids
-    ? processes.filter((proc) => descendantPids.has(proc.pid) && matchesGameProcess(proc, running))
-    : []
-  const descendantMatch = pickBestGameProcess(descendantCandidates, running)
-  if (descendantMatch) {
-    return descendantMatch.pid
-  }
-
-  const globalMatch = pickBestGameProcess(
-    processes.filter((proc) => matchesGameProcess(proc, running)),
-    running
-  )
-  if (globalMatch) {
-    return globalMatch.pid
-  }
-
-  return undefined
-}
+type RunningGame = ProcessMonitorEntry<RunningGameMetadata>
 
 function finalizeRunningGame(gameId: string, running: RunningGame) {
   const completedAt = new Date().toISOString()
   const sessionPlaytime = (Date.now() - running.startTime) / 1000 / 60 / 60
-  const totalPlaytime = running.initialPlaytime + sessionPlaytime
+  const totalPlaytime = running.metadata.initialPlaytime + sessionPlaytime
 
-  console.log(`[launch] Finalizing session for ${running.gameName}`)
+  console.log(`[launch] Finalizing session for ${running.metadata.gameName}`)
 
   updateGame(gameId, {
     playtime: totalPlaytime,
     last_played: completedAt,
   })
 
-  const loadedGame = loadGameConfig(running.configPath)
+  const loadedGame = loadGameConfig(running.metadata.configPath)
   if (loadedGame) {
     loadedGame.playtime = totalPlaytime
     loadedGame.lastPlayed = completedAt
     saveGameConfig(loadedGame)
   }
 
-  if (running.cleanupWwmiRuntime) {
+  if (running.metadata.cleanupWwmiRuntime) {
     cleanupStandaloneWwmiRuntime(running.executablePath)
   }
 
-  for (const cmd of running.postLaunch) {
+  for (const cmd of running.metadata.postLaunch) {
     console.log(`[launch] Running post-launch: ${cmd}`)
     try {
       execSync(cmd, { stdio: 'inherit' })
@@ -376,35 +103,9 @@ function finalizeRunningGame(gameId: string, running: RunningGame) {
     }
   }
 
-  runningProcesses.delete(gameId)
 }
 
-function cleanupStaleEntries() {
-  const now = Date.now()
-  const processes = listProcesses()
-
-  for (const [gameId, running] of runningProcesses.entries()) {
-    const launcherRunning = running.launcherPid ? isPidRunning(running.launcherPid) : false
-    const gamePid = resolveGamePid(running, processes)
-    const gameRunning = !!gamePid
-
-    if (!gameRunning && !launcherRunning) {
-      finalizeRunningGame(gameId, running)
-    } else {
-      running.gamePid = gamePid
-      running.lastCheck = now
-    }
-  }
-}
-
-let pollInterval: NodeJS.Timeout | null = null
-
-function startPolling() {
-  if (pollInterval) return
-  pollInterval = setInterval(cleanupStaleEntries, POLL_INTERVAL)
-}
-
-startPolling()
+const processMonitor = new ProcessMonitor<RunningGameMetadata>(finalizeRunningGame)
 
 function resolveRunnerPrefix(game: Game): string {
   const configuredPrefix = expandHome(game.runner.prefix)
@@ -415,19 +116,6 @@ function resolveRunnerPrefix(game: Game): string {
   const generatedPrefix = join(homedir(), '.local', 'share', 'nekomimi', 'prefixes', game.slug, 'pfx')
   mkdirSync(generatedPrefix, { recursive: true })
   return generatedPrefix
-}
-
-function getUmuGameId(game: Game): string {
-  const configuredGameId = game.launch.env?.GAMEID
-  if (configuredGameId) {
-    return configuredGameId
-  }
-
-  if (game.slug === 'wuwa') {
-    return 'umu-3513350'
-  }
-
-  return '0'
 }
 
 function buildLaunchCommand(game: Game, useXXMI: boolean): { command: string; args: string[]; env: Record<string, string> } {
@@ -446,6 +134,7 @@ function buildLaunchCommand(game: Game, useXXMI: boolean): { command: string; ar
   if (game.runner.type === 'proton') {
     const { winePrefix, compatDataPath } = resolveProtonCompatPaths(prefix)
     const steamrt = findSteamrt()
+    const steamAppId = getSteamCompatAppId(game.slug)
     const shaderCache = join(compatDataPath, 'shadercache')
     mkdirSync(shaderCache, { recursive: true })
     env.SteamOS = '1'
@@ -461,7 +150,7 @@ function buildLaunchCommand(game: Game, useXXMI: boolean): { command: string; ar
         'z:\\' + game.executable,
       ]
       env.PROTONFIXES_DISABLE = '1'
-      env.STEAM_COMPAT_APP_ID = STEAM_APP_IDS[game.slug] || '0'
+      env.STEAM_COMPAT_APP_ID = steamAppId || '0'
       env.STEAM_COMPAT_CLIENT_INSTALL_PATH = ''
       env.STEAM_COMPAT_DATA_PATH = compatDataPath
       env.STEAM_COMPAT_INSTALL_PATH = game.directory
@@ -474,9 +163,9 @@ function buildLaunchCommand(game: Game, useXXMI: boolean): { command: string; ar
       // Fallback to umu-run if Steam Runtime not found
       command = 'umu-run'
       env.PROTONPATH = runnerPath
-      env.GAMEID = getUmuGameId(game)
-      if (game.slug === 'wuwa') {
-        env.STEAM_COMPAT_APP_ID = STEAM_APP_IDS[game.slug]
+      env.GAMEID = resolveUmuGameId(game)
+      if (steamAppId) {
+        env.STEAM_COMPAT_APP_ID = steamAppId
       }
       env.STEAM_COMPAT_DATA_PATH = compatDataPath
       args = [game.executable]
@@ -504,21 +193,11 @@ function buildLaunchCommand(game: Game, useXXMI: boolean): { command: string; ar
   return { command, args, env }
 }
 
-function ensureSteamCompatMarkers(game: Game): void {
-  if (game.slug !== 'wuwa') return
-
-  const steamAppIdPath = join(game.directory, 'Client', 'Binaries', 'Win64', 'steam_appid.txt')
-  if (!existsSync(steamAppIdPath)) {
-    writeFileSync(steamAppIdPath, `${STEAM_APP_IDS.wuwa}\n`, 'utf-8')
-  }
-}
-
 export async function launchGame(
   gameId: string,
   onProgress?: (step: string, percent: number) => void
 ): Promise<{ success: boolean; pid?: number; error?: string }> {
-  startPolling()
-  cleanupStaleEntries()
+  processMonitor.cleanupStaleEntries()
 
   const gameRow = getGame(gameId)
   if (!gameRow) {
@@ -531,21 +210,22 @@ export async function launchGame(
   }
   const game = loadedGame
 
-  const standaloneConfigError = validateStandaloneWuwaConfig(game)
+  const standaloneConfigError = validateGameLaunchConfig(game)
   if (standaloneConfigError) {
     return { success: false, error: standaloneConfigError }
   }
 
   const exeName = game.executable.split(/[/\\]/).pop() || game.executable
 
-  if (isProcessRunning({ exeName, executablePath: game.executable })) {
+  if (processMonitor.isProcessRunning({ exeName, executablePath: game.executable })) {
     console.log(`[launch] ${exeName} is already running`)
     return { success: false, error: 'Game is already running' }
   }
 
-  const existing = runningProcesses.get(gameId)
+  const existing = processMonitor.get(gameId)
   if (existing) {
     console.log(`[launch] Cleaning up stale entry for ${exeName}`)
+    processMonitor.delete(gameId)
     finalizeRunningGame(gameId, existing)
   }
 
@@ -553,7 +233,7 @@ export async function launchGame(
     return { success: false, error: 'Game is missing required launch fields (executable or runner)' }
   }
 
-  ensureSteamCompatMarkers(game)
+  prepareGameForLaunch(game)
 
   // Resolve prefix: expand ~ and auto-generate if not set
   const resolvedPrefix = resolveRunnerPrefix(game)
@@ -596,19 +276,21 @@ export async function launchGame(
       return { success: false, error: loaderResult.error }
     }
 
-    launchOptionalGenshinFpsUnlock(game)
+    runPostBootstrapHooks(game)
 
-    runningProcesses.set(gameId, {
+    processMonitor.set(gameId, {
       exeName,
       executablePath: game.executable,
-      gameName: game.name,
-      configPath: gameRow.config_path,
-      initialPlaytime: game.playtime,
-      postLaunch: game.launch.postLaunch || [],
+      metadata: {
+        gameName: game.name,
+        configPath: gameRow.config_path,
+        initialPlaytime: game.playtime,
+        postLaunch: game.launch.postLaunch || [],
+        cleanupWwmiRuntime: game.mods?.importer === 'WWMI',
+      },
       launcherPid: loaderResult.pid,
       startTime,
       lastCheck: Date.now(),
-      cleanupWwmiRuntime: game.mods?.importer === 'WWMI',
     })
 
     return { success: true, pid: loaderResult.pid }
@@ -639,15 +321,17 @@ export async function launchGame(
   // This prevents the launcher process from becoming a zombie
   proc.unref()
 
-  launchOptionalGenshinFpsUnlock(game)
+  runPostBootstrapHooks(game)
 
-  runningProcesses.set(gameId, {
+  processMonitor.set(gameId, {
     exeName,
     executablePath: game.executable,
-    gameName: game.name,
-    configPath: gameRow.config_path,
-    initialPlaytime: game.playtime,
-    postLaunch: game.launch.postLaunch || [],
+    metadata: {
+      gameName: game.name,
+      configPath: gameRow.config_path,
+      initialPlaytime: game.playtime,
+      postLaunch: game.launch.postLaunch || [],
+    },
     launcherPid: proc.pid,
     startTime,
     lastCheck: Date.now(),
@@ -655,12 +339,12 @@ export async function launchGame(
 
   proc.on('close', (code) => {
     console.log(`[launch] Launcher for ${game.name} exited with code ${code}`)
-    cleanupStaleEntries()
+    processMonitor.cleanupStaleEntries()
   })
 
   proc.on('error', (err) => {
     console.error(`[launch] Process error:`, err)
-    cleanupStaleEntries()
+    processMonitor.cleanupStaleEntries()
   })
 
   return { success: true, pid: proc.pid }
@@ -669,50 +353,23 @@ export async function launchGame(
 export function syncRunningGames(
   games: Array<{ id: string; configPath: string; game: Game }>
 ): void {
-  startPolling()
-  cleanupStaleEntries()
-
-  const now = Date.now()
-  const processes = listProcesses()
-
-  for (const { id, configPath, game } of games) {
-    if (runningProcesses.has(id) || !game.executable) {
-      continue
-    }
-
-    const exeName = game.executable.split(/[/\\]/).pop() || game.executable
-    const probe: RunningGame = {
-      exeName,
-      executablePath: game.executable,
-      gameName: game.name,
-      configPath,
-      initialPlaytime: game.playtime,
-      postLaunch: game.launch.postLaunch || [],
-      startTime: now,
-      lastCheck: now,
-    }
-
-    const gamePid = resolveGamePid(probe, processes)
-    if (!gamePid) {
-      continue
-    }
-
-    const processInfo = processes.find((proc) => proc.pid === gamePid)
-    const startTime = processInfo ? now - processInfo.etimes * 1000 : now
-
-    runningProcesses.set(id, {
-      ...probe,
-      gamePid,
-      startTime,
-      lastCheck: now,
-    })
-  }
+  processMonitor.sync(
+    games
+      .filter(({ game }) => !!game.executable)
+      .map(({ id, configPath, game }) => ({
+        id,
+        exeName: game.executable.split(/[/\\]/).pop() || game.executable,
+        executablePath: game.executable,
+        metadata: {
+          gameName: game.name,
+          configPath,
+          initialPlaytime: game.playtime,
+          postLaunch: game.launch.postLaunch || [],
+        },
+      }))
+  )
 }
 
 export function getRunningGames(): { id: string; startTime: number }[] {
-  cleanupStaleEntries()
-  return Array.from(runningProcesses.entries()).map(([id, data]) => ({
-    id,
-    startTime: data.startTime,
-  }))
+  return processMonitor.getSessions()
 }
