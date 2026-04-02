@@ -17,6 +17,7 @@ import { ProcessMonitor, type ProcessMonitorEntry } from './process-monitor'
 import { findSteamrt, downloadSteamrt } from './steamrt'
 import { expandHome } from './paths'
 import { cleanupStandaloneWwmiRuntime } from './wuwa-mod-config'
+import { rebuildTrayMenu } from './tray'
 import type { Game } from '../../shared/types/game'
 
 function resolveProtonCompatPaths(prefixPath: string): { winePrefix: string; compatDataPath: string } {
@@ -89,6 +90,8 @@ function finalizeRunningGame(gameId: string, running: RunningGame) {
     loadedGame.lastPlayed = completedAt
     saveGameConfig(loadedGame)
   }
+
+  rebuildTrayMenu()
 
   if (running.metadata.cleanupWwmiRuntime) {
     cleanupStandaloneWwmiRuntime(running.executablePath)

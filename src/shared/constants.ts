@@ -13,6 +13,7 @@ export const DEFAULT_CONFIG = {
   ui: {
     theme: 'auto' as const,
     viewMode: 'grid' as const,
+    minimizeToTray: true,
   },
   runner: {
     defaultType: 'proton' as const,

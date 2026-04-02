@@ -23,6 +23,7 @@ import {
 } from '../services/config'
 import { detectGame, detectRunners } from '../services/game-detector'
 import { launchGame, getRunningGames, syncRunningGames } from '../services/game-launcher'
+import { rebuildTrayMenu } from '../services/tray'
 import type { Game } from '../../shared/types'
 import type { GameRow } from '../services/database'
 
@@ -106,6 +107,7 @@ export const registerGamesHandlers = () => {
         installed: game.installed,
       }
       dbCreateGame(dbInput)
+      rebuildTrayMenu()
 
       return game
     }
@@ -137,6 +139,8 @@ export const registerGamesHandlers = () => {
         dbUpdateGame(id, dbUpdates)
       }
 
+      rebuildTrayMenu()
+
       return updatedGame
     }
   )
@@ -153,6 +157,7 @@ export const registerGamesHandlers = () => {
 
     // Delete database entry
     dbDeleteGame(id)
+    rebuildTrayMenu()
   })
 
   // Launch a game

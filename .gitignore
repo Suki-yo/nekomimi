@@ -1,5 +1,7 @@
 # Dependencies
 node_modules/
+.claude
+.codex
 
 # Build output
 dist/

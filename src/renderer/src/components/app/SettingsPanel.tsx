@@ -94,6 +94,21 @@ export function SettingsPanel({
             </select>
           </label>
         </div>
+        <div className="tui-kv-list">
+          <div>
+            <span>close behavior</span>
+            <span>{config.ui.minimizeToTray ? 'minimize to tray' : 'quit app'}</span>
+          </div>
+        </div>
+        <div className="tui-action-row">
+          <button
+            className="tui-command"
+            onClick={() => void onUpdateConfig('ui', { ...config.ui, minimizeToTray: !config.ui.minimizeToTray })}
+            type="button"
+          >
+            [{config.ui.minimizeToTray ? 'DISABLE TRAY MINIMIZE' : 'ENABLE TRAY MINIMIZE'}]
+          </button>
+        </div>
       </div>
 
       <div className="tui-settings-section tui-home-section">

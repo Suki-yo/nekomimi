@@ -5,9 +5,11 @@ import { initDatabase, closeDatabase } from './services/database'
 import { loadAppConfig } from './services/config'
 import { runGameConfigMigrations } from './services/game-config-migration'
 import { initPaths } from './services/paths'
+import { destroyTray, initTray, isTrayReady } from './services/tray'
 import { registerAllHandlers } from './ipc'
 
 let mainWindow: BrowserWindow | null = null
+let isQuitting = false
 const shouldPreferDevServer = !app.isPackaged
 const DEV_SERVER_URL = 'http://127.0.0.1:5175'
 
@@ -118,6 +120,24 @@ const createWindow = async (): Promise<void> => {
 
   mainWindow.setMenu(null)
 
+  mainWindow.on('close', (event) => {
+    if (isQuitting) {
+      return
+    }
+
+    const config = loadAppConfig()
+    if (!config.ui.minimizeToTray || !isTrayReady()) {
+      return
+    }
+
+    event.preventDefault()
+    mainWindow?.hide()
+  })
+
+  mainWindow.on('closed', () => {
+    mainWindow = null
+  })
+
   mainWindow.once('ready-to-show', () => {
     console.log('Window ready to show')
     mainWindow?.show()
@@ -141,6 +161,7 @@ const createWindow = async (): Promise<void> => {
   })
 
   await loadRenderer(mainWindow)
+  initTray(mainWindow)
 }
 
 app.whenReady().then(() => {
@@ -157,6 +178,10 @@ app.whenReady().then(() => {
   })
 })
 
+app.on('before-quit', () => {
+  isQuitting = true
+})
+
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit()
@@ -164,6 +189,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('will-quit', () => {
+  destroyTray()
   closeDatabase()
 })
 

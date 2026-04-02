@@ -17,6 +17,7 @@ export interface AppConfig {
   ui: {
     theme: 'light' | 'dark' | 'auto'
     viewMode: 'grid' | 'list'
+    minimizeToTray: boolean
   }
 
   // Runner preferences
