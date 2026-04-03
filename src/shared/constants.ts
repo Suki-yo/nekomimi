@@ -3,7 +3,7 @@
 
 // App metadata
 export const APP_NAME = 'nekomimi'
-export const APP_VERSION = '1.0.0'
+export const APP_VERSION = 'dev'
 
 // Config file name
 export const CONFIG_FILE = 'config.yml'

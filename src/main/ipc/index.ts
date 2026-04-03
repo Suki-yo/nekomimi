@@ -1,5 +1,6 @@
 // IPC handler registry - imports and registers all handlers
 
+import { registerAppHandlers } from './app.handler'
 import { registerConfigHandlers } from './config.handler'
 import { registerDialogHandlers } from './dialog.handler'
 import { registerGamesHandlers } from './games.handler'
@@ -10,6 +11,7 @@ import { registerSteamrtHandlers } from './steamrt.handler'
 
 // Register all IPC handlers - call this in main process setup
 export const registerAllHandlers = () => {
+  registerAppHandlers()
   registerConfigHandlers()
   registerDialogHandlers()
   registerGamesHandlers()

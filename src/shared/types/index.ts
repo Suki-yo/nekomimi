@@ -11,6 +11,7 @@ export type {
   RunnerConfig,
   LaunchConfig,
   ModConfig,
+  WuwaWwmiLaunchMode,
   UpdateConfig,
   DetectedGameInfo,
   DetectedRunner,

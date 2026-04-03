@@ -34,7 +34,7 @@ export const api = {
   platform: process.platform,
 
   // App version
-  version: process.env.npm_package_version || '0.0.0',
+  version: ipcRenderer.sendSync('app:version') as string,
 }
 
 // Expose to renderer as window.api

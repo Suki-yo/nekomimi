@@ -1,7 +1,7 @@
 {
   "name": "nekomimi",
   "productName": "Nekomimi",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "The anime game launcher",
   "license": "MIT",
   "author": "Jeffrey Qin",
@@ -12,7 +12,7 @@
     "dev:main": "tsc && electron .",
     "dev:renderer": "vite",
     "build": "tsc && vite build",
-    "dist:linux": "npm run build && electron-builder --linux AppImage",
+    "dist:linux": "npm run build && electron-builder --linux AppImage && node scripts/sync-linux-launcher.cjs",
     "postinstall": "electron-builder install-app-deps",
     "start": "electron .",
     "rebuild": "electron-rebuild -f -w better-sqlite3"

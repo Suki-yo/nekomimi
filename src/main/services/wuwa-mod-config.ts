@@ -1,12 +1,25 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { getPathsInstance } from './paths'
+import type { Game, WuwaWwmiLaunchMode } from '../../shared/types/game'
 
 const WWMI_PROCESS_EXE_NAMES = ['Client-Win64-Shipping.exe'] as const
 const WWMI_DLL_INIT_DELAY_MS = 500
+const WUWA_REQUIRED_STEAM_COMPAT_FLAGS = ['noopwr', 'noxalia'] as const
+export const DEFAULT_WUWA_WWMI_LAUNCH_MODE: WuwaWwmiLaunchMode = 'launcher'
 
 export const WWMI_DIRECT_LAUNCH_ARGS = ['-dx11']
-export const WWMI_KURO_DLL_OVERRIDES = 'lsteamclient=d;KRSDKExternal.exe=d'
+// Keep the direct-Proton WuWa path aligned with the last known-good standalone
+// launch chain: disable the external Kuro helper and force native jsproxy.
+export const WWMI_KURO_DLL_OVERRIDES = 'lsteamclient=d;KRSDKExternal.exe=d;jsproxy=n,b'
+
+export function resolveWuwaWwmiLaunchMode(game: Pick<Game, 'slug' | 'mods'>): WuwaWwmiLaunchMode {
+  if (game.slug !== 'wuwa') {
+    return DEFAULT_WUWA_WWMI_LAUNCH_MODE
+  }
+
+  return game.mods.wwmiLaunchMode === 'direct' ? 'direct' : DEFAULT_WUWA_WWMI_LAUNCH_MODE
+}
 
 export function applyWwmiLaunchSettings(importerConfig: Record<string, unknown>): void {
   importerConfig.custom_launch_enabled = false
@@ -151,4 +164,64 @@ export function mergeWindowsOverrides(...values: Array<string | undefined>): str
   if (parts.length === 0) return undefined
 
   return Array.from(new Set(parts)).join(';')
+}
+
+function mergeCompatFlags(value: string | undefined): string {
+  const existingFlags = (value || '')
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean)
+
+  return [...WUWA_REQUIRED_STEAM_COMPAT_FLAGS, ...existingFlags.filter((flag) => !WUWA_REQUIRED_STEAM_COMPAT_FLAGS.includes(flag as typeof WUWA_REQUIRED_STEAM_COMPAT_FLAGS[number]))].join(',')
+}
+
+export function normalizeWuwaLaunchEnv(
+  env: Record<string, string> | undefined
+): { env: Record<string, string>; changed: boolean } {
+  const nextEnv = { ...(env || {}) }
+
+  nextEnv.STEAM_COMPAT_CONFIG = mergeCompatFlags(nextEnv.STEAM_COMPAT_CONFIG)
+
+  const mergedOverrides = mergeWindowsOverrides(WWMI_KURO_DLL_OVERRIDES, nextEnv.WINEDLLOVERRIDES)
+  if (mergedOverrides) {
+    nextEnv.WINEDLLOVERRIDES = mergedOverrides
+  }
+
+  nextEnv.PROTONFIXES_DISABLE = '1'
+
+  const changed =
+    nextEnv.STEAM_COMPAT_CONFIG !== (env?.STEAM_COMPAT_CONFIG || '') ||
+    nextEnv.WINEDLLOVERRIDES !== (env?.WINEDLLOVERRIDES || '') ||
+    nextEnv.PROTONFIXES_DISABLE !== (env?.PROTONFIXES_DISABLE || '')
+
+  return { env: nextEnv, changed }
+}
+
+export function normalizeWuwaGameConfig(game: Game): { game: Game; changed: boolean } {
+  if (game.slug !== 'wuwa') {
+    return { game, changed: false }
+  }
+
+  const normalizedEnv = normalizeWuwaLaunchEnv(game.launch.env)
+  const normalizedLaunchMode = resolveWuwaWwmiLaunchMode(game)
+  const launchModeChanged = normalizedLaunchMode !== game.mods.wwmiLaunchMode
+
+  if (!normalizedEnv.changed && !launchModeChanged) {
+    return { game, changed: false }
+  }
+
+  return {
+    changed: true,
+    game: {
+      ...game,
+      launch: {
+        ...game.launch,
+        env: normalizedEnv.env,
+      },
+      mods: {
+        ...game.mods,
+        wwmiLaunchMode: normalizedLaunchMode,
+      },
+    },
+  }
 }

@@ -38,6 +38,8 @@ export interface LaunchConfig {
   args: string
 }
 
+export type WuwaWwmiLaunchMode = 'launcher' | 'direct'
+
 // Individual mod entry
 export interface Mod {
   name: string           // Display name (custom name or original)
@@ -52,6 +54,8 @@ export interface ModConfig {
   enabled: boolean
   // Which XXMI importer to use (e.g., "EFMI", "GIMI", "SRMI")
   importer?: string
+  // Hidden compatibility switch for WuWa WWMI launch flow.
+  wwmiLaunchMode?: WuwaWwmiLaunchMode
   // Legacy XXMI path (if manually configured)
   xxmi?: {
     enabled: boolean

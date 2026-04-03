@@ -8,13 +8,16 @@ import { getPathsInstance } from './paths'
 import { findSteamrt } from './steamrt'
 import {
   applyWwmiLaunchSettings,
+  cleanupStandaloneWwmiRuntime,
   ensureWwmiLinuxCompatibility,
   mergeWindowsOverrides,
+  normalizeWuwaLaunchEnv,
   prepareStandaloneWwmiRuntime,
+  resolveWuwaWwmiLaunchMode,
   WWMI_DIRECT_LAUNCH_ARGS,
   WWMI_KURO_DLL_OVERRIDES,
 } from './wuwa-mod-config'
-import type { Mod } from '../../shared/types/game'
+import type { Game, Mod } from '../../shared/types/game'
 
 const XXMI_RELEASES_API = 'https://api.github.com/repos/SpectrumQT/XXMI-Launcher/releases/latest'
 const PROTON_GE_RELEASES_API = 'https://api.github.com/repos/GloriousEggroll/proton-ge-custom/releases/latest'
@@ -737,7 +740,8 @@ function buildProtonLaunchSpec(
   gameEnv: Record<string, string>,
   steamAppId: string,
   windowsOverrides?: string,
-  disableProtonFixes = true
+  disableProtonFixes = true,
+  cwd = gameDirectory
 ): ProtonLaunchSpec {
   const { winePrefix: normalizedWinePrefix, compatDataPath } = resolveProtonCompatPaths(winePrefix)
   const steamrt = findSteamrt()
@@ -785,7 +789,7 @@ function buildProtonLaunchSpec(
         STEAM_COMPAT_TOOL_PATHS: runnerPath,
         STEAM_ZENITY: '/usr/bin/zenity',
       },
-      cwd: gameDirectory,
+      cwd,
     }
   }
 
@@ -796,7 +800,7 @@ function buildProtonLaunchSpec(
       ...env,
       GAMEID: `umu-${steamAppId}`,
     },
-    cwd: gameDirectory,
+    cwd,
   }
 }
 
@@ -809,13 +813,57 @@ function spawnDetached(spec: ProtonLaunchSpec): ChildProcess {
   })
 }
 
+function writeWuwaLaunchDebugLog(
+  game: Pick<Game, 'slug' | 'directory'>,
+  mode: 'launcher' | 'direct',
+  spec: ProtonLaunchSpec
+): void {
+  if (game.slug !== 'wuwa') {
+    return
+  }
+
+  const paths = getPathsInstance()
+  const logsDir = path.join(paths.cache, 'logs')
+  fs.mkdirSync(logsDir, { recursive: true })
+
+  const payload = {
+    timestamp: new Date().toISOString(),
+    mode,
+    directory: game.directory,
+    command: spec.command,
+    args: spec.args,
+    cwd: spec.cwd,
+    env: {
+      GAMEID: spec.env.GAMEID || '',
+      PROTONPATH: spec.env.PROTONPATH || '',
+      PROTONFIXES_DISABLE: spec.env.PROTONFIXES_DISABLE || '',
+      SteamOS: spec.env.SteamOS || '',
+      STEAM_COMPAT_APP_ID: spec.env.STEAM_COMPAT_APP_ID || '',
+      STEAM_COMPAT_CONFIG: spec.env.STEAM_COMPAT_CONFIG || '',
+      STEAM_COMPAT_DATA_PATH: spec.env.STEAM_COMPAT_DATA_PATH || '',
+      STEAM_COMPAT_INSTALL_PATH: spec.env.STEAM_COMPAT_INSTALL_PATH || '',
+      STEAM_COMPAT_LIBRARY_PATHS: spec.env.STEAM_COMPAT_LIBRARY_PATHS || '',
+      STEAM_COMPAT_SHADER_PATH: spec.env.STEAM_COMPAT_SHADER_PATH || '',
+      STEAM_COMPAT_TOOL_PATHS: spec.env.STEAM_COMPAT_TOOL_PATHS || '',
+      WINEDLLOVERRIDES: spec.env.WINEDLLOVERRIDES || '',
+      WINEPREFIX: spec.env.WINEPREFIX || '',
+    },
+  }
+
+  const latestPath = path.join(logsDir, 'wuwa-launch-latest.json')
+  const stampedPath = path.join(logsDir, `wuwa-launch-${Date.now()}.json`)
+  const content = `${JSON.stringify(payload, null, 2)}\n`
+  fs.writeFileSync(latestPath, content, 'utf-8')
+  fs.writeFileSync(stampedPath, content, 'utf-8')
+}
+
 export async function launchGameWithXXMI(
-  executablePath: string,
-  gameDirectory: string,
+  game: Game,
   runnerPath: string,
-  winePrefix: string,
-  gameEnv: Record<string, string> = {}
+  winePrefix: string
 ): Promise<{ success: boolean; pid?: number; error?: string }> {
+  const executablePath = game.executable
+  const gameDirectory = game.directory
   const gameModConfig = getGameModConfig(executablePath)
   const importer = gameModConfig?.importer ?? null
 
@@ -835,8 +883,9 @@ export async function launchGameWithXXMI(
 
   const isProtonRunner = fs.existsSync(path.join(runnerPath, 'proton'))
   const { winePrefix: normalizedWinePrefix, compatDataPath } = resolveProtonCompatPaths(winePrefix)
-  // WWMI needs the dedicated Proton launch path so XXMI setup and the actual
-  // game launch share the same Proton runtime instead of the generic umu path.
+  const requestedGameEnv = game.launch.env || {}
+  const gameEnv = game.slug === 'wuwa' ? normalizeWuwaLaunchEnv(requestedGameEnv).env : requestedGameEnv
+  const wuwaLaunchMode = importer === 'WWMI' && game.slug === 'wuwa' ? resolveWuwaWwmiLaunchMode(game) : null
   const useUmu = !!gameModConfig?.umuGameId && !(importer === 'WWMI' && isProtonRunner)
 
   const exeName = path.basename(executablePath).toLowerCase()
@@ -916,26 +965,55 @@ export async function launchGameWithXXMI(
         PROTONFIXES_DISABLE: '1',
       }
 
-      if (importer === 'WWMI') {
+      if (importer === 'WWMI' && game.slug === 'wuwa') {
         const steamAppId = gameModConfig?.steamAppId || '0'
-        prepareStandaloneWwmiRuntime(executablePath)
-        const gameLaunch = buildProtonLaunchSpec(
-          executablePath,
-          WWMI_DIRECT_LAUNCH_ARGS,
-          runnerPath,
-          winePrefix,
-          gameDirectory,
-          gameEnv,
-          steamAppId,
-          mergeWindowsOverrides(WWMI_KURO_DLL_OVERRIDES, gameEnv.WINEDLLOVERRIDES),
-          false
-        )
+        if (wuwaLaunchMode === 'direct') {
+          prepareStandaloneWwmiRuntime(executablePath)
+          const gameLaunch = buildProtonLaunchSpec(
+            executablePath,
+            WWMI_DIRECT_LAUNCH_ARGS,
+            runnerPath,
+            winePrefix,
+            gameDirectory,
+            gameEnv,
+            steamAppId,
+            mergeWindowsOverrides(WWMI_KURO_DLL_OVERRIDES, gameEnv.WINEDLLOVERRIDES)
+          )
 
-        console.log(
-          `[wwmi] Launching WuWa via direct Proton client path cwd=${gameLaunch.cwd} ` +
-          `WINEDLLOVERRIDES=${gameLaunch.env.WINEDLLOVERRIDES || ''} SteamOS=${gameLaunch.env.SteamOS || ''}`
-        )
-        proc = spawnDetached(gameLaunch)
+          writeWuwaLaunchDebugLog(game, 'direct', gameLaunch)
+          console.log(
+            `[wwmi] Launching WuWa via direct Proton client path cwd=${gameLaunch.cwd} ` +
+            `WINEDLLOVERRIDES=${gameLaunch.env.WINEDLLOVERRIDES || ''} ` +
+            `PROTONFIXES_DISABLE=${gameLaunch.env.PROTONFIXES_DISABLE || ''} ` +
+            `STEAM_COMPAT_CONFIG=${gameLaunch.env.STEAM_COMPAT_CONFIG || ''} ` +
+            `SteamOS=${gameLaunch.env.SteamOS || ''}`
+          )
+          proc = spawnDetached(gameLaunch)
+        } else {
+          cleanupStandaloneWwmiRuntime(executablePath)
+          const launcherLaunch = buildProtonLaunchSpec(
+            launcherExe,
+            ['--nogui', '--xxmi', importer],
+            runnerPath,
+            winePrefix,
+            gameDirectory,
+            gameEnv,
+            steamAppId,
+            mergeWindowsOverrides(gameEnv.WINEDLLOVERRIDES, 'd3d11=n,b;dxgi=n,b'),
+            true,
+            path.dirname(launcherExe)
+          )
+
+          writeWuwaLaunchDebugLog(game, 'launcher', launcherLaunch)
+          console.log(
+            `[wwmi] Launching WuWa via WWMI launcher path cwd=${launcherLaunch.cwd} ` +
+            `WINEDLLOVERRIDES=${launcherLaunch.env.WINEDLLOVERRIDES || ''} ` +
+            `PROTONFIXES_DISABLE=${launcherLaunch.env.PROTONFIXES_DISABLE || ''} ` +
+            `STEAM_COMPAT_CONFIG=${launcherLaunch.env.STEAM_COMPAT_CONFIG || ''} ` +
+            `SteamOS=${launcherLaunch.env.SteamOS || ''}`
+          )
+          proc = spawnDetached(launcherLaunch)
+        }
         proc.unref()
       } else {
         proc = spawn('umu-run', [launcherExe, '--nogui', '--xxmi', importer], {

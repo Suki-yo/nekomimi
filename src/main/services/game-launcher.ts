@@ -268,11 +268,9 @@ export async function launchGame(
     console.log(`[launch] Using XXMI mode for ${exeName}`)
 
     const loaderResult = await launchGameWithXXMI(
-      game.executable,
-      game.directory,
+      game,
       resolvedRunnerPath,
-      resolvedPrefix,
-      game.launch.env || {}
+      resolvedPrefix
     )
 
     if (!loaderResult.success) {

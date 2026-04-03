@@ -7,6 +7,7 @@ import * as yaml from 'yaml'
 import { getPathsInstance } from './paths'
 import { DEFAULT_CONFIG } from '../../shared/constants'
 import type { AppConfig, Game } from '../../shared/types'
+import { normalizeWuwaGameConfig } from './wuwa-mod-config'
 
 // ─────────────────────────────────────────────
 // App Config (config.yml)
@@ -73,12 +74,13 @@ export const loadGameConfig = (configPath: string): Game | null => {
   const content = fs.readFileSync(configPath, 'utf-8')
   const parsed = yaml.parse(content) as Game
   const migrated = migrateGamePaths(parsed)
+  const normalized = normalizeWuwaGameConfig(migrated.game)
 
-  if (migrated.changed) {
-    saveGameConfig(migrated.game)
+  if (migrated.changed || normalized.changed) {
+    saveGameConfig(normalized.game)
   }
 
-  return migrated.game
+  return normalized.game
 }
 
 export const saveGameConfig = (game: Game): void => {
@@ -89,7 +91,7 @@ export const saveGameConfig = (game: Game): void => {
   fs.mkdirSync(gamesDir, { recursive: true })
 
   const configPath = path.join(gamesDir, `${game.slug}.yml`)
-  const content = yaml.stringify(game)
+  const content = yaml.stringify(normalizeWuwaGameConfig(game).game)
 
   fs.writeFileSync(configPath, content, 'utf-8')
 }
