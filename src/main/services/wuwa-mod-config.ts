@@ -176,15 +176,37 @@ function mergeCompatFlags(value: string | undefined): string {
 }
 
 export function normalizeWuwaLaunchEnv(
-  env: Record<string, string> | undefined
+  env: Record<string, string> | undefined,
+  launchMode: WuwaWwmiLaunchMode = DEFAULT_WUWA_WWMI_LAUNCH_MODE
 ): { env: Record<string, string>; changed: boolean } {
   const nextEnv = { ...(env || {}) }
 
   nextEnv.STEAM_COMPAT_CONFIG = mergeCompatFlags(nextEnv.STEAM_COMPAT_CONFIG)
 
-  const mergedOverrides = mergeWindowsOverrides(WWMI_KURO_DLL_OVERRIDES, nextEnv.WINEDLLOVERRIDES)
+  const currentOverrides = (nextEnv.WINEDLLOVERRIDES || '')
+    .split(';')
+    .map((value) => value.trim())
+    .filter(Boolean)
+
+  const filteredOverrides =
+    launchMode === 'direct'
+      ? currentOverrides
+      : currentOverrides.filter(
+          (value) =>
+            value !== 'lsteamclient=d' &&
+            value !== 'KRSDKExternal.exe=d' &&
+            value !== 'jsproxy=n,b'
+        )
+
+  const mergedOverrides =
+    launchMode === 'direct'
+      ? mergeWindowsOverrides(WWMI_KURO_DLL_OVERRIDES, filteredOverrides.join(';'))
+      : mergeWindowsOverrides(filteredOverrides.join(';'))
+
   if (mergedOverrides) {
     nextEnv.WINEDLLOVERRIDES = mergedOverrides
+  } else {
+    delete nextEnv.WINEDLLOVERRIDES
   }
 
   nextEnv.PROTONFIXES_DISABLE = '1'
@@ -202,8 +224,8 @@ export function normalizeWuwaGameConfig(game: Game): { game: Game; changed: bool
     return { game, changed: false }
   }
 
-  const normalizedEnv = normalizeWuwaLaunchEnv(game.launch.env)
   const normalizedLaunchMode = resolveWuwaWwmiLaunchMode(game)
+  const normalizedEnv = normalizeWuwaLaunchEnv(game.launch.env, normalizedLaunchMode)
   const launchModeChanged = normalizedLaunchMode !== game.mods.wwmiLaunchMode
 
   if (!normalizedEnv.changed && !launchModeChanged) {

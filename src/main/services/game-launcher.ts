@@ -18,6 +18,7 @@ import { findSteamrt, downloadSteamrt } from './steamrt'
 import { expandHome } from './paths'
 import { cleanupStandaloneWwmiRuntime } from './wuwa-mod-config'
 import { rebuildTrayMenu } from './tray'
+import { wrapWithGamescopeGrab } from './gamescope'
 import type { Game } from '../../shared/types/game'
 
 function resolveProtonCompatPaths(prefixPath: string): { winePrefix: string; compatDataPath: string } {
@@ -193,7 +194,10 @@ function buildLaunchCommand(game: Game, useXXMI: boolean): { command: string; ar
     args = args.concat(shellSplit(game.launch.args))
   }
 
-  return { command, args, env }
+  return {
+    ...wrapWithGamescopeGrab({ command, args }),
+    env,
+  }
 }
 
 export async function launchGame(

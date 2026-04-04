@@ -17,6 +17,7 @@ import {
   WWMI_DIRECT_LAUNCH_ARGS,
   WWMI_KURO_DLL_OVERRIDES,
 } from './wuwa-mod-config'
+import { wrapWithGamescopeGrab } from './gamescope'
 import type { Game, Mod } from '../../shared/types/game'
 
 const XXMI_RELEASES_API = 'https://api.github.com/repos/SpectrumQT/XXMI-Launcher/releases/latest'
@@ -731,6 +732,10 @@ interface ProtonLaunchSpec {
   cwd: string
 }
 
+interface DetachedSpawnOptions {
+  logPath?: string
+}
+
 function buildProtonLaunchSpec(
   targetPath: string,
   targetArgs: string[],
@@ -804,13 +809,46 @@ function buildProtonLaunchSpec(
   }
 }
 
-function spawnDetached(spec: ProtonLaunchSpec): ChildProcess {
-  return spawn(spec.command, spec.args, {
-    env: spec.env,
-    detached: true,
-    stdio: 'ignore',
-    cwd: spec.cwd,
-  })
+function spawnDetached(spec: ProtonLaunchSpec, options: DetachedSpawnOptions = {}): ChildProcess {
+  const wrappedSpec = wrapWithGamescopeGrab(spec)
+  const launchSpec = {
+    ...spec,
+    ...wrappedSpec,
+  }
+  let logFd: number | null = null
+
+  try {
+    if (options.logPath) {
+      fs.mkdirSync(path.dirname(options.logPath), { recursive: true })
+      const header = [
+        `=== ${new Date().toISOString()} ===`,
+        `command: ${launchSpec.command}`,
+        `args: ${JSON.stringify(launchSpec.args)}`,
+        `cwd: ${launchSpec.cwd}`,
+        '',
+      ].join('\n')
+      fs.writeFileSync(options.logPath, header, 'utf-8')
+      logFd = fs.openSync(options.logPath, 'a')
+    }
+
+    return spawn(launchSpec.command, launchSpec.args, {
+      env: spec.env,
+      detached: true,
+      stdio: logFd === null ? 'ignore' : ['ignore', logFd, logFd],
+      cwd: spec.cwd,
+    })
+  } finally {
+    if (logFd !== null) {
+      fs.closeSync(logFd)
+    }
+  }
+}
+
+function getWuwaRuntimeLogPath(): string {
+  const paths = getPathsInstance()
+  const logsDir = path.join(paths.cache, 'logs')
+  fs.mkdirSync(logsDir, { recursive: true })
+  return path.join(logsDir, 'wuwa-runtime-latest.log')
 }
 
 function writeWuwaLaunchDebugLog(
@@ -825,28 +863,33 @@ function writeWuwaLaunchDebugLog(
   const paths = getPathsInstance()
   const logsDir = path.join(paths.cache, 'logs')
   fs.mkdirSync(logsDir, { recursive: true })
+  const wrappedSpec = {
+    ...spec,
+    ...wrapWithGamescopeGrab(spec),
+  }
 
   const payload = {
     timestamp: new Date().toISOString(),
     mode,
     directory: game.directory,
-    command: spec.command,
-    args: spec.args,
-    cwd: spec.cwd,
+    runtimeLogPath: getWuwaRuntimeLogPath(),
+    command: wrappedSpec.command,
+    args: wrappedSpec.args,
+    cwd: wrappedSpec.cwd,
     env: {
-      GAMEID: spec.env.GAMEID || '',
-      PROTONPATH: spec.env.PROTONPATH || '',
-      PROTONFIXES_DISABLE: spec.env.PROTONFIXES_DISABLE || '',
-      SteamOS: spec.env.SteamOS || '',
-      STEAM_COMPAT_APP_ID: spec.env.STEAM_COMPAT_APP_ID || '',
-      STEAM_COMPAT_CONFIG: spec.env.STEAM_COMPAT_CONFIG || '',
-      STEAM_COMPAT_DATA_PATH: spec.env.STEAM_COMPAT_DATA_PATH || '',
-      STEAM_COMPAT_INSTALL_PATH: spec.env.STEAM_COMPAT_INSTALL_PATH || '',
-      STEAM_COMPAT_LIBRARY_PATHS: spec.env.STEAM_COMPAT_LIBRARY_PATHS || '',
-      STEAM_COMPAT_SHADER_PATH: spec.env.STEAM_COMPAT_SHADER_PATH || '',
-      STEAM_COMPAT_TOOL_PATHS: spec.env.STEAM_COMPAT_TOOL_PATHS || '',
-      WINEDLLOVERRIDES: spec.env.WINEDLLOVERRIDES || '',
-      WINEPREFIX: spec.env.WINEPREFIX || '',
+      GAMEID: wrappedSpec.env.GAMEID || '',
+      PROTONPATH: wrappedSpec.env.PROTONPATH || '',
+      PROTONFIXES_DISABLE: wrappedSpec.env.PROTONFIXES_DISABLE || '',
+      SteamOS: wrappedSpec.env.SteamOS || '',
+      STEAM_COMPAT_APP_ID: wrappedSpec.env.STEAM_COMPAT_APP_ID || '',
+      STEAM_COMPAT_CONFIG: wrappedSpec.env.STEAM_COMPAT_CONFIG || '',
+      STEAM_COMPAT_DATA_PATH: wrappedSpec.env.STEAM_COMPAT_DATA_PATH || '',
+      STEAM_COMPAT_INSTALL_PATH: wrappedSpec.env.STEAM_COMPAT_INSTALL_PATH || '',
+      STEAM_COMPAT_LIBRARY_PATHS: wrappedSpec.env.STEAM_COMPAT_LIBRARY_PATHS || '',
+      STEAM_COMPAT_SHADER_PATH: wrappedSpec.env.STEAM_COMPAT_SHADER_PATH || '',
+      STEAM_COMPAT_TOOL_PATHS: wrappedSpec.env.STEAM_COMPAT_TOOL_PATHS || '',
+      WINEDLLOVERRIDES: wrappedSpec.env.WINEDLLOVERRIDES || '',
+      WINEPREFIX: wrappedSpec.env.WINEPREFIX || '',
     },
   }
 
@@ -884,8 +927,11 @@ export async function launchGameWithXXMI(
   const isProtonRunner = fs.existsSync(path.join(runnerPath, 'proton'))
   const { winePrefix: normalizedWinePrefix, compatDataPath } = resolveProtonCompatPaths(winePrefix)
   const requestedGameEnv = game.launch.env || {}
-  const gameEnv = game.slug === 'wuwa' ? normalizeWuwaLaunchEnv(requestedGameEnv).env : requestedGameEnv
   const wuwaLaunchMode = importer === 'WWMI' && game.slug === 'wuwa' ? resolveWuwaWwmiLaunchMode(game) : null
+  const gameEnv =
+    game.slug === 'wuwa'
+      ? normalizeWuwaLaunchEnv(requestedGameEnv, wuwaLaunchMode || undefined).env
+      : requestedGameEnv
   const useUmu = !!gameModConfig?.umuGameId && !(importer === 'WWMI' && isProtonRunner)
 
   const exeName = path.basename(executablePath).toLowerCase()
@@ -945,8 +991,12 @@ export async function launchGameWithXXMI(
         STEAM_COMPAT_DATA_PATH: compatDataPath,
         WINEDLLOVERRIDES: mergedOverrides,
       }
+      const wrappedLaunch = wrapWithGamescopeGrab({
+        command: 'umu-run',
+        args: [launcherExe, '--nogui', '--xxmi', importer],
+      })
       console.log(`[xxmi] umu-run env: WINEDLLOVERRIDES=${env.WINEDLLOVERRIDES} STUB_WINTRUST=${gameEnv.STUB_WINTRUST} BLOCK_FIRST_REQ=${gameEnv.BLOCK_FIRST_REQ} STEAM_COMPAT_CONFIG=${gameEnv.STEAM_COMPAT_CONFIG}`)
-      proc = spawn('umu-run', [launcherExe, '--nogui', '--xxmi', importer], {
+      proc = spawn(wrappedLaunch.command, wrappedLaunch.args, {
         env,
         detached: true,
         stdio: 'ignore',
@@ -969,6 +1019,7 @@ export async function launchGameWithXXMI(
         const steamAppId = gameModConfig?.steamAppId || '0'
         if (wuwaLaunchMode === 'direct') {
           prepareStandaloneWwmiRuntime(executablePath)
+          const runtimeLogPath = getWuwaRuntimeLogPath()
           const gameLaunch = buildProtonLaunchSpec(
             executablePath,
             WWMI_DIRECT_LAUNCH_ARGS,
@@ -988,9 +1039,10 @@ export async function launchGameWithXXMI(
             `STEAM_COMPAT_CONFIG=${gameLaunch.env.STEAM_COMPAT_CONFIG || ''} ` +
             `SteamOS=${gameLaunch.env.SteamOS || ''}`
           )
-          proc = spawnDetached(gameLaunch)
+          proc = spawnDetached(gameLaunch, { logPath: runtimeLogPath })
         } else {
           cleanupStandaloneWwmiRuntime(executablePath)
+          const runtimeLogPath = getWuwaRuntimeLogPath()
           const launcherLaunch = buildProtonLaunchSpec(
             launcherExe,
             ['--nogui', '--xxmi', importer],
@@ -1012,11 +1064,15 @@ export async function launchGameWithXXMI(
             `STEAM_COMPAT_CONFIG=${launcherLaunch.env.STEAM_COMPAT_CONFIG || ''} ` +
             `SteamOS=${launcherLaunch.env.SteamOS || ''}`
           )
-          proc = spawnDetached(launcherLaunch)
+          proc = spawnDetached(launcherLaunch, { logPath: runtimeLogPath })
         }
         proc.unref()
       } else {
-        proc = spawn('umu-run', [launcherExe, '--nogui', '--xxmi', importer], {
+        const wrappedLaunch = wrapWithGamescopeGrab({
+          command: 'umu-run',
+          args: [launcherExe, '--nogui', '--xxmi', importer],
+        })
+        proc = spawn(wrappedLaunch.command, wrappedLaunch.args, {
           env,
           detached: true,
           stdio: 'ignore',
@@ -1036,7 +1092,11 @@ export async function launchGameWithXXMI(
         DXVK_STATE_CACHE_PATH: winePrefix,
         WINEDLLOVERRIDES: 'd3d11=n,b;dxgi=n,b',
       }
-      proc = spawn(runner.wine, [launcherExe, '--nogui', '--xxmi', importer], {
+      const wrappedLaunch = wrapWithGamescopeGrab({
+        command: runner.wine,
+        args: [launcherExe, '--nogui', '--xxmi', importer],
+      })
+      proc = spawn(wrappedLaunch.command, wrappedLaunch.args, {
         env,
         detached: true,
         stdio: 'ignore',

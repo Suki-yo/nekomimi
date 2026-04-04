@@ -31,6 +31,8 @@ export interface ProcessMonitorProbe<TMetadata> {
 
 const WRAPPER_PROCESS_COMMANDS = new Set([
   'bash',
+  'gamescope',
+  'gamescope-grab',
   'python',
   'python3',
   'pv-adverb',
