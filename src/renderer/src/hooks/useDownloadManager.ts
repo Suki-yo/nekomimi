@@ -9,7 +9,7 @@ interface UseDownloadManagerOptions {
   reportStatus: (message: string, selection?: Selection) => void
   setStatusLine: (message: string) => void
   autoAddCatalogGame: (entry: CatalogEntry) => Promise<void>
-  refreshSingleHoyoGame: (game: Game) => Promise<Game>
+  refreshSingleHoyoGame: (game: Game, completedVersion?: string) => Promise<Game>
   refreshSingleWuwaGame: (game: Game) => Promise<Game>
 }
 
@@ -92,7 +92,7 @@ export function useDownloadManager({
         const existingGame = findInstalledCatalogGame(gamesRef.current, entry)
 
         if (entry.kind === 'hoyo' && existingGame) {
-          void refreshSingleHoyoGameRef.current(existingGame)
+          void refreshSingleHoyoGameRef.current(existingGame, existingGame.download?.latestVersion)
         } else if (entry.id === 'wuwa' && existingGame) {
           void refreshSingleWuwaGameRef.current(existingGame)
         } else {

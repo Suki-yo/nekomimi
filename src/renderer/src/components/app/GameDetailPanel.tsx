@@ -51,13 +51,14 @@ export function GameDetailPanel({
   const isRunning = runningGames.has(game.id)
   const launchBar = launchPreparation.pendingGameId === game.id && launchPreparation.active
   const canUpdate = game.download?.status === 'update_available'
+  const latestVersionLabel = game.download?.latestVersionLabel ?? game.download?.latestVersion
   const versionLabel =
     game.download?.currentVersion && game.download?.latestVersion && game.download.currentVersion !== game.download.latestVersion
-      ? `${game.download.currentVersion} -> ${game.download.latestVersion}`
+      ? `${game.download.currentVersion} -> ${latestVersionLabel ?? game.download.latestVersion}`
       : game.download?.currentVersion ?? game.update?.currentVersion ?? 'unknown'
   const updateLabel =
     game.download?.status === 'update_available'
-      ? 'AVAILABLE'
+      ? game.download?.updateChannel === 'preload' ? 'PRELOAD AVAILABLE' : 'AVAILABLE'
       : game.download?.latestVersion
         ? 'UP TO DATE'
         : 'UNKNOWN'
@@ -108,7 +109,7 @@ export function GameDetailPanel({
           </button>
           {canUpdate && mappedCatalog && (
             <button className="tui-command" onClick={() => void onStartCatalogUpdate(mappedCatalog)} type="button">
-              [UPDATE]
+              [{game.download?.updateChannel === 'preload' ? 'PRELOAD' : 'UPDATE'}]
             </button>
           )}
           <button

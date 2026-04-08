@@ -39,12 +39,41 @@ interface TwintailGameVersion {
   }
 }
 
+interface TwintailPreloadVersion {
+  metadata: TwintailGameVersion['metadata']
+  game: TwintailGameVersion['game']
+  audio?: {
+    full?: Array<{
+      file_url: string
+      compressed_size: string
+      decompressed_size: string
+      file_hash: string
+      file_path?: string
+      language?: string
+      region_code?: string
+    }>
+    diff?: Array<{
+      file_url: string
+      compressed_size: string
+      decompressed_size: string
+      file_hash: string
+      file_path?: string
+      diff_type?: string
+      original_version?: string
+      language?: string
+    }>
+  }
+}
+
 interface TwintailManifest {
   version: number
   display_name: string
   biz: string
   latest_version: string
   game_versions: TwintailGameVersion[]
+  extra?: {
+    preload?: TwintailPreloadVersion
+  }
 }
 
 // Custom error class for API errors
@@ -98,33 +127,18 @@ export async function fetchTwintailManifest(biz: HoyoGameBiz): Promise<TwintailM
 }
 
 // Convert Twintail manifest to HoyoVersionInfo
-export function twintailToHoyoVersionInfo(
-  twintail: TwintailManifest,
-  preferVersion?: string
+function buildHoyoVersionInfoFromEntry(
+  gameVersion: TwintailGameVersion | TwintailPreloadVersion,
+  options?: {
+    baseVersion?: string
+    isPreload?: boolean
+    preloadVersion?: string
+    preloadVersionLabel?: string
+  }
 ): HoyoVersionInfo | null {
-  // Find the requested version or use the latest
-  let gameVersion: TwintailGameVersion | undefined
-
-  if (preferVersion) {
-    gameVersion = twintail.game_versions.find((v) => v.metadata.version === preferVersion)
-    if (!gameVersion) {
-      console.warn(`[twintail] Version ${preferVersion} not found, using latest`)
-    }
-  }
-
-  if (!gameVersion) {
-    // Use latest (first in array is typically latest)
-    gameVersion = twintail.game_versions[0]
-  }
-
-  if (!gameVersion) {
-    console.error('[twintail] No valid game version found')
-    return null
-  }
-
+  const { baseVersion, isPreload = false, preloadVersion, preloadVersionLabel } = options || {}
   const metadata = gameVersion.metadata
 
-  // Check if full array exists and has at least one element
   if (!gameVersion.game.full || gameVersion.game.full.length === 0) {
     console.error('[twintail] No full package found in game version')
     return null
@@ -168,7 +182,12 @@ export function twintailToHoyoVersionInfo(
 
   const info: HoyoVersionInfo = {
     version: metadata.version,
+    versionLabel: isPreload ? `${metadata.version} preload` : metadata.version,
     downloadMode,
+    baseVersion,
+    isPreload,
+    preloadVersion,
+    preloadVersionLabel,
     sophonManifestUrl: fullPackage.file_url,
     sophonChunkBaseUrl: fullPackage.file_path ?? metadata.res_list_url,
     sophonManifests: sophonManifests.length > 1 ? sophonManifests : undefined,
@@ -182,6 +201,46 @@ export function twintailToHoyoVersionInfo(
   console.log(`[twintail] Chunk base URL: ${info.sophonChunkBaseUrl}`)
 
   return info
+}
+
+export function twintailToHoyoVersionInfo(
+  twintail: TwintailManifest,
+  preferVersion?: string
+): HoyoVersionInfo | null {
+  const preload = twintail.extra?.preload
+  const preloadVersion = preload?.metadata.version
+  const preloadVersionLabel = preloadVersion ? `${preloadVersion} preload` : undefined
+
+  if (preferVersion && preload && preloadVersion === preferVersion) {
+    return buildHoyoVersionInfoFromEntry(preload, {
+      baseVersion: twintail.latest_version,
+      isPreload: true,
+    })
+  }
+
+  // Find the requested version or use the latest stable release.
+  let gameVersion: TwintailGameVersion | undefined
+
+  if (preferVersion) {
+    gameVersion = twintail.game_versions.find((v) => v.metadata.version === preferVersion)
+    if (!gameVersion) {
+      console.warn(`[twintail] Version ${preferVersion} not found, using latest`)
+    }
+  }
+
+  if (!gameVersion) {
+    gameVersion = twintail.game_versions[0]
+  }
+
+  if (!gameVersion) {
+    console.error('[twintail] No valid game version found')
+    return null
+  }
+
+  return buildHoyoVersionInfoFromEntry(gameVersion, {
+    preloadVersion,
+    preloadVersionLabel,
+  })
 }
 
 // Get available versions from Twintail manifest

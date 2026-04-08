@@ -126,6 +126,8 @@ export const registerDownloadHandlers = () => {
           hasUpdate: false,
           currentVersion,
           latestVersion: undefined,
+          latestVersionLabel: undefined,
+          updateChannel: undefined,
           downloadMode: undefined,
         }
       }
@@ -134,17 +136,29 @@ export const registerDownloadHandlers = () => {
         ? await detectHoyoInstalledVersion(installDir, biz)
         : null
 
-      const effectiveCurrentVersion = detectedVersion || currentVersion || undefined
-      const hasUpdate = !!effectiveCurrentVersion && latest.version !== effectiveCurrentVersion
+      const latestVersion = latest.preloadVersion ?? latest.version
+      const latestVersionLabel = latest.preloadVersionLabel ?? latest.versionLabel ?? latestVersion
+      const updateChannel = latest.preloadVersion ? 'preload' : 'stable'
+      const preservePredownloadVersion =
+        !!currentVersion
+        && currentVersion === latestVersion
+        && !!detectedVersion
+        && detectedVersion === latest.version
+      const effectiveCurrentVersion = preservePredownloadVersion
+        ? currentVersion
+        : detectedVersion || currentVersion || undefined
+      const hasUpdate = !!effectiveCurrentVersion && latestVersion !== effectiveCurrentVersion
 
       console.log(
-        `[download] ${biz} - current: ${effectiveCurrentVersion ?? 'unknown'}, latest: ${latest.version}, hasUpdate: ${hasUpdate}`
+        `[download] ${biz} - current: ${effectiveCurrentVersion ?? 'unknown'}, latest: ${latestVersion}, hasUpdate: ${hasUpdate}, channel: ${updateChannel}`
       )
 
       return {
         hasUpdate,
         currentVersion: effectiveCurrentVersion,
-        latestVersion: latest.version,
+        latestVersion,
+        latestVersionLabel,
+        updateChannel,
         downloadMode: latest.downloadMode,
       }
     }

@@ -41,9 +41,10 @@ export function CatalogPanel({
   const installed = !!installedGame
   const active = !!progress && ['downloading', 'verifying', 'extracting'].includes(progress.status)
   const canUpdate = installedGame?.download?.status === 'update_available'
+  const isPreloadUpdate = canUpdate && installedGame?.download?.updateChannel === 'preload'
   const installedStatus =
     installedGame?.download?.status === 'update_available'
-      ? 'UPDATE AVAILABLE'
+      ? isPreloadUpdate ? 'PRELOAD AVAILABLE' : 'UPDATE AVAILABLE'
       : installed
         ? 'INSTALLED'
         : active && progress
@@ -62,7 +63,7 @@ export function CatalogPanel({
         <div className="tui-terminal-header">{`> ${entry.name.toUpperCase()}`}</div>
         <div className="tui-kv-list">
           <div><span>vendor</span><span>{entry.vendor}</span></div>
-          <div><span>version</span><span>{details.version ?? 'unknown'}</span></div>
+          <div><span>version</span><span>{details.versionLabel ?? details.version ?? 'unknown'}</span></div>
           <div><span>download</span><span>{details.sizeLabel}</span></div>
           {details.installedSizeLabel && <div><span>installed</span><span>{details.installedSizeLabel}</span></div>}
           <div><span>status</span><span>{installedStatus}</span></div>
@@ -153,7 +154,7 @@ export function CatalogPanel({
               disabled={(!canUpdate && installed) || !details.version}
               type="button"
             >
-              [{canUpdate ? 'UPDATE' : 'INSTALL'}]
+              [{canUpdate ? (isPreloadUpdate ? 'PRELOAD' : 'UPDATE') : 'INSTALL'}]
             </button>
           ) : (
             <button className="tui-command" onClick={() => void onLocateConfirm()} type="button">

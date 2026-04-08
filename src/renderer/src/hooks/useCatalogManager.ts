@@ -16,6 +16,8 @@ interface UseCatalogManagerOptions {
     currentVersion: string | undefined,
     latestVersion: string | undefined,
     installPath?: string,
+    latestVersionLabel?: string,
+    updateChannel?: 'stable' | 'preload',
   ) => Game['download']
   buildWuwaDownloadState: (
     currentVersion: string | undefined,
@@ -35,7 +37,7 @@ interface UseCatalogManagerResult {
   handleCatalogLocateConfirm: (entry: CatalogEntry) => Promise<void>
   handleCatalogStart: (entry: CatalogEntry) => Promise<void>
   loadCatalogDetails: () => Promise<void>
-  refreshSingleHoyoGame: (game: Game) => Promise<Game>
+  refreshSingleHoyoGame: (game: Game, completedVersion?: string) => Promise<Game>
   refreshSingleWuwaGame: (game: Game) => Promise<Game>
   setCatalogForms: Dispatch<SetStateAction<Record<CatalogId, CatalogFormState>>>
   syncCatalogGames: (nextGames: Game[]) => Promise<Game[]>
@@ -107,11 +109,21 @@ export function useCatalogManager({
         const nextCurrentVersion =
           result.currentVersion ?? game.download?.currentVersion ?? game.update?.currentVersion
         const nextLatestVersion =
-          result.latestVersion ?? info?.version ?? game.download?.latestVersion
+          result.latestVersion ?? info?.preloadVersion ?? info?.version ?? game.download?.latestVersion
+        const nextLatestVersionLabel =
+          result.latestVersionLabel
+          ?? info?.preloadVersionLabel
+          ?? info?.versionLabel
+          ?? nextLatestVersion
         const nextMode =
           result.downloadMode
           ?? info?.downloadMode
           ?? (game.download?.mode === 'zip' || game.download?.mode === 'sophon' ? game.download.mode : 'sophon')
+        const nextUpdateChannel =
+          result.updateChannel
+          ?? (info?.preloadVersion ? 'preload' : 'stable')
+          ?? game.download?.updateChannel
+          ?? 'stable'
 
         if (!nextCurrentVersion && !nextLatestVersion) {
           return game
@@ -122,6 +134,8 @@ export function useCatalogManager({
           nextCurrentVersion,
           nextLatestVersion,
           game.directory,
+          nextLatestVersionLabel,
+          nextUpdateChannel,
         )
 
         const unchanged =
@@ -129,6 +143,8 @@ export function useCatalogManager({
           && game.download?.mode === nextDownload?.mode
           && game.download?.currentVersion === nextDownload?.currentVersion
           && game.download?.latestVersion === nextDownload?.latestVersion
+          && game.download?.latestVersionLabel === nextDownload?.latestVersionLabel
+          && game.download?.updateChannel === nextDownload?.updateChannel
           && game.download?.installPath === nextDownload?.installPath
 
         if (unchanged) {
@@ -183,7 +199,7 @@ export function useCatalogManager({
     return nextGames.map((game) => updates.find((candidate) => candidate.id === game.id) ?? game)
   }
 
-  async function refreshSingleHoyoGame(game: Game): Promise<Game> {
+  async function refreshSingleHoyoGame(game: Game, completedVersion?: string): Promise<Game> {
     const entry = findCatalogEntryForGame(game)
     if (entry?.kind !== 'hoyo' || !entry.biz) {
       return game
@@ -195,21 +211,35 @@ export function useCatalogManager({
       installDir: game.directory,
     })
 
-    const nextCurrentVersion =
+    let nextCurrentVersion =
       result.currentVersion
-      ?? result.latestVersion
       ?? game.download?.currentVersion
       ?? game.update?.currentVersion
     const nextLatestVersion = result.latestVersion ?? game.download?.latestVersion
+    const nextLatestVersionLabel =
+      result.latestVersionLabel
+      ?? game.download?.latestVersionLabel
+      ?? nextLatestVersion
     const nextMode =
       result.downloadMode
       ?? (game.download?.mode === 'zip' || game.download?.mode === 'sophon' ? game.download.mode : 'sophon')
+    const nextUpdateChannel = result.updateChannel ?? game.download?.updateChannel ?? 'stable'
+
+    if (
+      completedVersion
+      && nextUpdateChannel === 'preload'
+      && completedVersion === nextLatestVersion
+    ) {
+      nextCurrentVersion = completedVersion
+    }
 
     const nextDownload = buildHoyoDownloadState(
       nextMode,
       nextCurrentVersion,
       nextLatestVersion,
       game.directory,
+      nextLatestVersionLabel,
+      nextUpdateChannel,
     )
 
     return updateGame(game.id, { download: nextDownload, installed: true })
@@ -254,6 +284,7 @@ export function useCatalogManager({
         const info = result.value.info as HoyoVersionInfo
         nextDetails[entry.id] = {
           version: info.version,
+          versionLabel: info.preloadVersionLabel ?? info.versionLabel ?? info.version,
           sizeLabel: info.zipSize ? formatBytes(info.zipSize) : 'official manifest',
           error: null,
         }
@@ -261,6 +292,7 @@ export function useCatalogManager({
         const reason = result.status === 'rejected' ? result.reason : 'Version unavailable'
         nextDetails[entry.id] = {
           version: null,
+          versionLabel: null,
           sizeLabel: 'unavailable',
           error: reason instanceof Error ? reason.message : String(reason),
         }
@@ -397,6 +429,8 @@ export function useCatalogManager({
                 hoyoVersionState?.currentVersion,
                 hoyoVersionState?.latestVersion,
                 form.locateDirectory,
+                hoyoVersionState?.latestVersionLabel,
+                hoyoVersionState?.updateChannel,
               ),
             }
           : entry.id === 'wuwa'
@@ -435,6 +469,7 @@ export function useCatalogManager({
         biz: entry.biz!,
         destDir: targetDir,
         useTwintail: true,
+        preferVersion: canUpdate ? existingGame?.download?.latestVersion : undefined,
       })
       if (!result.success) {
         reportStatus(`install failed: ${result.error || 'unknown error'}`, { type: 'catalog', catalogId: entry.id })
@@ -478,6 +513,8 @@ export function useCatalogManager({
             catalogDetails[entry.id].version ?? undefined,
             catalogDetails[entry.id].version ?? undefined,
             installDir,
+            catalogDetails[entry.id].version ?? undefined,
+            'stable',
           )
         : entry.id === 'wuwa'
           ? buildWuwaDownloadState(

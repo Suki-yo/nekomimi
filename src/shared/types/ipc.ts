@@ -182,6 +182,8 @@ export interface IPCChannels {
       hasUpdate: boolean
       currentVersion: string | undefined
       latestVersion: string | undefined
+      latestVersionLabel?: string
+      updateChannel?: 'stable' | 'preload'
       downloadMode: 'zip' | 'sophon' | undefined
     }
   }

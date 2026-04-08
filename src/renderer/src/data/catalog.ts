@@ -24,6 +24,7 @@ export interface CatalogEntry {
 
 export interface CatalogDetails {
   version: string | null
+  versionLabel?: string | null
   sizeLabel: string
   installedSizeLabel?: string
   error: string | null

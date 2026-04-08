@@ -33,6 +33,8 @@ export interface GameDownloadState {
   mode: DownloadMode
   currentVersion?: string
   latestVersion?: string
+  latestVersionLabel?: string
+  updateChannel?: 'stable' | 'preload'
   totalBytes?: number
   downloadedBytes?: number
   installPath?: string
@@ -70,10 +72,15 @@ export interface WuwaFileEntry {
 // Game version info from official API
 export interface HoyoVersionInfo {
   version: string
+  versionLabel?: string
   downloadMode: DownloadMode
   zipUrl?: string
   zipMd5?: string
   zipSize?: number
+  baseVersion?: string
+  isPreload?: boolean
+  preloadVersion?: string
+  preloadVersionLabel?: string
   segments?: Array<{
     url: string
     md5: string
