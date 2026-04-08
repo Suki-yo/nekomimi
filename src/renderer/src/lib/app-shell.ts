@@ -90,6 +90,7 @@ function buildTrackedDownloadState(
   installPath?: string,
   latestVersionLabel?: string,
   updateChannel: 'stable' | 'preload' = 'stable',
+  totalBytes?: number,
 ): GameDownloadState {
   return {
     status:
@@ -101,6 +102,7 @@ function buildTrackedDownloadState(
     latestVersion,
     latestVersionLabel,
     updateChannel,
+    totalBytes,
     installPath,
   }
 }
@@ -112,8 +114,9 @@ export function buildHoyoDownloadState(
   installPath?: string,
   latestVersionLabel?: string,
   updateChannel: 'stable' | 'preload' = 'stable',
+  totalBytes?: number,
 ): GameDownloadState {
-  return buildTrackedDownloadState(mode, currentVersion, latestVersion, installPath, latestVersionLabel, updateChannel)
+  return buildTrackedDownloadState(mode, currentVersion, latestVersion, installPath, latestVersionLabel, updateChannel, totalBytes)
 }
 
 export function buildWuwaDownloadState(

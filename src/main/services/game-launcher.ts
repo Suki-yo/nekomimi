@@ -16,7 +16,7 @@ import { shouldUseXXMI, launchGameWithXXMI } from './mod-manager'
 import { ProcessMonitor, type ProcessMonitorEntry } from './process-monitor'
 import { findSteamrt, downloadSteamrt } from './steamrt'
 import { expandHome } from './paths'
-import { cleanupStandaloneWwmiRuntime } from './wuwa-mod-config'
+import { cleanupStandaloneWwmiRuntime, ensureWuwaPrefixNetworkOverrides } from './wuwa-mod-config'
 import { rebuildTrayMenu } from './tray'
 import type { Game } from '../../shared/types/game'
 
@@ -241,6 +241,10 @@ export async function launchGame(
   // Resolve prefix: expand ~ and auto-generate if not set
   const resolvedPrefix = resolveRunnerPrefix(game)
   const resolvedRunnerPath = expandHome(game.runner.path)
+
+  if (game.slug === 'wuwa' && game.runner.type === 'proton') {
+    ensureWuwaPrefixNetworkOverrides(resolvedPrefix)
+  }
 
   const gameSupportsXXMI = shouldUseXXMI(game.executable)
   const modsEnabled = game.mods?.enabled ?? false

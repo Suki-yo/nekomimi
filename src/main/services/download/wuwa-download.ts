@@ -4,7 +4,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { fetchWuwaVersionInfo, fetchWuwaManifest } from './wuwa-api'
-import { downloadStream, streamingMd5 } from './utils'
+import { createTransferProgressTracker, downloadStream, streamingMd5 } from './utils'
 import type { DownloadProgress, WuwaFileEntry } from '../../../shared/types/download'
 
 const CONCURRENCY = 4
@@ -20,7 +20,8 @@ export interface WuwaDownloadOptions {
 function downloadFile(
   url: string,
   destPath: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onChunk?: (chunkBytes: number) => void
 ): Promise<{ success: boolean; error?: string }> {
   return (async () => {
     const dir = path.dirname(destPath)
@@ -39,6 +40,10 @@ function downloadFile(
         signal,
         onResponse: (response) => new Promise<void>((resolveStream, rejectStream) => {
           const fileStream = fs.createWriteStream(tmp)
+
+          response.on('data', (chunk: Buffer) => {
+            onChunk?.(chunk.length)
+          })
 
           response.pipe(fileStream)
           fileStream.once('finish', () => resolveStream())
@@ -128,9 +133,7 @@ export async function startWuwaDownload(
     }
 
     let bytesDownloaded = 0
-    let speedBytesAccum = 0
-    let lastSpeedReport = Date.now()
-    let currentSpeed = 0
+    const progressTracker = createTransferProgressTracker(totalSize)
 
     // Pre-count already-complete files
     for (const entry of entries) {
@@ -138,6 +141,24 @@ export async function startWuwaDownload(
       if (await isFileComplete(filePath, entry)) {
         bytesDownloaded += entry.size
       }
+    }
+    progressTracker.setDownloadedBytes(bytesDownloaded)
+
+    const emitProgress = (currentFile: string, force = false) => {
+      const snapshot = progressTracker.snapshot(force)
+      if (!snapshot.shouldReport) {
+        return
+      }
+      onProgress?.({
+        gameId,
+        status: 'downloading',
+        percent: snapshot.progress.percent,
+        bytesDownloaded: snapshot.progress.bytesDownloaded,
+        bytesTotal: snapshot.progress.bytesTotal,
+        downloadSpeed: snapshot.progress.downloadSpeed,
+        timeRemaining: snapshot.progress.timeRemaining,
+        currentFile,
+      })
     }
 
     const tasks = entries.map((entry) => async () => {
@@ -151,38 +172,17 @@ export async function startWuwaDownload(
 
       const fileUrl = `${versionInfo.resListUrl}/${entry.dest}`
 
-      const beforeBytes = bytesDownloaded
-      const result = await downloadFile(fileUrl, filePath, signal)
+      const result = await downloadFile(fileUrl, filePath, signal, (chunkBytes) => {
+        bytesDownloaded += chunkBytes
+        progressTracker.addDownloadedBytes(chunkBytes)
+        emitProgress(entry.dest)
+      })
 
       if (!result.success) {
         throw new Error(`Failed to download ${entry.dest}: ${result.error}`)
       }
 
-      bytesDownloaded += entry.size
-      speedBytesAccum += entry.size
-
-      const now = Date.now()
-      const elapsed = (now - lastSpeedReport) / 1000
-      if (elapsed >= 0.5) {
-        currentSpeed = speedBytesAccum / elapsed
-        speedBytesAccum = 0
-        lastSpeedReport = now
-      }
-
-      const remaining = currentSpeed > 0 ? (totalSize - bytesDownloaded) / currentSpeed : 0
-
-      onProgress?.({
-        gameId,
-        status: 'downloading',
-        percent: Math.round((bytesDownloaded / totalSize) * 100),
-        bytesDownloaded,
-        bytesTotal: totalSize,
-        downloadSpeed: currentSpeed,
-        timeRemaining: Math.round(remaining),
-        currentFile: entry.dest,
-      })
-
-      void beforeBytes // suppress unused warning
+      emitProgress(entry.dest, true)
     })
 
     await withConcurrency(tasks, CONCURRENCY)

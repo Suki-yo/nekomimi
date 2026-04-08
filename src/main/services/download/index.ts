@@ -11,7 +11,7 @@ import { fetchEndfieldGame, fetchEndfieldVersionInfo } from './endfield-api'
 import { fetchWuwaVersionInfo, fetchWuwaManifest, detectWuwaInstalledVersion } from './wuwa-api'
 import { startWuwaDownload as _startWuwaDownload } from './wuwa-download'
 import { downloadSophonGame } from './sophon'
-import { downloadStream, streamingMd5 } from './utils'
+import { createTransferProgressTracker, downloadStream, streamingMd5 } from './utils'
 import type {
   HoyoGameBiz,
   HoyoVersionInfo,
@@ -80,37 +80,36 @@ async function isUrlAccessible(url: string): Promise<boolean> {
 async function downloadFile(
   url: string,
   destPath: string,
-  onProgress?: (percent: number, speed: number) => void
+  onProgress?: (progress: {
+    bytesDownloaded: number
+    bytesTotal: number
+    percent: number
+    downloadSpeed: number
+    timeRemaining: number
+  }) => void
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    let downloaded = 0
-    let lastReportTime = Date.now()
-    let lastReportBytes = 0
-
     await downloadStream(url, {
       onResponse: (response, totalSize) => new Promise<void>((resolve, reject) => {
         const fileStream = fs.createWriteStream(destPath)
+        const tracker = createTransferProgressTracker(totalSize)
 
         response.on('data', (chunk: Buffer) => {
-          downloaded += chunk.length
-
-          const now = Date.now()
-          if (now - lastReportTime >= 500) {
-            const timeDiff = (now - lastReportTime) / 1000
-            const bytesDiff = downloaded - lastReportBytes
-            const speed = bytesDiff / timeDiff
-
-            if (totalSize > 0 && onProgress) {
-              onProgress(Math.round((downloaded / totalSize) * 100), speed)
-            }
-
-            lastReportTime = now
-            lastReportBytes = downloaded
+          tracker.addDownloadedBytes(chunk.length)
+          const snapshot = tracker.snapshot()
+          if (onProgress && snapshot.shouldReport) {
+            onProgress(snapshot.progress)
           }
         })
 
         response.pipe(fileStream)
-        fileStream.once('finish', () => resolve())
+        fileStream.once('finish', () => {
+          if (onProgress) {
+            const snapshot = tracker.snapshot(true)
+            onProgress(snapshot.progress)
+          }
+          resolve()
+        })
         fileStream.once('error', reject)
         response.once('error', reject)
       }),
@@ -192,16 +191,19 @@ async function downloadSegmentedZip(
     }
 
     console.log(`[download] Downloading segment ${i + 1}/${segments.length}: ${segment.url}`)
-    const downloadResult = await downloadFile(segment.url, segmentPath, (percent, speed) => {
-      const segmentDownloaded = (percent / 100) * segment.size
+    const downloadResult = await downloadFile(segment.url, segmentPath, (segmentProgress) => {
+      const totalDownloaded = downloadedTotal + segmentProgress.bytesDownloaded
+      const remainingBytes = Math.max(0, totalSize - totalDownloaded)
       onProgress?.({
         gameId,
         status: 'downloading',
-        percent: Math.round(((downloadedTotal + segmentDownloaded) / totalSize) * 100),
-        bytesDownloaded: downloadedTotal + segmentDownloaded,
+        percent: Math.round((totalDownloaded / totalSize) * 100),
+        bytesDownloaded: totalDownloaded,
         bytesTotal: totalSize,
-        downloadSpeed: speed,
-        timeRemaining: 0,
+        downloadSpeed: segmentProgress.downloadSpeed,
+        timeRemaining: segmentProgress.downloadSpeed > 0
+          ? Math.round(remainingBytes / segmentProgress.downloadSpeed)
+          : 0,
         currentFile: `Downloading ${segmentName}...`,
       })
     })
@@ -374,15 +376,15 @@ export async function startGameDownload(
       const downloadResult = await downloadFile(
         versionInfo.zipUrl,
         zipPath,
-        (percent, speed) => {
+        (downloadProgress) => {
           onProgress?.({
             gameId,
             status: 'downloading',
-            percent: percent * 0.9, // 90% for download
-            bytesDownloaded: 0,
-            bytesTotal: versionInfo.zipSize || 0,
-            downloadSpeed: speed,
-            timeRemaining: 0,
+            percent: downloadProgress.percent * 0.9, // 90% for download
+            bytesDownloaded: downloadProgress.bytesDownloaded,
+            bytesTotal: downloadProgress.bytesTotal || versionInfo.zipSize || 0,
+            downloadSpeed: downloadProgress.downloadSpeed,
+            timeRemaining: downloadProgress.timeRemaining,
           })
         }
       )

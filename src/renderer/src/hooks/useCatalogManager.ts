@@ -18,6 +18,7 @@ interface UseCatalogManagerOptions {
     installPath?: string,
     latestVersionLabel?: string,
     updateChannel?: 'stable' | 'preload',
+    totalBytes?: number,
   ) => Game['download']
   buildWuwaDownloadState: (
     currentVersion: string | undefined,
@@ -136,6 +137,7 @@ export function useCatalogManager({
           game.directory,
           nextLatestVersionLabel,
           nextUpdateChannel,
+          result.updateSizeBytes,
         )
 
         const unchanged =
@@ -145,6 +147,7 @@ export function useCatalogManager({
           && game.download?.latestVersion === nextDownload?.latestVersion
           && game.download?.latestVersionLabel === nextDownload?.latestVersionLabel
           && game.download?.updateChannel === nextDownload?.updateChannel
+          && game.download?.totalBytes === nextDownload?.totalBytes
           && game.download?.installPath === nextDownload?.installPath
 
         if (unchanged) {
@@ -240,6 +243,7 @@ export function useCatalogManager({
       game.directory,
       nextLatestVersionLabel,
       nextUpdateChannel,
+      result.updateSizeBytes ?? game.download?.totalBytes,
     )
 
     return updateGame(game.id, { download: nextDownload, installed: true })
@@ -282,9 +286,17 @@ export function useCatalogManager({
       const entry = hoyoEntries[index]
       if (result.status === 'fulfilled' && result.value.info) {
         const info = result.value.info as HoyoVersionInfo
+        const stableVersion = info.version
+        const latestVersion = info.preloadVersion ?? info.version
+        const latestVersionLabel = info.preloadVersionLabel ?? info.versionLabel ?? latestVersion
+        const updateChannel = info.preloadVersion ? 'preload' : 'stable'
         nextDetails[entry.id] = {
-          version: info.version,
-          versionLabel: info.preloadVersionLabel ?? info.versionLabel ?? info.version,
+          version: latestVersion,
+          versionLabel: latestVersionLabel,
+          stableVersion,
+          latestVersion,
+          latestVersionLabel,
+          updateChannel,
           sizeLabel: info.zipSize ? formatBytes(info.zipSize) : 'official manifest',
           error: null,
         }
@@ -431,6 +443,7 @@ export function useCatalogManager({
                 form.locateDirectory,
                 hoyoVersionState?.latestVersionLabel,
                 hoyoVersionState?.updateChannel,
+                hoyoVersionState?.updateSizeBytes,
               ),
             }
           : entry.id === 'wuwa'
@@ -510,11 +523,12 @@ export function useCatalogManager({
       entry.kind === 'hoyo'
         ? buildHoyoDownloadState(
             'sophon',
-            catalogDetails[entry.id].version ?? undefined,
-            catalogDetails[entry.id].version ?? undefined,
+            catalogDetails[entry.id].stableVersion ?? catalogDetails[entry.id].version ?? undefined,
+            catalogDetails[entry.id].latestVersion ?? catalogDetails[entry.id].version ?? undefined,
             installDir,
-            catalogDetails[entry.id].version ?? undefined,
-            'stable',
+            catalogDetails[entry.id].latestVersionLabel ?? catalogDetails[entry.id].versionLabel ?? catalogDetails[entry.id].version ?? undefined,
+            catalogDetails[entry.id].updateChannel ?? 'stable',
+            undefined,
           )
         : entry.id === 'wuwa'
           ? buildWuwaDownloadState(

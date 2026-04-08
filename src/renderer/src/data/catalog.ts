@@ -25,6 +25,10 @@ export interface CatalogEntry {
 export interface CatalogDetails {
   version: string | null
   versionLabel?: string | null
+  stableVersion?: string | null
+  latestVersion?: string | null
+  latestVersionLabel?: string | null
+  updateChannel?: 'stable' | 'preload'
   sizeLabel: string
   installedSizeLabel?: string
   error: string | null

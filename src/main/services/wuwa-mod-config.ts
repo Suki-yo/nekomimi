@@ -12,6 +12,13 @@ export const WWMI_DIRECT_LAUNCH_ARGS = ['-dx11']
 // Keep the direct-Proton WuWa path aligned with the last known-good standalone
 // launch chain: disable the external Kuro helper and force native jsproxy.
 export const WWMI_KURO_DLL_OVERRIDES = 'lsteamclient=d;KRSDKExternal.exe=d;jsproxy=n,b'
+const WUWA_HOSTS_BLOCK_START = '# nekomimi-wuwa-ipv4-start'
+const WUWA_HOSTS_BLOCK_END = '# nekomimi-wuwa-ipv4-end'
+const WUWA_IPV4_HOST_OVERRIDES = [
+  // These IPv4 addresses were observed as the successful WuWa login/gateway
+  // endpoints on 2026-04-07, while the paired IPv6 route was failing.
+  ['prod-eo-us-0.aki-game.net', ['43.169.22.2', '43.169.23.2']],
+] as const
 
 export function resolveWuwaWwmiLaunchMode(game: Pick<Game, 'slug' | 'mods'>): WuwaWwmiLaunchMode {
   if (game.slug !== 'wuwa') {
@@ -93,6 +100,56 @@ function ensureSymlinkPath(targetPath: string, linkPath: string): void {
   } catch (err) {
     console.warn(`[wwmi] Failed to link runtime asset ${linkPath}:`, err)
   }
+}
+
+function resolveWinePrefix(prefixPath: string): string {
+  if (/\/pfx\/?$/.test(prefixPath)) {
+    return prefixPath
+  }
+
+  const embeddedPrefix = path.join(prefixPath, 'pfx')
+  if (fs.existsSync(embeddedPrefix)) {
+    return embeddedPrefix
+  }
+
+  return prefixPath
+}
+
+function stripManagedHostsBlock(content: string): string {
+  const blockPattern = new RegExp(
+    `\\n?${WUWA_HOSTS_BLOCK_START}[\\s\\S]*?${WUWA_HOSTS_BLOCK_END}\\n?`,
+    'g'
+  )
+
+  return content.replace(blockPattern, '').trimEnd()
+}
+
+export function ensureWuwaPrefixNetworkOverrides(prefixPath: string): boolean {
+  const winePrefix = resolveWinePrefix(prefixPath)
+  const hostsPath = path.join(winePrefix, 'drive_c', 'windows', 'system32', 'drivers', 'etc', 'hosts')
+  const hostsDir = path.dirname(hostsPath)
+  fs.mkdirSync(hostsDir, { recursive: true })
+
+  const existingContent = fs.existsSync(hostsPath) ? fs.readFileSync(hostsPath, 'utf-8') : ''
+  const baseContent = stripManagedHostsBlock(existingContent)
+  const overrideLines = WUWA_IPV4_HOST_OVERRIDES.flatMap(([host, addresses]) =>
+    addresses.map((address) => `${address} ${host}`)
+  )
+  const managedBlock = [
+    WUWA_HOSTS_BLOCK_START,
+    '# Force WuWa gateway resolution onto known-good IPv4 addresses.',
+    ...overrideLines,
+    WUWA_HOSTS_BLOCK_END,
+  ].join('\n')
+  const nextContent = baseContent ? `${baseContent}\n\n${managedBlock}\n` : `${managedBlock}\n`
+
+  if (nextContent === existingContent) {
+    return false
+  }
+
+  fs.writeFileSync(hostsPath, nextContent, 'utf-8')
+  console.log(`[wuwa] Updated prefix hosts override: ${hostsPath}`)
+  return true
 }
 
 export function prepareStandaloneWwmiRuntime(gameExecutable: string): void {

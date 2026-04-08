@@ -6,6 +6,7 @@ import * as path from 'path'
 import * as crypto from 'crypto'
 import { fetchManifest, getFilesOnly, calculateChunkDownloadSize } from './manifest'
 import {
+  createTransferProgressTracker,
   decompressZstd,
   downloadStream,
   sanitizePath,
@@ -28,9 +29,7 @@ export interface SophonDownloadOptions {
 interface DownloadState {
   totalBytes: number
   downloadedBytes: number
-  startTime: number
-  speed: number
-  speedSamples: Array<{ time: number; bytes: number }>
+  progressTracker: ReturnType<typeof createTransferProgressTracker>
 }
 
 // Calculate MD5 of buffer
@@ -50,35 +49,15 @@ async function downloadChunk(
   await downloadStream(url, {
     onResponse: (response) => new Promise<void>((resolve, reject) => {
       response.on('data', (chunk: Buffer) => {
-        chunks.push(chunk)
         state.downloadedBytes += chunk.length
-
-        // Update speed calculation
-        const now = Date.now()
-        state.speedSamples.push({ time: now, bytes: state.downloadedBytes })
-        if (state.speedSamples.length > 10) {
-          state.speedSamples.shift()
-        }
-
-        if (state.speedSamples.length >= 2) {
-          const first = state.speedSamples[0]
-          const last = state.speedSamples[state.speedSamples.length - 1]
-          const timeDiff = (last.time - first.time) / 1000
-          if (timeDiff > 0) {
-            state.speed = (last.bytes - first.bytes) / timeDiff
-          }
-        }
+        state.progressTracker.addDownloadedBytes(chunk.length)
+        chunks.push(chunk)
 
         if (onProgress) {
-          const remaining = state.speed > 0 ? (state.totalBytes - state.downloadedBytes) / state.speed : 0
-
-          onProgress({
-            bytesDownloaded: state.downloadedBytes,
-            bytesTotal: state.totalBytes,
-            percent: Math.round((state.downloadedBytes / state.totalBytes) * 100),
-            downloadSpeed: Math.round(state.speed),
-            timeRemaining: Math.round(remaining),
-          })
+          const snapshot = state.progressTracker.snapshot()
+          if (snapshot.shouldReport) {
+            onProgress(snapshot.progress)
+          }
         }
       })
 
@@ -148,7 +127,13 @@ async function processFile(
   if (fs.existsSync(filePath) && fs.statSync(filePath).size === file.size) {
     const existingMd5 = await streamingMd5(filePath)
     if (existingMd5 === file.md5) {
-      state.downloadedBytes += file.chunks.reduce((sum, c) => sum + c.chunkSize, 0)
+      const skippedBytes = file.chunks.reduce((sum, c) => sum + c.chunkSize, 0)
+      state.downloadedBytes += skippedBytes
+      state.progressTracker.addDownloadedBytes(skippedBytes)
+      if (onProgress) {
+        const snapshot = state.progressTracker.snapshot(true)
+        onProgress(snapshot.progress)
+      }
       return
     }
   }
@@ -220,6 +205,7 @@ async function downloadManifestFiles(
 
   // Add this manifest's chunk size to the total
   state.totalBytes += totalChunkSize
+  state.progressTracker.setTotalBytes(state.totalBytes)
 
   // Resolve chunk base URL
   let chunkBaseUrl: string
@@ -290,9 +276,7 @@ export async function downloadSophonGame(
   const state: DownloadState = {
     totalBytes: 0,
     downloadedBytes: 0,
-    startTime: Date.now(),
-    speed: 0,
-    speedSamples: [],
+    progressTracker: createTransferProgressTracker(0),
   }
 
   try {

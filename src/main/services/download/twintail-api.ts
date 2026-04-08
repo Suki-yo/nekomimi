@@ -31,12 +31,32 @@ interface TwintailGameVersion {
       file_path?: string
       region_code?: string
     }>
-    diffs?: Array<{
-      version: string
-      file_url: string
-      file_path: string
-    }>
+    diff?: TwintailDiffPackage[]
   }
+  audio?: {
+    full?: Array<{
+      file_url: string
+      compressed_size: string
+      decompressed_size: string
+      file_hash: string
+      file_path?: string
+      language?: string
+      region_code?: string
+    }>
+    diff?: TwintailDiffPackage[]
+  }
+}
+
+interface TwintailDiffPackage {
+  file_url: string
+  compressed_size: string
+  decompressed_size: string
+  file_hash: string
+  file_path?: string
+  diff_type?: string
+  original_version?: string
+  delete_files?: string[]
+  language?: string
 }
 
 interface TwintailPreloadVersion {
@@ -52,16 +72,7 @@ interface TwintailPreloadVersion {
       language?: string
       region_code?: string
     }>
-    diff?: Array<{
-      file_url: string
-      compressed_size: string
-      decompressed_size: string
-      file_hash: string
-      file_path?: string
-      diff_type?: string
-      original_version?: string
-      language?: string
-    }>
+    diff?: TwintailDiffPackage[]
   }
 }
 
@@ -134,9 +145,10 @@ function buildHoyoVersionInfoFromEntry(
     isPreload?: boolean
     preloadVersion?: string
     preloadVersionLabel?: string
+    diffSource?: TwintailGameVersion | TwintailPreloadVersion
   }
 ): HoyoVersionInfo | null {
-  const { baseVersion, isPreload = false, preloadVersion, preloadVersionLabel } = options || {}
+  const { baseVersion, isPreload = false, preloadVersion, preloadVersionLabel, diffSource } = options || {}
   const metadata = gameVersion.metadata
 
   if (!gameVersion.game.full || gameVersion.game.full.length === 0) {
@@ -180,6 +192,36 @@ function buildHoyoVersionInfoFromEntry(
     console.log(`[twintail] Found ${sophonManifests.length} Sophon manifests for ${metadata.version}`)
   }
 
+  const selectedDiffSource = diffSource ?? gameVersion
+  const gameDiffs: TwintailDiffPackage[] = selectedDiffSource.game.diff ?? []
+  const audioDiffs = selectedDiffSource.audio?.diff ?? []
+  const audioDiffsByVersion = new Map<string, TwintailDiffPackage[]>()
+  for (const diff of audioDiffs) {
+    if (!diff.original_version) {
+      continue
+    }
+    const current = audioDiffsByVersion.get(diff.original_version) ?? []
+    current.push(diff)
+    audioDiffsByVersion.set(diff.original_version, current)
+  }
+
+  const diffs = gameDiffs
+    .filter((diff: TwintailDiffPackage) => !!diff.original_version)
+    .map((diff: TwintailDiffPackage) => ({
+      version: diff.original_version!,
+      path: diff.file_url,
+      md5: diff.file_hash,
+      size: diff.compressed_size,
+      voicePacks: (audioDiffsByVersion.get(diff.original_version!) ?? []).map((audioDiff) => ({
+        language: audioDiff.language ?? '',
+        name: audioDiff.language ?? '',
+        path: audioDiff.file_url,
+        md5: audioDiff.file_hash,
+        size: audioDiff.compressed_size,
+        packageSize: audioDiff.compressed_size,
+      })),
+    }))
+
   const info: HoyoVersionInfo = {
     version: metadata.version,
     versionLabel: isPreload ? `${metadata.version} preload` : metadata.version,
@@ -193,7 +235,7 @@ function buildHoyoVersionInfoFromEntry(
     sophonManifests: sophonManifests.length > 1 ? sophonManifests : undefined,
     zipUrl: downloadMode === 'zip' ? fullPackage.file_url : undefined,
     voicePacks: [],
-    diffs: [],
+    diffs,
   }
 
   console.log(`[twintail] Converted ${metadata.version} (${downloadMode} mode)`)
@@ -240,6 +282,7 @@ export function twintailToHoyoVersionInfo(
   return buildHoyoVersionInfoFromEntry(gameVersion, {
     preloadVersion,
     preloadVersionLabel,
+    diffSource: preload ?? gameVersion,
   })
 }
 

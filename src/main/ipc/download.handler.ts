@@ -148,9 +148,15 @@ export const registerDownloadHandlers = () => {
         ? currentVersion
         : detectedVersion || currentVersion || undefined
       const hasUpdate = !!effectiveCurrentVersion && latestVersion !== effectiveCurrentVersion
+      const updateSizeBytes = hasUpdate
+        ? (() => {
+            const patch = latest.diffs.find((diff) => diff.version === effectiveCurrentVersion)
+            return patch ? parseInt(patch.size, 10) || undefined : undefined
+          })()
+        : undefined
 
       console.log(
-        `[download] ${biz} - current: ${effectiveCurrentVersion ?? 'unknown'}, latest: ${latestVersion}, hasUpdate: ${hasUpdate}, channel: ${updateChannel}`
+        `[download] ${biz} - current: ${effectiveCurrentVersion ?? 'unknown'}, latest: ${latestVersion}, hasUpdate: ${hasUpdate}, channel: ${updateChannel}, updateSizeBytes: ${updateSizeBytes ?? 'unknown'}`
       )
 
       return {
@@ -159,6 +165,7 @@ export const registerDownloadHandlers = () => {
         latestVersion,
         latestVersionLabel,
         updateChannel,
+        updateSizeBytes,
         downloadMode: latest.downloadMode,
       }
     }

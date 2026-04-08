@@ -1,4 +1,5 @@
 import type { JSX } from 'react'
+import { formatBytes } from '@/components/install-modal-utils'
 import type { DownloadProgress } from '@shared/types/download'
 import type { Game } from '@shared/types/game'
 import type { CatalogDetails, CatalogEntry, CatalogFormState } from '@/data/catalog'
@@ -42,6 +43,10 @@ export function CatalogPanel({
   const active = !!progress && ['downloading', 'verifying', 'extracting'].includes(progress.status)
   const canUpdate = installedGame?.download?.status === 'update_available'
   const isPreloadUpdate = canUpdate && installedGame?.download?.updateChannel === 'preload'
+  const downloadLabel =
+    canUpdate && installedGame?.download?.totalBytes
+      ? `${isPreloadUpdate ? 'preload patch' : 'update'} ${formatBytes(installedGame.download.totalBytes)}`
+      : details.sizeLabel
   const installedStatus =
     installedGame?.download?.status === 'update_available'
       ? isPreloadUpdate ? 'PRELOAD AVAILABLE' : 'UPDATE AVAILABLE'
@@ -64,7 +69,7 @@ export function CatalogPanel({
         <div className="tui-kv-list">
           <div><span>vendor</span><span>{entry.vendor}</span></div>
           <div><span>version</span><span>{details.versionLabel ?? details.version ?? 'unknown'}</span></div>
-          <div><span>download</span><span>{details.sizeLabel}</span></div>
+          <div><span>download</span><span>{downloadLabel}</span></div>
           {details.installedSizeLabel && <div><span>installed</span><span>{details.installedSizeLabel}</span></div>}
           <div><span>status</span><span>{installedStatus}</span></div>
         </div>

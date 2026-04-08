@@ -297,6 +297,88 @@ export function downloadStream(
   }, options.onResponse)
 }
 
+interface TransferSample {
+  time: number
+  bytes: number
+}
+
+export interface TransferProgressSnapshot {
+  bytesDownloaded: number
+  bytesTotal: number
+  percent: number
+  downloadSpeed: number
+  timeRemaining: number
+}
+
+export function createTransferProgressTracker(
+  totalBytes = 0,
+  options?: {
+    reportIntervalMs?: number
+    sampleWindowMs?: number
+  }
+) {
+  const reportIntervalMs = options?.reportIntervalMs ?? 250
+  const sampleWindowMs = options?.sampleWindowMs ?? 4000
+
+  let bytesTotal = totalBytes
+  let bytesDownloaded = 0
+  let lastReportTime = 0
+  const samples: TransferSample[] = []
+
+  function pruneSamples(now: number): void {
+    while (samples.length > 1 && now - samples[0].time > sampleWindowMs) {
+      samples.shift()
+    }
+  }
+
+  function captureSnapshot(now: number): TransferProgressSnapshot {
+    samples.push({ time: now, bytes: bytesDownloaded })
+    pruneSamples(now)
+
+    let downloadSpeed = 0
+    if (samples.length >= 2) {
+      const first = samples[0]
+      const last = samples[samples.length - 1]
+      const elapsedSeconds = (last.time - first.time) / 1000
+      if (elapsedSeconds > 0) {
+        downloadSpeed = Math.max(0, (last.bytes - first.bytes) / elapsedSeconds)
+      }
+    }
+
+    const remainingBytes = Math.max(0, bytesTotal - bytesDownloaded)
+    const timeRemaining = downloadSpeed > 0 ? Math.round(remainingBytes / downloadSpeed) : 0
+
+    return {
+      bytesDownloaded,
+      bytesTotal,
+      percent: bytesTotal > 0 ? Math.round((bytesDownloaded / bytesTotal) * 100) : 0,
+      downloadSpeed: Math.round(downloadSpeed),
+      timeRemaining,
+    }
+  }
+
+  return {
+    setTotalBytes(nextTotal: number): void {
+      bytesTotal = Math.max(0, nextTotal)
+    },
+    setDownloadedBytes(nextDownloaded: number): void {
+      bytesDownloaded = Math.max(0, nextDownloaded)
+    },
+    addDownloadedBytes(delta: number): void {
+      bytesDownloaded = Math.max(0, bytesDownloaded + delta)
+    },
+    snapshot(force = false): { shouldReport: boolean; progress: TransferProgressSnapshot } {
+      const now = Date.now()
+      const progress = captureSnapshot(now)
+      const shouldReport = force || lastReportTime === 0 || now - lastReportTime >= reportIntervalMs
+      if (shouldReport) {
+        lastReportTime = now
+      }
+      return { shouldReport, progress }
+    },
+  }
+}
+
 // Streaming MD5 for large files - avoids loading GB-scale files into memory
 export async function streamingMd5(filePath: string): Promise<string> {
   return new Promise((resolve, reject) => {
