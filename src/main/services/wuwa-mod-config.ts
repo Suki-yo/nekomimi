@@ -6,7 +6,9 @@ import type { Game, WuwaWwmiLaunchMode } from '../../shared/types/game'
 const WWMI_PROCESS_EXE_NAMES = ['Client-Win64-Shipping.exe'] as const
 const WWMI_DLL_INIT_DELAY_MS = 500
 const WUWA_REQUIRED_STEAM_COMPAT_FLAGS = ['noopwr', 'noxalia'] as const
-export const DEFAULT_WUWA_WWMI_LAUNCH_MODE: WuwaWwmiLaunchMode = 'launcher'
+// Prefer the standalone direct-Proton path by default. It removes the extra
+// WWMI launcher hop and matches the last known-good no-disconnect flow.
+export const DEFAULT_WUWA_WWMI_LAUNCH_MODE: WuwaWwmiLaunchMode = 'direct'
 
 export const WWMI_DIRECT_LAUNCH_ARGS = ['-dx11']
 // Keep the direct-Proton WuWa path aligned with the last known-good standalone

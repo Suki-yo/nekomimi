@@ -6,6 +6,20 @@ function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true })
 }
 
+function copyIcon(projectRoot) {
+  const sourceIconPath = path.join(projectRoot, 'resources', 'icon.png')
+  const iconDir = path.join(os.homedir(), '.local', 'share', 'icons', 'hicolor', '512x512', 'apps')
+  const targetIconPath = path.join(iconDir, 'nekomimi.png')
+
+  if (!fs.existsSync(sourceIconPath)) {
+    throw new Error(`Missing icon source at ${sourceIconPath}`)
+  }
+
+  ensureDir(iconDir)
+  fs.copyFileSync(sourceIconPath, targetIconPath)
+  return targetIconPath
+}
+
 function findLatestAppImage(releaseDir, packageVersion) {
   const preferred = path.join(releaseDir, `Nekomimi-${packageVersion}.AppImage`)
   if (fs.existsSync(preferred)) {
@@ -28,6 +42,7 @@ function main() {
   const releaseDir = path.join(projectRoot, 'release')
   const stableAppImagePath = path.join(releaseDir, 'Nekomimi.AppImage')
   const appImagePath = findLatestAppImage(releaseDir, packageJson.version)
+  const installedIconPath = copyIcon(projectRoot)
 
   if (!appImagePath) {
     throw new Error(`No AppImage found in ${releaseDir}`)
@@ -54,7 +69,7 @@ function main() {
     'Comment=Anime game launcher',
     `Exec=${stableAppImagePath}`,
     `TryExec=${stableAppImagePath}`,
-    'Icon=applications-games',
+    'Icon=nekomimi',
     'Terminal=false',
     'Categories=Game;',
     'StartupNotify=true',
@@ -70,6 +85,7 @@ function main() {
   }
 
   console.log(`[linux-launcher] Stable AppImage: ${stableAppImagePath} -> ${appImagePath}`)
+  console.log(`[linux-launcher] Installed icon: ${installedIconPath}`)
 }
 
 main()
