@@ -18,8 +18,12 @@ const WUWA_HOSTS_BLOCK_START = '# nekomimi-wuwa-ipv4-start'
 const WUWA_HOSTS_BLOCK_END = '# nekomimi-wuwa-ipv4-end'
 const WUWA_IPV4_HOST_OVERRIDES = [
   // These IPv4 addresses were observed as the successful WuWa login/gateway
-  // endpoints on 2026-04-07, while the paired IPv6 route was failing.
+  // endpoints on 2026-04-07 and again on 2026-04-10. The client also tried
+  // prod-ali-0.aki-game.net during the same sessions, so pin both gateway
+  // hostnames onto the same known-good IPv4 pool to avoid broken DNS/IPv6
+  // resolution paths in the Wine prefix.
   ['prod-eo-us-0.aki-game.net', ['43.169.22.2', '43.169.23.2']],
+  ['prod-ali-0.aki-game.net', ['43.169.22.2', '43.169.23.2']],
 ] as const
 
 export function resolveWuwaWwmiLaunchMode(game: Pick<Game, 'slug' | 'mods'>): WuwaWwmiLaunchMode {
