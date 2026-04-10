@@ -17,6 +17,14 @@ function getRendererPath(): string {
   return path.join(__dirname, '../renderer/index.html')
 }
 
+function getAppIconPath(): string {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, 'resources', 'icon.png')
+  }
+
+  return path.join(__dirname, '../../../resources/icon.png')
+}
+
 async function loadRenderer(window: BrowserWindow): Promise<void> {
   if (shouldPreferDevServer) {
     try {
@@ -109,6 +117,7 @@ const createWindow = async (): Promise<void> => {
     minWidth: 800,
     minHeight: 600,
     title: 'Nekomimi',
+    icon: getAppIconPath(),
     show: false,
     autoHideMenuBar: true,
     webPreferences: {

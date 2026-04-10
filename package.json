@@ -1,7 +1,7 @@
 {
   "name": "nekomimi",
   "productName": "Nekomimi",
-  "version": "1.0.7",
+  "version": "1.1.0",
   "description": "The anime game launcher",
   "license": "MIT",
   "author": "Jeffrey Qin",
@@ -53,6 +53,7 @@
   "build": {
     "appId": "com.jeffreyqin.nekomimi",
     "productName": "Nekomimi",
+    "icon": "resources/icon.png",
     "directories": {
       "output": "release"
     },
@@ -71,6 +72,7 @@
       "target": [
         "AppImage"
       ],
+      "icon": "resources/icon.png",
       "category": "Game"
     }
   }
