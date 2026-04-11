@@ -11,9 +11,10 @@ const WUWA_REQUIRED_STEAM_COMPAT_FLAGS = ['noopwr', 'noxalia'] as const
 export const DEFAULT_WUWA_WWMI_LAUNCH_MODE: WuwaWwmiLaunchMode = 'direct'
 
 export const WWMI_DIRECT_LAUNCH_ARGS = ['-dx11']
-// Keep the direct-Proton WuWa path aligned with the last known-good standalone
-// launch chain: disable the external Kuro helper and force native jsproxy.
-export const WWMI_KURO_DLL_OVERRIDES = 'lsteamclient=d;KRSDKExternal.exe=d;jsproxy=n,b'
+// Disable lsteamclient to avoid Steam client dependency. KRSDKExternal.exe and
+// jsproxy are left at their Wine defaults — blocking them may interfere with
+// session validation or proxy-dependent HTTP calls during gameplay.
+export const WWMI_KURO_DLL_OVERRIDES = 'lsteamclient=d'
 const WUWA_HOSTS_BLOCK_START = '# nekomimi-wuwa-ipv4-start'
 const WUWA_HOSTS_BLOCK_END = '# nekomimi-wuwa-ipv4-end'
 const WUWA_IPV4_HOST_OVERRIDES = [
@@ -251,15 +252,12 @@ export function normalizeWuwaLaunchEnv(
     .map((value) => value.trim())
     .filter(Boolean)
 
-  const filteredOverrides =
-    launchMode === 'direct'
-      ? currentOverrides
-      : currentOverrides.filter(
-          (value) =>
-            value !== 'lsteamclient=d' &&
-            value !== 'KRSDKExternal.exe=d' &&
-            value !== 'jsproxy=n,b'
-        )
+  const filteredOverrides = currentOverrides.filter(
+    (value) =>
+      value !== 'KRSDKExternal.exe=d' &&
+      value !== 'jsproxy=n,b' &&
+      (launchMode === 'direct' || value !== 'lsteamclient=d')
+  )
 
   const mergedOverrides =
     launchMode === 'direct'

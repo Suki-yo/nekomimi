@@ -141,6 +141,7 @@ function buildLaunchCommand(game: Game, useXXMI: boolean): { command: string; ar
     const shaderCache = join(compatDataPath, 'shadercache')
     mkdirSync(shaderCache, { recursive: true })
     env.SteamOS = '1'
+    env.STEAMDECK = '1'
     env.WINEPREFIX = winePrefix
 
     if (steamrt) {
