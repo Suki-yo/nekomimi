@@ -249,8 +249,11 @@ export function twintailToHoyoVersionInfo(
   twintail: TwintailManifest,
   preferVersion?: string
 ): HoyoVersionInfo | null {
-  const preload = twintail.extra?.preload
-  const preloadVersion = preload?.metadata.version
+  const preload =
+    twintail.extra?.preload && 'metadata' in twintail.extra.preload
+      ? twintail.extra.preload
+      : undefined
+  const preloadVersion = preload?.metadata?.version
   const preloadVersionLabel = preloadVersion ? `${preloadVersion} preload` : undefined
 
   if (preferVersion && preload && preloadVersion === preferVersion) {
@@ -260,7 +263,7 @@ export function twintailToHoyoVersionInfo(
     })
   }
 
-  // Find the requested version or use the latest stable release.
+  // Find the requested version or use the manifest's declared latest stable release.
   let gameVersion: TwintailGameVersion | undefined
 
   if (preferVersion) {
@@ -271,7 +274,9 @@ export function twintailToHoyoVersionInfo(
   }
 
   if (!gameVersion) {
-    gameVersion = twintail.game_versions[0]
+    gameVersion =
+      twintail.game_versions.find((v) => v.metadata.version === twintail.latest_version)
+      ?? twintail.game_versions[0]
   }
 
   if (!gameVersion) {

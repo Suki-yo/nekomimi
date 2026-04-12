@@ -91,10 +91,11 @@ function buildTrackedDownloadState(
   latestVersionLabel?: string,
   updateChannel: 'stable' | 'preload' = 'stable',
   totalBytes?: number,
+  hasUpdate?: boolean,
 ): GameDownloadState {
   return {
     status:
-      currentVersion && latestVersion && currentVersion !== latestVersion
+      hasUpdate ?? Boolean(currentVersion && latestVersion && currentVersion !== latestVersion)
         ? 'update_available'
         : 'installed',
     mode,
@@ -115,16 +116,18 @@ export function buildHoyoDownloadState(
   latestVersionLabel?: string,
   updateChannel: 'stable' | 'preload' = 'stable',
   totalBytes?: number,
+  hasUpdate?: boolean,
 ): GameDownloadState {
-  return buildTrackedDownloadState(mode, currentVersion, latestVersion, installPath, latestVersionLabel, updateChannel, totalBytes)
+  return buildTrackedDownloadState(mode, currentVersion, latestVersion, installPath, latestVersionLabel, updateChannel, totalBytes, hasUpdate)
 }
 
 export function buildWuwaDownloadState(
   currentVersion: string | undefined,
   latestVersion: string | undefined,
   installPath?: string,
+  hasUpdate?: boolean,
 ): GameDownloadState {
-  return buildTrackedDownloadState('raw', currentVersion, latestVersion, installPath)
+  return buildTrackedDownloadState('raw', currentVersion, latestVersion, installPath, undefined, 'stable', undefined, hasUpdate)
 }
 
 function fileUrl(path: string): string {

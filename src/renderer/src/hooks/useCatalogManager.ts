@@ -138,6 +138,7 @@ export function useCatalogManager({
           nextLatestVersionLabel,
           nextUpdateChannel,
           result.updateSizeBytes,
+          result.hasUpdate,
         )
 
         const unchanged =
@@ -182,6 +183,7 @@ export function useCatalogManager({
           result.currentVersion ?? game.download?.currentVersion,
           result.latestVersion ?? game.download?.latestVersion,
           game.directory,
+          result.hasUpdate,
         )
 
         const unchanged =
@@ -244,6 +246,7 @@ export function useCatalogManager({
       nextLatestVersionLabel,
       nextUpdateChannel,
       result.updateSizeBytes ?? game.download?.totalBytes,
+      result.hasUpdate,
     )
 
     return updateGame(game.id, { download: nextDownload, installed: true })
@@ -259,6 +262,7 @@ export function useCatalogManager({
       result.currentVersion ?? game.download?.currentVersion,
       result.latestVersion ?? game.download?.latestVersion,
       game.directory,
+      result.hasUpdate,
     )
 
     return updateGame(game.id, { download: nextDownload })
@@ -444,6 +448,7 @@ export function useCatalogManager({
                 hoyoVersionState?.latestVersionLabel,
                 hoyoVersionState?.updateChannel,
                 hoyoVersionState?.updateSizeBytes,
+                hoyoVersionState?.hasUpdate,
               ),
             }
           : entry.id === 'wuwa'
@@ -452,6 +457,7 @@ export function useCatalogManager({
                   wuwaVersionState?.currentVersion,
                   wuwaVersionState?.latestVersion,
                   form.locateDirectory,
+                  wuwaVersionState?.hasUpdate,
                 ),
               }
             : {}
