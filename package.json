@@ -8,10 +8,12 @@
   "type": "commonjs",
   "main": "dist/main/index.js",
   "scripts": {
+    "check:ipc": "node scripts/check-ipc-parity.cjs",
     "dev": "npm run dev:renderer & npm run dev:main",
     "dev:main": "tsc && electron .",
     "dev:renderer": "vite",
     "build": "tsc && vite build",
+    "prebuild": "npm run check:ipc",
     "dist:linux": "npm run build && electron-builder --linux AppImage && node scripts/sync-linux-launcher.cjs",
     "postinstall": "electron-builder install-app-deps",
     "start": "electron .",

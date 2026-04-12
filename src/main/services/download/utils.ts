@@ -297,6 +297,60 @@ export function downloadStream(
   }, options.onResponse)
 }
 
+export async function downloadToFile(
+  url: string,
+  options: {
+    destPath: string
+    headers?: Record<string, string>
+    signal?: AbortSignal
+    atomic?: boolean
+    onProgress?: (progress: TransferProgressSnapshot) => void
+  }
+): Promise<void> {
+  const { destPath, headers, signal, onProgress, atomic = true } = options
+  const tempPath = atomic ? `${destPath}.tmp` : destPath
+
+  fs.mkdirSync(path.dirname(destPath), { recursive: true })
+
+  try {
+    await downloadStream(url, {
+      headers,
+      signal,
+      onResponse: (response, contentLength) => new Promise<void>((resolve, reject) => {
+        const tracker = createTransferProgressTracker(contentLength)
+        const output = fs.createWriteStream(tempPath)
+
+        response.on('data', (chunk: Buffer) => {
+          tracker.addDownloadedBytes(chunk.length)
+          const snapshot = tracker.snapshot()
+          if (snapshot.shouldReport) {
+            onProgress?.(snapshot.progress)
+          }
+        })
+
+        response.once('error', reject)
+        output.once('error', reject)
+        output.once('finish', () => {
+          const snapshot = tracker.snapshot(true)
+          onProgress?.(snapshot.progress)
+          resolve()
+        })
+
+        response.pipe(output)
+      }),
+    })
+
+    if (atomic) {
+      fs.renameSync(tempPath, destPath)
+    }
+  } catch (error) {
+    if (atomic) {
+      fs.rmSync(tempPath, { force: true })
+    }
+    throw error
+  }
+}
+
 interface TransferSample {
   time: number
   bytes: number

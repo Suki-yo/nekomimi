@@ -1,6 +1,7 @@
 import { useEffect, useState, type JSX } from 'react'
 import { Button } from '@/components/ui/button'
 import type { AppConfig } from '../../../shared/types/config'
+import type { RunnerStatus } from '../../../shared/types/runner'
 
 function getRunnerActionLabel(
   runnerDownloading: boolean,
@@ -57,10 +58,11 @@ function Settings(): JSX.Element {
   const [steamrtDownloading, setSteamrtDownloading] = useState(false)
   const [steamrtProgress, setSteamrtProgress] = useState(0)
   const [steamrtError, setSteamrtError] = useState<string | null>(null)
+  const [version, setVersion] = useState('...')
 
   const loadRunnerInfo = async () => {
-    const info = await window.api.invoke('mods:runner-info')
-    setInstalledRunner(info)
+    const statuses = await window.api.invoke('runner:list')
+    setInstalledRunner(toInstalledRunner(statuses))
   }
 
   const loadSteamrtStatus = async () => {
@@ -87,8 +89,8 @@ function Settings(): JSX.Element {
     setRunnerDownloading(true)
     setRunnerProgress(0)
     setRunnerError(null)
-    const result = await window.api.invoke('mods:runner-download')
-    if (result.success) {
+    const result = await window.api.invoke('runner:install', { kind: 'proton-ge' })
+    if (result.ok) {
       await loadRunnerInfo()
     } else {
       setRunnerError(result.error || 'Download failed')
@@ -113,12 +115,13 @@ function Settings(): JSX.Element {
     loadConfig()
     loadRunnerInfo()
     loadSteamrtStatus()
+    void window.api.getVersion().then(setVersion)
 
-    const unsubRunner = window.api.on('mods:runner-progress', (percent) => {
-      setRunnerProgress(percent as number)
+    const unsubRunner = window.api.on('runner:progress', (percent) => {
+      setRunnerProgress(percent)
     })
     const unsubSteamrt = window.api.on('steamrt:progress', (percent) => {
-      setSteamrtProgress(percent as number)
+      setSteamrtProgress(percent)
     })
     return () => { unsubRunner(); unsubSteamrt() }
   }, [])
@@ -276,7 +279,7 @@ function Settings(): JSX.Element {
       <section>
         <h2 className="text-lg font-medium mb-4 text-zinc-300">About</h2>
         <div className="text-zinc-400 text-sm space-y-1">
-          <p>Nekomimi v{window.api.version}</p>
+          <p>Nekomimi v{version}</p>
           <p>The anime game launcher for people who simp too hard.</p>
         </div>
       </section>
@@ -285,3 +288,8 @@ function Settings(): JSX.Element {
 }
 
 export default Settings
+
+function toInstalledRunner(statuses: RunnerStatus[]): { name: string } | null {
+  const protonGe = statuses.find((status) => status.kind === 'proton-ge')
+  return protonGe?.installedVersions[0] ? { name: protonGe.installedVersions[0] } : null
+}

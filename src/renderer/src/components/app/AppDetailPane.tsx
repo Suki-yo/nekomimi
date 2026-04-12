@@ -56,6 +56,7 @@ interface AppDetailPaneProps {
   isGenshinGame: (game: Pick<Game, 'slug' | 'executable'>) => boolean
   launchPreparation: LaunchPreparationState
   loadGames: () => Promise<void>
+  loadSystemState: () => Promise<void>
   manualGameForm: ManualGameForm
   modsByGame: Record<string, Mod[]>
   config: AppConfig | null
@@ -121,6 +122,7 @@ export function AppDetailPane({
   isGenshinGame,
   launchPreparation,
   loadGames,
+  loadSystemState,
   manualGameForm,
   modsByGame,
   config,
@@ -198,6 +200,7 @@ export function AppDetailPane({
         installedRunner={installedRunner}
         onOpenSystemPath={onOpenSystemPath}
         onRunnerDownload={handleRunnerDownload}
+        onSystemStateRefresh={loadSystemState}
         onSteamRuntimeInstall={handleSteamRuntimeInstall}
         onUpdateConfig={handleUpdateConfig}
         runnerDownloading={runnerDownloading}

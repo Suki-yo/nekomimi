@@ -14,6 +14,7 @@ import {
 } from './game-launch-hooks'
 import { shouldUseXXMI, launchGameWithXXMI } from './mod-manager'
 import { ProcessMonitor, type ProcessMonitorEntry } from './process-monitor'
+import { assertPreflightForLaunch } from './preflight'
 import { findSteamrt, downloadSteamrt } from './steamrt'
 import { expandHome } from './paths'
 import { cleanupStandaloneWwmiRuntime, ensureWuwaPrefixNetworkOverrides } from './wuwa-mod-config'
@@ -217,6 +218,14 @@ export async function launchGame(
   const standaloneConfigError = validateGameLaunchConfig(game)
   if (standaloneConfigError) {
     return { success: false, error: standaloneConfigError }
+  }
+
+  const preflight = await assertPreflightForLaunch(game)
+  if (!preflight.ok) {
+    return {
+      success: false,
+      error: `Missing system tools: ${preflight.missing.join(', ')}. Open Settings -> System Health for install hints.`,
+    }
   }
 
   const exeName = game.executable.split(/[/\\]/).pop() || game.executable

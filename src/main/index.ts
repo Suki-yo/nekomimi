@@ -5,6 +5,7 @@ import { initDatabase, closeDatabase } from './services/database'
 import { loadAppConfig } from './services/config'
 import { runGameConfigMigrations } from './services/game-config-migration'
 import { initPaths } from './services/paths'
+import { checkRunnerUpdates } from './services/runner-registry'
 import { destroyTray, initTray, isTrayReady } from './services/tray'
 import { registerAllHandlers } from './ipc'
 
@@ -39,6 +40,23 @@ async function loadRenderer(window: BrowserWindow): Promise<void> {
   const rendererPath = getRendererPath()
   console.log('Loading renderer file', rendererPath)
   await window.loadFile(rendererPath)
+}
+
+async function kickoffAutoUpdateCheck(window: BrowserWindow | null): Promise<void> {
+  const config = loadAppConfig()
+  if (!config.runner.autoUpdate || !window || window.isDestroyed() || window.webContents.isDestroyed()) {
+    return
+  }
+
+  try {
+    const updates = await checkRunnerUpdates()
+    const outdated = updates.filter((update) => !update.upToDate && !!update.remoteLatest)
+    if (outdated.length > 0 && !window.isDestroyed() && !window.webContents.isDestroyed()) {
+      window.webContents.send('runner:updates-available', outdated)
+    }
+  } catch (error) {
+    console.warn('[boot] runner auto-update check failed:', error)
+  }
 }
 
 // Register custom protocol before app ready
@@ -167,6 +185,10 @@ const createWindow = async (): Promise<void> => {
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url)
     return { action: 'deny' }
+  })
+
+  mainWindow.webContents.once('did-finish-load', () => {
+    void kickoffAutoUpdateCheck(mainWindow)
   })
 
   await loadRenderer(mainWindow)

@@ -4,7 +4,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { fetchWuwaVersionInfo, fetchWuwaManifest } from './wuwa-api'
-import { createTransferProgressTracker, downloadStream, streamingMd5 } from './utils'
+import { createTransferProgressTracker, downloadToFile, streamingMd5 } from './utils'
 import type { DownloadProgress, WuwaFileEntry } from '../../../shared/types/download'
 
 const CONCURRENCY = 4
@@ -14,51 +14,6 @@ export interface WuwaDownloadOptions {
   destDir: string
   onProgress?: (progress: DownloadProgress) => void
   signal?: AbortSignal
-}
-
-// Download a single file, returns bytes written (or -1 on failure)
-function downloadFile(
-  url: string,
-  destPath: string,
-  signal?: AbortSignal,
-  onChunk?: (chunkBytes: number) => void
-): Promise<{ success: boolean; error?: string }> {
-  return (async () => {
-    const dir = path.dirname(destPath)
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true })
-    }
-
-    if (signal?.aborted) {
-      return { success: false, error: 'Aborted' }
-    }
-
-    const tmp = destPath + '.tmp'
-
-    try {
-      await downloadStream(url, {
-        signal,
-        onResponse: (response) => new Promise<void>((resolveStream, rejectStream) => {
-          const fileStream = fs.createWriteStream(tmp)
-
-          response.on('data', (chunk: Buffer) => {
-            onChunk?.(chunk.length)
-          })
-
-          response.pipe(fileStream)
-          fileStream.once('finish', () => resolveStream())
-          fileStream.once('error', rejectStream)
-          response.once('error', rejectStream)
-        }),
-      })
-
-      fs.renameSync(tmp, destPath)
-      return { success: true }
-    } catch (err) {
-      fs.rmSync(tmp, { force: true })
-      return { success: false, error: err instanceof Error ? err.message : String(err) }
-    }
-  })()
 }
 
 // Check if a file is already correctly downloaded
@@ -171,15 +126,26 @@ export async function startWuwaDownload(
       }
 
       const fileUrl = `${versionInfo.resListUrl}/${entry.dest}`
+      let reportedBytes = 0
 
-      const result = await downloadFile(fileUrl, filePath, signal, (chunkBytes) => {
-        bytesDownloaded += chunkBytes
-        progressTracker.addDownloadedBytes(chunkBytes)
-        emitProgress(entry.dest)
-      })
+      try {
+        await downloadToFile(fileUrl, {
+          destPath: filePath,
+          signal,
+          onProgress: (progress) => {
+            const delta = progress.bytesDownloaded - reportedBytes
+            if (delta <= 0) {
+              return
+            }
 
-      if (!result.success) {
-        throw new Error(`Failed to download ${entry.dest}: ${result.error}`)
+            reportedBytes = progress.bytesDownloaded
+            bytesDownloaded += delta
+            progressTracker.addDownloadedBytes(delta)
+            emitProgress(entry.dest)
+          },
+        })
+      } catch (error) {
+        throw new Error(`Failed to download ${entry.dest}: ${error instanceof Error ? error.message : String(error)}`)
       }
 
       emitProgress(entry.dest, true)

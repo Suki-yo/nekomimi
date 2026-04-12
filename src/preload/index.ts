@@ -2,7 +2,7 @@
 // This is the ONLY way renderer can communicate with main process
 
 import { contextBridge, ipcRenderer } from 'electron'
-import type { IPCChannels, IPCRequest, IPCResponse } from '../shared/types/ipc'
+import type { IPCChannels, IPCEvents, IPCEventPayload, IPCRequest, IPCResponse } from '../shared/types/ipc'
 
 // Type-safe IPC invoke function
 export const api = {
@@ -14,8 +14,8 @@ export const api = {
   },
 
   // Listen for events from main process
-  on: (channel: string, callback: (...args: unknown[]) => void) => {
-    const subscription = (_event: unknown, ...args: unknown[]) => callback(...args)
+  on: <K extends keyof IPCEvents>(channel: K, callback: (payload: IPCEventPayload<K>) => void) => {
+    const subscription = (_event: unknown, payload: IPCEventPayload<K>) => callback(payload)
     ipcRenderer.on(channel, subscription)
     return () => ipcRenderer.removeListener(channel, subscription)
   },
@@ -34,7 +34,9 @@ export const api = {
   platform: process.platform,
 
   // App version
-  version: ipcRenderer.sendSync('app:version') as string,
+  getVersion: async (): Promise<string> => {
+    return ipcRenderer.invoke('app:version')
+  },
 }
 
 // Expose to renderer as window.api

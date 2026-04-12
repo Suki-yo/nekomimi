@@ -7,7 +7,10 @@ import { registerGamesHandlers } from './games.handler'
 import { registerModsHandlers } from './mods.handler'
 import { registerImageHandlers } from './image.handler'
 import { registerDownloadHandlers } from './download.handler'
+import { registerPreflightHandlers } from './preflight.handler'
+import { registerRunnerHandlers } from './runner.handler'
 import { registerSteamrtHandlers } from './steamrt.handler'
+import { registerTwintailHandlers } from './twintail.handler'
 
 // Register all IPC handlers - call this in main process setup
 export const registerAllHandlers = () => {
@@ -18,5 +21,8 @@ export const registerAllHandlers = () => {
   registerModsHandlers()
   registerImageHandlers()
   registerDownloadHandlers()
+  registerPreflightHandlers()
+  registerRunnerHandlers()
   registerSteamrtHandlers()
+  registerTwintailHandlers()
 }

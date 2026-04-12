@@ -1,7 +1,7 @@
 // Steam Runtime (pressure-vessel/sniper) management
 // Used to launch Proton games without depending on umu-run
 
-import { createWriteStream, existsSync } from 'fs'
+import { createWriteStream, existsSync, readFileSync, writeFileSync } from 'fs'
 import { mkdir, rm } from 'fs/promises'
 import { homedir } from 'os'
 import { join } from 'path'
@@ -11,8 +11,39 @@ import { getPathsInstance } from './paths'
 export const STEAMRT_URL =
   'https://repo.steampowered.com/steamrt3/images/latest-public-beta/SteamLinuxRuntime_3.tar.xz'
 
+export interface SteamrtRemoteMeta {
+  etag?: string
+  lastModified?: string
+  downloadedAt: string
+  url: string
+}
+
 export function getSteamrtPath(): string {
   return join(getPathsInstance().runners, 'steamrt')
+}
+
+function getSteamrtRemoteMetaPath(): string {
+  return join(getSteamrtPath(), '.remote-meta.json')
+}
+
+export function readSteamrtRemoteMeta(): SteamrtRemoteMeta | null {
+  try {
+    return JSON.parse(readFileSync(getSteamrtRemoteMetaPath(), 'utf-8')) as SteamrtRemoteMeta
+  } catch {
+    return null
+  }
+}
+
+function writeSteamrtRemoteMeta(meta: SteamrtRemoteMeta): void {
+  writeFileSync(getSteamrtRemoteMetaPath(), JSON.stringify(meta, null, 2), 'utf-8')
+}
+
+export function buildSteamrtVersion(meta: Pick<SteamrtRemoteMeta, 'etag' | 'lastModified'> | null | undefined): string | null {
+  if (!meta) {
+    return null
+  }
+
+  return meta.etag ?? meta.lastModified ?? null
 }
 
 export function isSteamrtInstalled(): boolean {
@@ -44,6 +75,13 @@ export async function downloadSteamrt(
     const response = await fetch(STEAMRT_URL)
     if (!response.ok || !response.body) {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+    }
+
+    const remoteMeta: SteamrtRemoteMeta = {
+      etag: response.headers.get('etag') ?? undefined,
+      lastModified: response.headers.get('last-modified') ?? undefined,
+      downloadedAt: new Date().toISOString(),
+      url: STEAMRT_URL,
     }
 
     const totalSize = parseInt(response.headers.get('content-length') || '0', 10)
@@ -100,10 +138,59 @@ export async function downloadSteamrt(
       throw new Error('Extraction completed but _v2-entry-point not found')
     }
 
+    writeSteamrtRemoteMeta(remoteMeta)
+
     return { success: true }
   } catch (err) {
     // Clean up on failure
     await rm(destDir, { recursive: true, force: true }).catch(() => {})
     return { success: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+export async function checkSteamrtUpdate(): Promise<{
+  upToDate: boolean
+  remoteEtag?: string
+  remoteLastModified?: string
+}> {
+  const installedMeta = readSteamrtRemoteMeta()
+
+  const headers: Record<string, string> = {}
+  if (installedMeta?.etag) {
+    headers['If-None-Match'] = installedMeta.etag
+  }
+  if (installedMeta?.lastModified) {
+    headers['If-Modified-Since'] = installedMeta.lastModified
+  }
+
+  const response = await fetch(STEAMRT_URL, {
+    method: 'HEAD',
+    headers,
+  })
+
+  if (response.status === 304) {
+    return {
+      upToDate: true,
+      remoteEtag: installedMeta?.etag,
+      remoteLastModified: installedMeta?.lastModified,
+    }
+  }
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+  }
+
+  const remoteEtag = response.headers.get('etag') ?? undefined
+  const remoteLastModified = response.headers.get('last-modified') ?? undefined
+  const installedVersion = buildSteamrtVersion(installedMeta)
+  const remoteVersion = buildSteamrtVersion({
+    etag: remoteEtag,
+    lastModified: remoteLastModified,
+  })
+
+  return {
+    upToDate: !!installedVersion && !!remoteVersion && installedVersion === remoteVersion,
+    remoteEtag,
+    remoteLastModified,
   }
 }

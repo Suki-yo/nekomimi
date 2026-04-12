@@ -88,7 +88,7 @@ export interface CreateGameInput {
   name: string
   slug?: string
   config_path: string
-  cover_path?: string
+  cover_path?: string | null
   installed?: boolean
   playtime?: number
 }
@@ -116,7 +116,7 @@ export interface UpdateGameInput {
   name?: string
   slug?: string
   config_path?: string
-  cover_path?: string
+  cover_path?: string | null
   installed?: boolean
   playtime?: number
   last_played?: string

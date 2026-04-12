@@ -3,8 +3,14 @@
 
 import type { AppConfig } from './config'
 import type { Game, DetectedGameInfo, DetectedRunner, Mod } from './game'
-import type { Runner } from './runner'
-import type { HoyoVersionInfo, WuwaVersionInfo } from './download'
+import type { HoyoVersionInfo, WuwaVersionInfo, DownloadProgress } from './download'
+import type { PreflightReport } from './preflight'
+import type { RunnerKind, RunnerStatus, RunnerUpdateInfo } from './runner'
+import type { TwintailImportOptions, TwintailImportResult, TwintailImportStatus } from './twintail'
+
+export type GameAddRequest = Omit<Game, 'id' | 'playtime' | 'lastPlayed'> & {
+  coverPath?: string | null
+}
 
 // All IPC channels - this is the contract between frontend and backend
 export interface IPCChannels {
@@ -18,6 +24,10 @@ export interface IPCChannels {
   'config:update': {
     request: Partial<AppConfig>
     response: AppConfig
+  }
+  'app:version': {
+    request: void
+    response: string
   }
 
   // ─────────────────────────────────────────────
@@ -52,7 +62,7 @@ export interface IPCChannels {
     response: Game | null
   }
   'game:add': {
-    request: Omit<Game, 'id' | 'playtime' | 'lastPlayed'>
+    request: GameAddRequest
     response: Game
   }
   'game:update': {
@@ -71,6 +81,10 @@ export interface IPCChannels {
     request: { exePath: string }
     response: DetectedGameInfo
   }
+  'game:runners': {
+    request: void
+    response: DetectedRunner[]
+  }
   'game:running': {
     request: void
     response: { id: string; startTime: number }[]
@@ -79,17 +93,21 @@ export interface IPCChannels {
   // ─────────────────────────────────────────────
   // Runners
   // ─────────────────────────────────────────────
-  'runner:scan': {
-    request: void
-    response: Runner[]
-  }
   'runner:list': {
     request: void
-    response: DetectedRunner[]
+    response: RunnerStatus[]
   }
-  'runner:download': {
-    request: { type: 'proton' | 'wine'; version: string }
-    response: { success: boolean; error?: string }
+  'runner:install': {
+    request: { kind: RunnerKind; version?: string }
+    response: { ok: boolean; installedTag?: string; error?: string }
+  }
+  'runner:check-updates': {
+    request: void
+    response: RunnerUpdateInfo[]
+  }
+  'runner:remove': {
+    request: { kind: RunnerKind; version: string }
+    response: { ok: boolean; error?: string }
   }
 
   // ─────────────────────────────────────────────
@@ -102,14 +120,6 @@ export interface IPCChannels {
   'mods:xxmi-download': {
     request: void
     response: { success: boolean; error?: string }
-  }
-  'mods:runner-download': {
-    request: void
-    response: { success: boolean; error?: string }
-  }
-  'mods:runner-info': {
-    request: void
-    response: { name: string; path: string; wine: string } | null
   }
   // Mod management
   'mods:list': {
@@ -143,6 +153,18 @@ export interface IPCChannels {
   'mods:open-folder': {
     request: { importer: string }
     response: { success: boolean; path?: string; error?: string }
+  }
+
+  // ─────────────────────────────────────────────
+  // Preflight
+  // ─────────────────────────────────────────────
+  'preflight:check': {
+    request: void
+    response: PreflightReport
+  }
+  'preflight:refresh': {
+    request: void
+    response: PreflightReport
   }
 
   // ─────────────────────────────────────────────
@@ -212,6 +234,30 @@ export interface IPCChannels {
       latestVersion: string | undefined
     }
   }
+
+  // ─────────────────────────────────────────────
+  // Twintail Import
+  // ─────────────────────────────────────────────
+  'twintail:detect': {
+    request: void
+    response: TwintailImportStatus
+  }
+  'twintail:import': {
+    request: TwintailImportOptions
+    response: TwintailImportResult
+  }
+}
+
+export interface IPCEvents {
+  'download:progress': DownloadProgress
+  'download:complete': { gameId: string }
+  'download:error': { gameId: string; error: string }
+  'game:launch-progress': { step: string; percent: number }
+  'mods:changed': { importer: string }
+  'mods:xxmi-progress': number
+  'runner:progress': number
+  'runner:updates-available': RunnerUpdateInfo[]
+  'steamrt:progress': number
 }
 
 // Utility type - extracts request type for a channel
@@ -219,3 +265,5 @@ export type IPCRequest<K extends keyof IPCChannels> = IPCChannels[K]['request']
 
 // Utility type - extracts response type for a channel
 export type IPCResponse<K extends keyof IPCChannels> = IPCChannels[K]['response']
+
+export type IPCEventPayload<K extends keyof IPCEvents> = IPCEvents[K]

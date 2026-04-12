@@ -8,8 +8,6 @@ import {
   isXXMIInstalled,
   isRunnerInstalled,
   downloadXXMI,
-  downloadRunner,
-  getInstalledRunner,
   getMods,
   toggleMod,
   installMod,
@@ -85,26 +83,6 @@ export const registerModsHandlers = () => {
 
     console.log('[mods] Download result:', result)
     return result
-  })
-
-  // Download Proton-GE runner with progress updates
-  ipcMain.handle('mods:runner-download', async (event) => {
-    console.log('[mods] Starting runner download...')
-    const win = BrowserWindow.fromWebContents(event.sender)
-
-    const result = await downloadRunner((percent) => {
-      console.log(`[mods] Runner download progress: ${percent}%`)
-      // Send progress to renderer
-      win?.webContents.send('mods:runner-progress', percent)
-    })
-
-    console.log('[mods] Runner download result:', result)
-    return result
-  })
-
-  // Get installed runner info
-  ipcMain.handle('mods:runner-info', () => {
-    return getInstalledRunner()
   })
 
   // ─────────────────────────────────────────────

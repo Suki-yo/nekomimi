@@ -3,6 +3,7 @@ import { CATALOG_ENTRIES, createCatalogForm, findCatalogEntryForGame, findInstal
 import type { Selection } from '@/types/app-shell'
 import type { DownloadProgress, HoyoVersionInfo, WuwaVersionInfo } from '@shared/types/download'
 import type { DetectedRunner, Game } from '@shared/types/game'
+import type { GameAddRequest } from '@shared/types/ipc'
 
 interface UseCatalogManagerOptions {
   clearDownloadProgress: (gameId: string) => void
@@ -19,11 +20,13 @@ interface UseCatalogManagerOptions {
     latestVersionLabel?: string,
     updateChannel?: 'stable' | 'preload',
     totalBytes?: number,
+    hasUpdate?: boolean,
   ) => Game['download']
   buildWuwaDownloadState: (
     currentVersion: string | undefined,
     latestVersion: string | undefined,
     installPath?: string,
+    hasUpdate?: boolean,
   ) => Game['download']
   formatBytes: (bytes: number) => string
 }
@@ -50,6 +53,10 @@ function getParentDirectory(filePath: string): string {
   return index === -1 ? filePath : normalized.slice(0, index)
 }
 
+function buildCatalogCoverPath(entry: CatalogEntry): string | null {
+  return entry.coverPath ?? null
+}
+
 export function useCatalogManager({
   clearDownloadProgress,
   games,
@@ -71,6 +78,16 @@ export function useCatalogManager({
   const [catalogForms, setCatalogForms] = useState<Record<CatalogId, CatalogFormState>>(() =>
     Object.fromEntries(CATALOG_ENTRIES.map((entry) => [entry.id, createCatalogForm(entry)])) as Record<CatalogId, CatalogFormState>,
   )
+
+  function requireRunner(): string | null {
+    const runnerPath = runners[0]?.path
+    if (!runnerPath) {
+      reportStatus('install a proton runner from settings before adding a game', { type: 'settings' })
+      return null
+    }
+
+    return runnerPath
+  }
 
   async function syncCatalogGames(nextGames: Game[]): Promise<Game[]> {
     const syncedHoyoGames = await syncHoyoGames(nextGames)
@@ -414,7 +431,11 @@ export function useCatalogManager({
       return
     }
 
-    const runnerPath = runners[0]?.path ?? ''
+    const runnerPath = requireRunner()
+    if (!runnerPath) {
+      return
+    }
+
     const hoyoVersionState = entry.kind === 'hoyo'
       ? await window.api.invoke('download:check-updates', {
           biz: entry.biz!,
@@ -424,12 +445,13 @@ export function useCatalogManager({
     const wuwaVersionState = entry.id === 'wuwa'
       ? await window.api.invoke('download:check-wuwa-updates', { installDir: form.locateDirectory })
       : null
-    const game = await window.api.invoke('game:add', {
+    const payload: GameAddRequest = {
       name: entry.name,
       slug: entry.slug,
       installed: true,
       directory: form.locateDirectory,
       executable: form.locateExePath,
+      coverPath: buildCatalogCoverPath(entry),
       runner: {
         type: 'proton',
         path: runnerPath,
@@ -462,7 +484,8 @@ export function useCatalogManager({
               }
             : {}
       ),
-    })
+    }
+    const game = await window.api.invoke('game:add', payload)
 
     onGameAdded(game)
     reportStatus(`registered ${entry.name.toLowerCase()}`, { type: 'game', gameId: game.id })
@@ -477,6 +500,10 @@ export function useCatalogManager({
 
     if (!targetDir) {
       reportStatus('install directory required', { type: 'catalog', catalogId: entry.id })
+      return
+    }
+
+    if (!requireRunner()) {
       return
     }
 
@@ -523,7 +550,11 @@ export function useCatalogManager({
   }
 
   async function autoAddCatalogGame(entry: CatalogEntry): Promise<void> {
-    const runnerPath = runners[0]?.path ?? ''
+    const runnerPath = requireRunner()
+    if (!runnerPath) {
+      return
+    }
+
     const installDir = catalogForms[entry.id].installDir
     const downloadState =
       entry.kind === 'hoyo'
@@ -543,12 +574,13 @@ export function useCatalogManager({
               installDir,
             )
           : undefined
-    const game = await window.api.invoke('game:add', {
+    const payload: GameAddRequest = {
       name: entry.name,
       slug: entry.slug,
       installed: true,
       directory: installDir,
       executable: `${installDir}/${entry.executable}`,
+      coverPath: buildCatalogCoverPath(entry),
       runner: {
         type: 'proton',
         path: runnerPath,
@@ -557,7 +589,8 @@ export function useCatalogManager({
       launch: entry.launch,
       mods: entry.mods,
       ...(downloadState ? { download: downloadState } : {}),
-    })
+    }
+    const game = await window.api.invoke('game:add', payload)
 
     onGameAdded(game)
   }

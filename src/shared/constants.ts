@@ -3,7 +3,6 @@
 
 // App metadata
 export const APP_NAME = 'nekomimi'
-export const APP_VERSION = 'dev'
 
 // Config file name
 export const CONFIG_FILE = 'config.yml'
@@ -18,17 +17,10 @@ export const DEFAULT_CONFIG = {
   runner: {
     defaultType: 'proton' as const,
     autoUpdate: false,
-    scanPaths: [],
   },
   download: {
     concurrency: 4,
   },
-}
-
-// Runner download sources
-export const RUNNER_SOURCES = {
-  protonGE: 'https://github.com/GloriousEggroll/proton-ge-custom/releases',
-  wineGE: 'https://github.com/GloriousEggroll/wine-ge-custom/releases',
 }
 
 // File extensions

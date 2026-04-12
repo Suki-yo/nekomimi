@@ -54,21 +54,19 @@ export function useGameLaunch({
       setStatusLine(`> ${text.toLowerCase()}`)
     })
 
-    const unsubRunner = window.api.on('mods:runner-progress', (percent) => {
-      const value = percent as number
-      setRunnerProgress(value)
+    const unsubRunner = window.api.on('runner:progress', (percent) => {
+      setRunnerProgress(percent)
       setLaunchPreparation((current) =>
         current.active && current.phase === 'runner'
-          ? { ...current, progress: value }
+          ? { ...current, progress: percent }
           : current,
       )
     })
 
     const unsubXXMI = window.api.on('mods:xxmi-progress', (percent) => {
-      const value = percent as number
       setLaunchPreparation((current) =>
         current.active && current.phase === 'xxmi'
-          ? { ...current, progress: value }
+          ? { ...current, progress: percent }
           : current,
       )
     })
@@ -115,8 +113,8 @@ export function useGameLaunch({
       if (!status.runnerInstalled) {
         setLaunchPreparation((current) => ({ ...current, phase: 'runner', progress: 0 }))
         reportStatus('downloading proton-ge prerequisite...', { type: 'game', gameId: game.id })
-        const runnerResult = await window.api.invoke('mods:runner-download')
-        if (!runnerResult.success) {
+        const runnerResult = await window.api.invoke('runner:install', { kind: 'proton-ge' })
+        if (!runnerResult.ok) {
           setLaunchPreparation({
             active: true,
             pendingGameId: game.id,

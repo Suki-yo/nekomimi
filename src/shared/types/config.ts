@@ -24,7 +24,6 @@ export interface AppConfig {
   runner: {
     defaultType: 'wine' | 'proton' | 'native'
     autoUpdate: boolean
-    scanPaths: string[] // Extra paths to scan for installed runners
   }
 
   // Download preferences (Phase 2)
