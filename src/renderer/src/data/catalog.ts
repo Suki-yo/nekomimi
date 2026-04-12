@@ -12,6 +12,7 @@ export interface CatalogEntry {
   vendor: string
   accent: string
   coverLabel: string
+  coverPath?: string | null
   slug: string
   slugHints: string[]
   executable: string

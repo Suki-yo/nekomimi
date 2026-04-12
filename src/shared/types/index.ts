@@ -24,14 +24,32 @@ export type {
   WineRunner,
   ProtonRunner,
   NativeRunner,
+  RunnerKind,
+  RunnerStatus,
+  RunnerUpdateInfo,
 } from './runner'
 
 // IPC types
 export type {
   IPCChannels,
+  IPCEvents,
+  IPCEventPayload,
+  GameAddRequest,
   IPCRequest,
   IPCResponse,
 } from './ipc'
+
+export type {
+  PreflightSeverity,
+  PreflightCheck,
+  PreflightReport,
+} from './preflight'
+
+export type {
+  TwintailImportStatus,
+  TwintailImportOptions,
+  TwintailImportResult,
+} from './twintail'
 
 // Download types
 export type {

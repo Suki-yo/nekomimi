@@ -1,7 +1,6 @@
 import { existsSync } from 'fs'
 import { getGameConfigPath, loadGameConfig, saveGameConfig } from './config'
 import { getGames, updateGame, type GameRow } from './database'
-import { syncGameFromTwintailIfNeeded } from './twintail-import'
 
 function migrateGameConfigPath(row: GameRow): string {
   if (!row.slug) {
@@ -30,12 +29,6 @@ function migrateGameConfigPath(row: GameRow): string {
 
 export function runGameConfigMigrations(): void {
   for (const row of getGames()) {
-    const configPath = migrateGameConfigPath(row)
-    const game = loadGameConfig(configPath)
-    if (!game) {
-      continue
-    }
-
-    syncGameFromTwintailIfNeeded(game)
+    migrateGameConfigPath(row)
   }
 }

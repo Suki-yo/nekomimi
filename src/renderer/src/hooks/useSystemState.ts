@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { Selection } from '@/types/app-shell'
 import type { AppConfig } from '@shared/types/config'
 import type { DetectedRunner } from '@shared/types/game'
+import type { RunnerStatus } from '@shared/types/runner'
 
 interface UseSystemStateOptions {
   reportStatus: (message: string, selection?: Selection) => void
@@ -45,11 +46,15 @@ export function useSystemState({
   const [steamrtError, setSteamrtError] = useState<string | null>(null)
 
   useEffect(() => {
+    const unsubRunner = window.api.on('runner:progress', (percent) => {
+      setRunnerProgress(percent)
+    })
     const unsubSteamrt = window.api.on('steamrt:progress', (percent) => {
-      setSteamrtProgress(percent as number)
+      setSteamrtProgress(percent)
     })
 
     return () => {
+      unsubRunner()
       unsubSteamrt()
     }
   }, [])
@@ -65,14 +70,14 @@ export function useSystemState({
   }
 
   async function loadRunners(): Promise<void> {
-    const nextRunners = await window.api.invoke('runner:list')
+    const nextRunners = await window.api.invoke('game:runners')
     setRunners(nextRunners)
     onRunnersLoaded?.(nextRunners)
   }
 
   async function loadRunnerInfo(): Promise<void> {
-    const info = await window.api.invoke('mods:runner-info')
-    setInstalledRunner(info)
+    const statuses = await window.api.invoke('runner:list')
+    setInstalledRunner(toInstalledRunner(statuses))
   }
 
   async function loadSteamRuntimeStatus(): Promise<void> {
@@ -104,9 +109,9 @@ export function useSystemState({
     setRunnerProgress(0)
     setRunnerError(null)
     reportStatus('downloading proton-ge...', { type: 'settings' })
-    const result = await window.api.invoke('mods:runner-download')
-    if (result.success) {
-      await loadRunnerInfo()
+    const result = await window.api.invoke('runner:install', { kind: 'proton-ge' })
+    if (result.ok) {
+      await Promise.all([loadRunnerInfo(), loadRunners()])
       reportStatus('proton-ge ready', { type: 'settings' })
     } else {
       setRunnerError(result.error || 'Download failed')
@@ -149,5 +154,18 @@ export function useSystemState({
     steamrtError,
     steamrtProgress,
     steamrtStatus,
+  }
+}
+
+function toInstalledRunner(statuses: RunnerStatus[]): { name: string; path: string; wine: string } | null {
+  const protonGe = statuses.find((status) => status.kind === 'proton-ge')
+  if (!protonGe?.path || !protonGe.installedVersions[0]) {
+    return null
+  }
+
+  return {
+    name: protonGe.installedVersions[0],
+    path: protonGe.path,
+    wine: `${protonGe.path}/files/bin/wine64`,
   }
 }

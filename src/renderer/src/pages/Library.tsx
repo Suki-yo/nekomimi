@@ -308,7 +308,7 @@ function Library(): JSX.Element {
 
   const loadRunners = async () => {
     try {
-      const runnerList = await window.api.invoke('runner:list')
+      const runnerList = await window.api.invoke('game:runners')
       setRunners(runnerList)
       if (runnerList.length > 0) {
         setFormRunnerPath(runnerList[0].path)
@@ -349,6 +349,10 @@ function Library(): JSX.Element {
   const handleAddGame = async () => {
     if (!formName || !formDirectory || !formExecutable) {
       alert('Please fill in all fields')
+      return
+    }
+    if (!formRunnerPath) {
+      alert('Install a Proton runner before adding a game')
       return
     }
 

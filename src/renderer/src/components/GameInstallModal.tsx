@@ -22,10 +22,9 @@ import {
 import { Download, FolderOpen, Search, X } from 'lucide-react'
 import type { DownloadProgress } from '../../../shared/types/download'
 import type { Game, LaunchConfig, ModConfig } from '../../../shared/types/game'
-import type { IPCRequest } from '../../../shared/types/ipc'
+import type { GameAddRequest, IPCRequest } from '../../../shared/types/ipc'
 
 type DownloadStartChannel = 'download:start' | 'download:start-endfield' | 'download:start-wuwa'
-type AddGameRequest = Omit<Game, 'id' | 'playtime' | 'lastPlayed'>
 
 interface InstallDetectionResult {
   directory: string
@@ -47,8 +46,8 @@ export interface InstallConfig<K extends DownloadStartChannel = DownloadStartCha
   downloadDetails?: string
   installDirPlaceholder?: string
   locateExePlaceholder?: string
-  buildLocateGameOverrides?: (directory: string) => Promise<Partial<AddGameRequest> | void>
-  buildAutoAddOverrides?: (directory: string) => Promise<Partial<AddGameRequest> | void>
+  buildLocateGameOverrides?: (directory: string) => Promise<Partial<GameAddRequest> | void>
+  buildAutoAddOverrides?: (directory: string) => Promise<Partial<GameAddRequest> | void>
 }
 
 interface GameInstallModalProps {
@@ -56,6 +55,7 @@ interface GameInstallModalProps {
   onClose: () => void
   config: InstallConfig | null
   onGameAdded?: () => void
+  onNavigateToRunners?: () => void
 }
 
 export function GameInstallModal({
@@ -63,6 +63,7 @@ export function GameInstallModal({
   onClose,
   config,
   onGameAdded,
+  onNavigateToRunners,
 }: GameInstallModalProps): JSX.Element {
   const [mode, setMode] = useState<InstallMode>('download')
   const [installDir, setInstallDir] = useState('')
@@ -73,6 +74,8 @@ export function GameInstallModal({
   const [locateDetected, setLocateDetected] = useState<InstallDetectionResult | null>(null)
   const [locating, setLocating] = useState(false)
   const [locateError, setLocateError] = useState<string | null>(null)
+  const [runnerPath, setRunnerPath] = useState<string | null>(null)
+  const [runnerError, setRunnerError] = useState<string | null>(null)
 
   const setDownloadError = (gameId: string, error: string | undefined) => {
     if (!error) return
@@ -106,6 +109,11 @@ export function GameInstallModal({
       setLocateExePath('')
       setLocateDetected(null)
       setLocateError(null)
+      setRunnerError(null)
+    })
+
+    window.api.invoke('game:runners').then((runners) => {
+      setRunnerPath(runners[0]?.path ?? null)
     })
   }, [open, config])
 
@@ -155,7 +163,7 @@ export function GameInstallModal({
     runnerPath: string
     prefix: string
     overrides?: Partial<AddGameRequest> | void
-  }): Promise<AddGameRequest> => {
+  }): Promise<GameAddRequest> => {
     return {
       name: config.name,
       slug: config.slug,
@@ -205,12 +213,17 @@ export function GameInstallModal({
     setLocating(true)
 
     try {
+      const activeRunnerPath = await ensureRunnerPath()
+      if (!activeRunnerPath) {
+        return
+      }
+
       const overrides = await config.buildLocateGameOverrides?.(locateDetected.directory)
       const payload = await buildGamePayload({
         config,
         directory: locateDetected.directory,
         executable: locateExePath,
-        runnerPath: '',
+        runnerPath: activeRunnerPath,
         prefix: locateDetected.prefix || config.defaultPrefix,
         overrides,
       })
@@ -227,14 +240,17 @@ export function GameInstallModal({
 
   const handleAutoAdd = async (activeConfig: InstallConfig) => {
     try {
-      const runners = await window.api.invoke('runner:list')
-      const runnerPath = runners.length > 0 ? runners[0].path : ''
+      const activeRunnerPath = await ensureRunnerPath()
+      if (!activeRunnerPath) {
+        return
+      }
+
       const overrides = await activeConfig.buildAutoAddOverrides?.(installDir)
       const payload = await buildGamePayload({
         config: activeConfig,
         directory: installDir,
         executable: `${installDir}/${activeConfig.executable}`,
-        runnerPath,
+        runnerPath: activeRunnerPath,
         prefix: activeConfig.defaultPrefix,
         overrides,
       })
@@ -244,6 +260,25 @@ export function GameInstallModal({
     } catch (err) {
       console.error('Failed to auto-add game:', err)
     }
+  }
+
+  const ensureRunnerPath = async (): Promise<string | null> => {
+    if (runnerPath) {
+      setRunnerError(null)
+      return runnerPath
+    }
+
+    const runners = await window.api.invoke('game:runners')
+    const nextRunnerPath = runners[0]?.path ?? null
+    setRunnerPath(nextRunnerPath)
+
+    if (!nextRunnerPath) {
+      setRunnerError('Install a Proton runner from Settings -> Runners before adding a game.')
+      return null
+    }
+
+    setRunnerError(null)
+    return nextRunnerPath
   }
 
   const startDownload = async <K extends DownloadStartChannel>(activeConfig: InstallConfig<K>) => {
@@ -256,6 +291,11 @@ export function GameInstallModal({
 
   const handleStartDownload = async () => {
     if (!config || !installDir) return
+
+    const activeRunnerPath = await ensureRunnerPath()
+    if (!activeRunnerPath) {
+      return
+    }
 
     setStatus('downloading')
     await startDownload(config)
@@ -285,6 +325,26 @@ export function GameInstallModal({
         <div className="space-y-4 py-4">
           {status === 'idle' && config && (
             <>
+              {runnerError && (
+                <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">
+                  <div>{runnerError}</div>
+                  {onNavigateToRunners && (
+                    <div className="mt-3 flex justify-end">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => {
+                          onClose()
+                          onNavigateToRunners()
+                        }}
+                      >
+                        Go to Runners
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="flex gap-1 rounded-lg bg-muted p-1">
                 <button
                   className={`flex-1 flex items-center justify-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${getInstallModeButtonClass(mode === 'download')}`}

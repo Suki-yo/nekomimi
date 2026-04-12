@@ -62,8 +62,8 @@ export function DownloadModal({ open, onClose, onComplete, needsXXMI, needsRunne
           setPhase('runner')
           setProgress(0)
 
-          const runnerResult = await window.api.invoke('mods:runner-download')
-          if (!runnerResult.success) {
+          const runnerResult = await window.api.invoke('runner:install', { kind: 'proton-ge' })
+          if (!runnerResult.ok) {
             setStatus('error')
             setError(`Runner: ${runnerResult.error || 'Download failed'}`)
             return
@@ -86,12 +86,12 @@ export function DownloadModal({ open, onClose, onComplete, needsXXMI, needsRunne
     // Listen for progress updates
     const unsubXXMI = window.api.on('mods:xxmi-progress', (percent) => {
       if (phase === 'xxmi') {
-        setProgress(percent as number)
+        setProgress(percent)
       }
     })
-    const unsubRunner = window.api.on('mods:runner-progress', (percent) => {
+    const unsubRunner = window.api.on('runner:progress', (percent) => {
       if (phase === 'runner') {
-        setProgress(percent as number)
+        setProgress(percent)
       }
     })
 

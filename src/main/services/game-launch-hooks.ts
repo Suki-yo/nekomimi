@@ -125,6 +125,10 @@ export function getUmuGameId(game: Game): string {
 }
 
 export function validateGameLaunchConfig(game: Game): string | null {
+  if (game.runner.type !== 'native' && !game.runner.path) {
+    return 'This game does not have a runner configured. Install a Proton runner from Settings before launching it.'
+  }
+
   return validateStandaloneWuwaConfig(game)
 }
 

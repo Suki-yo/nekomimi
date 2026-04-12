@@ -21,14 +21,20 @@ import {
   deleteGameConfig,
   getGameConfigPath,
 } from '../services/config'
+import {
+  invalidateCachedGameConfig,
+  loadCachedGameConfig,
+  setCachedGameConfig,
+} from '../services/config-cache'
 import { detectGame, detectRunners } from '../services/game-detector'
 import { launchGame, getRunningGames, syncRunningGames } from '../services/game-launcher'
 import { rebuildTrayMenu } from '../services/tray'
 import type { Game } from '../../shared/types'
+import type { GameAddRequest } from '../../shared/types/ipc'
 import type { GameRow } from '../services/database'
 
 const loadGameFromRow = (row: GameRow): Game | null => {
-  return loadGameConfig(row.config_path)
+  return loadCachedGameConfig(row.config_path)
 }
 
 export const registerGamesHandlers = () => {
@@ -58,7 +64,7 @@ export const registerGamesHandlers = () => {
   // Add a new game
   ipcMain.handle(
     'game:add',
-    (_event, input: Omit<Game, 'id' | 'playtime' | 'lastPlayed'>): Game => {
+    (_event, input: GameAddRequest): Game => {
       const expandTilde = (p: string) => (p.startsWith('~/') ? path.join(os.homedir(), p.slice(2)) : p)
 
       const slug = input.slug || generateSlug(input.name)
@@ -66,7 +72,7 @@ export const registerGamesHandlers = () => {
       // Return existing game if slug already taken
       const existing = dbGetGameBySlug(slug)
       if (existing) {
-        const existingConfig = loadGameConfig(existing.config_path)
+        const existingConfig = loadGameFromRow(existing)
         if (existingConfig) return existingConfig
       }
 
@@ -83,6 +89,7 @@ export const registerGamesHandlers = () => {
         ...input,
         directory: expandTilde(input.directory),
         executable: expandTilde(input.executable),
+        coverImage: input.coverImage ?? input.coverPath ?? undefined,
         runner: {
           ...input.runner,
           path: expandTilde(input.runner.path),
@@ -96,6 +103,7 @@ export const registerGamesHandlers = () => {
 
       // Save YAML config
       saveGameConfig(game)
+      setCachedGameConfig(configPath, game)
 
       // Create database entry
       const dbInput: CreateGameInput = {
@@ -103,7 +111,7 @@ export const registerGamesHandlers = () => {
         name: game.name,
         slug,
         config_path: configPath,
-        cover_path: input.directory, // TODO: handle cover art
+        cover_path: input.coverPath ?? input.coverImage ?? null,
         installed: game.installed,
       }
       dbCreateGame(dbInput)
@@ -120,17 +128,20 @@ export const registerGamesHandlers = () => {
       const row = dbGetGame(id)
       if (!row) throw new Error(`Game not found: ${id}`)
 
-      const currentConfig = loadGameConfig(row.config_path)
+      const currentConfig = loadGameFromRow(row)
       if (!currentConfig) throw new Error(`Config not found for game: ${id}`)
 
       // Merge updates into config
       const updatedGame: Game = { ...currentConfig, ...updates }
       saveGameConfig(updatedGame)
+      invalidateCachedGameConfig(row.config_path)
+      setCachedGameConfig(getGameConfigPath(updatedGame.slug), updatedGame)
 
       // Update database fields if relevant
       const dbUpdates: UpdateGameInput = {}
       if (updates.name !== undefined) dbUpdates.name = updates.name
       if (updates.slug !== undefined) dbUpdates.slug = updates.slug
+      if (updates.coverImage !== undefined) dbUpdates.cover_path = updates.coverImage
       if (updates.installed !== undefined) dbUpdates.installed = updates.installed
       if (updates.playtime !== undefined) dbUpdates.playtime = updates.playtime
       if (updates.lastPlayed !== undefined) dbUpdates.last_played = updates.lastPlayed
@@ -154,6 +165,7 @@ export const registerGamesHandlers = () => {
     if (row.slug) {
       deleteGameConfig(row.slug)
     }
+    invalidateCachedGameConfig(row.config_path)
 
     // Delete database entry
     dbDeleteGame(id)
@@ -193,7 +205,7 @@ export const registerGamesHandlers = () => {
   })
 
   // List available runners
-  ipcMain.handle('runner:list', () => {
+  ipcMain.handle('game:runners', () => {
     return detectRunners()
   })
 }

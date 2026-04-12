@@ -4,14 +4,15 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import * as https from 'https'
-import { spawn } from 'child_process'
 import { fetchGameResource } from './hoyo-api'
 import { detectHoyoInstalledVersion } from './hoyo-install'
 import { fetchEndfieldGame, fetchEndfieldVersionInfo } from './endfield-api'
 import { fetchWuwaVersionInfo, fetchWuwaManifest, detectWuwaInstalledVersion } from './wuwa-api'
 import { startWuwaDownload as _startWuwaDownload } from './wuwa-download'
 import { downloadSophonGame } from './sophon'
-import { createTransferProgressTracker, downloadStream, streamingMd5 } from './utils'
+import { assertPreflightForDownload } from '../preflight'
+import { extractArchive } from '../archive'
+import { downloadToFile, streamingMd5 } from './utils'
 import type {
   HoyoGameBiz,
   HoyoVersionInfo,
@@ -89,30 +90,9 @@ async function downloadFile(
   }) => void
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    await downloadStream(url, {
-      onResponse: (response, totalSize) => new Promise<void>((resolve, reject) => {
-        const fileStream = fs.createWriteStream(destPath)
-        const tracker = createTransferProgressTracker(totalSize)
-
-        response.on('data', (chunk: Buffer) => {
-          tracker.addDownloadedBytes(chunk.length)
-          const snapshot = tracker.snapshot()
-          if (onProgress && snapshot.shouldReport) {
-            onProgress(snapshot.progress)
-          }
-        })
-
-        response.pipe(fileStream)
-        fileStream.once('finish', () => {
-          if (onProgress) {
-            const snapshot = tracker.snapshot(true)
-            onProgress(snapshot.progress)
-          }
-          resolve()
-        })
-        fileStream.once('error', reject)
-        response.once('error', reject)
-      }),
+    await downloadToFile(url, {
+      destPath,
+      onProgress,
     })
 
     return { success: true }
@@ -127,30 +107,15 @@ async function extractZip(
   destDir: string,
   onProgress?: (percent: number) => void
 ): Promise<{ success: boolean; error?: string }> {
-  return new Promise((resolve) => {
-    // 7z handles split archives natively (no pre-merge needed)
-    const proc = spawn('7z', ['x', zipPath, `-o${destDir}`, '-aoa', '-bsp1'], {
-      stdio: 'pipe',
-    })
-
-    proc.stdout?.on('data', (data: Buffer) => {
-      const match = data.toString().match(/(\d+)%/)
-      if (match) onProgress?.(parseInt(match[1], 10))
-    })
-
-    proc.on('close', (code) => {
-      if (code === 0) {
-        onProgress?.(100)
-        resolve({ success: true })
-      } else {
-        resolve({ success: false, error: `Extraction failed (exit code ${code})` })
-      }
-    })
-
-    proc.on('error', (err) => {
-      resolve({ success: false, error: err.message })
-    })
-  })
+  return (async () => {
+    try {
+      await extractArchive({ src: zipPath, dest: destDir })
+      onProgress?.(100)
+      return { success: true }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })()
 }
 
 // Download and extract a segmented zip (shared between HoYo zip mode and Endfield)
@@ -311,6 +276,14 @@ export async function startGameDownload(
         const manifestAccessible = await isUrlAccessible(url)
 
         if (manifestAccessible) {
+          const preflight = await assertPreflightForDownload(['zstd'])
+          if (!preflight.ok) {
+            return {
+              success: false,
+              error: `Missing system tools: ${preflight.missing.join(', ')}. Open Settings -> System Health for install hints.`,
+            }
+          }
+
           // Log chunk base URL status
           if (versionInfo.sophonChunkBaseUrl) {
             console.log(`[download] Using explicit chunk base URL: ${versionInfo.sophonChunkBaseUrl}`)
@@ -349,6 +322,14 @@ export async function startGameDownload(
 
     // Zip mode (either primary or fallback from Sophon)
     {
+      const preflight = await assertPreflightForDownload(['7z'])
+      if (!preflight.ok) {
+        return {
+          success: false,
+          error: `Missing system tools: ${preflight.missing.join(', ')}. Open Settings -> System Health for install hints.`,
+        }
+      }
+
       // Check for segmented downloads first (multiple zip parts)
       if (versionInfo.segments && versionInfo.segments.length > 0) {
         console.log(`[download] Using segmented zip download (${versionInfo.segments.length} parts)`)
@@ -488,6 +469,14 @@ export async function startEndfieldDownload(
     const versionInfo = await fetchEndfieldGame()
     if (!versionInfo) {
       return { success: false, error: 'Failed to fetch Endfield version info from API' }
+    }
+
+    const preflight = await assertPreflightForDownload(['7z'])
+    if (!preflight.ok) {
+      return {
+        success: false,
+        error: `Missing system tools: ${preflight.missing.join(', ')}. Open Settings -> System Health for install hints.`,
+      }
     }
 
     if (!fs.existsSync(destDir)) {

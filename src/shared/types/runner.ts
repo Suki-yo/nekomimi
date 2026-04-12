@@ -23,3 +23,22 @@ export interface ProtonRunner extends Runner {
 export interface NativeRunner extends Runner {
   type: 'native'
 }
+
+export type RunnerKind = 'proton-ge' | 'wine-ge' | 'steam-runtime' | 'xxmi-libs'
+
+export interface RunnerStatus {
+  kind: RunnerKind
+  displayName: string
+  installedVersions: string[]
+  activeVersion: string | null
+  path: string | null
+}
+
+export interface RunnerUpdateInfo {
+  kind: RunnerKind
+  installedLatest: string | null
+  remoteLatest: string | null
+  upToDate: boolean
+  lastCheckedAt: string
+  sourceUrl: string
+}

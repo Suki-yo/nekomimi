@@ -1,8 +1,11 @@
-import { spawn, execSync } from 'child_process'
+import { app } from 'electron'
+import { spawn } from 'child_process'
 import type { ChildProcess } from 'child_process'
 import * as path from 'path'
 import * as fs from 'fs'
 import * as https from 'https'
+import { extractArchive as extractArchiveContents } from './archive'
+import { downloadToFile } from './download/utils'
 import { getGameModConfig, getImporterConfig, getImporterReleaseApi } from './game-registry'
 import { getPathsInstance } from './paths'
 import { findSteamrt } from './steamrt'
@@ -24,13 +27,6 @@ const PROTON_GE_RELEASES_API = 'https://api.github.com/repos/GloriousEggroll/pro
 const XXMI_LIBS_RELEASES_API = 'https://api.github.com/repos/SpectrumQT/XXMI-Libs-Package/releases/latest'
 
 const DISABLED_MOD_PREFIX = 'DISABLED_'
-const STAR_RAIL_PATCH_CANDIDATES = [
-  path.join(process.cwd(), 'resources', 'hkrpg_patch.dll'),
-  path.join(process.resourcesPath || '', 'resources', 'hkrpg_patch.dll'),
-  path.join(process.resourcesPath || '', 'hkrpg_patch.dll'),
-  '/usr/lib/twintaillauncher/resources/hkrpg_patch.dll',
-]
-
 export function shouldUseXXMI(executablePath: string): boolean {
   return getGameModConfig(executablePath) !== null
 }
@@ -49,6 +45,20 @@ function getXXMIPaths() {
   }
 }
 
+function getStarRailPatchDllPath(): string | null {
+  const base = app.isPackaged
+    ? path.join(process.resourcesPath, 'resources', 'patches')
+    : path.join(app.getAppPath(), 'resources', 'patches')
+  const bundled = path.join(base, 'hkrpg_patch.dll')
+
+  try {
+    const stat = fs.statSync(bundled)
+    return stat.isFile() && stat.size > 0 ? bundled : null
+  } catch {
+    return null
+  }
+}
+
 function ensureStarRailDbghelp(gameDirectory: string): { success: boolean; error?: string } {
   const dbghelpPath = path.join(gameDirectory, 'dbghelp.dll')
 
@@ -61,14 +71,7 @@ function ensureStarRailDbghelp(gameDirectory: string): { success: boolean; error
     // Missing or unreadable; try to restore it from a known resource path.
   }
 
-  const source = STAR_RAIL_PATCH_CANDIDATES.find((candidate) => {
-    try {
-      const stat = fs.statSync(candidate)
-      return stat.isFile() && stat.size > 0
-    } catch {
-      return false
-    }
-  })
+  const source = getStarRailPatchDllPath()
 
   if (!source) {
     return {
@@ -79,7 +82,7 @@ function ensureStarRailDbghelp(gameDirectory: string): { success: boolean; error
 
   try {
     fs.copyFileSync(source, dbghelpPath)
-    console.log(`[starrail] Restored dbghelp.dll from ${source}`)
+    console.log(`[mods] Staged hkrpg_patch.dll from ${source}`)
     return { success: true }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
@@ -287,93 +290,34 @@ async function downloadFile(
   destPath: string,
   onProgress?: (percent: number) => void
 ): Promise<DownloadResult> {
-  return new Promise((resolve) => {
-    const downloadWithRedirect = (currentUrl: string, redirectCount = 0): void => {
-      if (redirectCount > 5) {
-        resolve({ success: false, error: 'Too many redirects' })
-        return
-      }
-
-      const file = fs.createWriteStream(destPath)
-
-      https.get(currentUrl, (response) => {
-        if (response.statusCode === 302 || response.statusCode === 301) {
-          const redirectUrl = response.headers.location
-          if (redirectUrl) {
-            file.close()
-            removeFileIfExists(destPath)
-            downloadWithRedirect(redirectUrl, redirectCount + 1)
-            return
-          }
-        }
-
-        if (response.statusCode !== 200) {
-          file.close()
-          removeFileIfExists(destPath)
-          resolve({ success: false, error: `HTTP ${response.statusCode}` })
-          return
-        }
-
-        const totalSize = parseInt(response.headers['content-length'] || '0', 10)
-        let downloaded = 0
-
-        response.pipe(file)
-
-        response.on('data', (chunk: Buffer) => {
-          downloaded += chunk.length
-          if (totalSize > 0 && onProgress) {
-            onProgress(Math.round((downloaded / totalSize) * 100))
-          }
-        })
-
-        file.on('finish', () => {
-          file.close()
-          resolve({ success: true })
-        })
-
-        file.on('error', (err) => {
-          console.error('[download] File write error:', err)
-          file.close()
-          removeFileIfExists(destPath)
-          resolve({ success: false, error: `Write failed: ${err.message}` })
-        })
-      }).on('error', (err) => {
-        console.error('[download] Download error:', err)
-        file.close()
-        removeFileIfExists(destPath)
-        resolve({ success: false, error: `Download failed: ${err.message}` })
+  return (async () => {
+    try {
+      await downloadToFile(url, {
+        destPath,
+        onProgress: (progress) => onProgress?.(progress.percent),
       })
+      return { success: true }
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
     }
-
-    downloadWithRedirect(url)
-  })
+  })()
 }
 
 async function extractArchive(
   archivePath: string,
   destDir: string,
-  type: 'zip' | 'tar.gz'
+  _type: 'zip' | 'tar.gz'
 ): Promise<DownloadResult> {
-  return new Promise((resolve) => {
-    const command = type === 'zip'
-      ? spawn('unzip', ['-o', archivePath, '-d', destDir], { stdio: 'inherit' })
-      : spawn('tar', ['-xzf', archivePath, '-C', destDir], { stdio: 'inherit' })
-
-    command.on('close', (code) => {
+  return (async () => {
+    try {
+      await extractArchiveContents({ src: archivePath, dest: destDir })
       removeFileIfExists(archivePath)
-      if (code === 0) {
-        resolve({ success: true })
-      } else {
-        resolve({ success: false, error: `Extraction failed (exit code ${code})` })
-      }
-    })
-
-    command.on('error', (err) => {
-      console.error('[extract] Error:', err)
+      return { success: true }
+    } catch (err) {
       removeFileIfExists(archivePath)
-      resolve({ success: false, error: `Extraction failed: ${err.message}` })
-    })
-  })
+      return { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })()
 }
 
 export async function downloadXXMI(onProgress?: (percent: number) => void): Promise<DownloadResult> {
@@ -953,13 +897,6 @@ export async function launchGameWithXXMI(
 
   console.log(`[xxmi] Using XXMI Launcher inject mode for ${importer}`)
 
-  try {
-    execSync('pkill -9 -f "Endfield" 2>/dev/null || true')
-    execSync('pkill -9 -f "umu-run" 2>/dev/null || true')
-  } catch {
-    // Ignore errors
-  }
-
   return new Promise((resolve) => {
     const { launcherExe } = getXXMIPaths()
 
@@ -1240,23 +1177,12 @@ export async function installMod(importer: string, sourcePath: string): Promise<
     return { success: false, error: 'Only .zip, .7z, .rar, or folder sources are supported' }
   }
 
-  return new Promise((resolve) => {
-    const extract = ext === '.7z' || ext === '.rar'
-      ? spawn('7z', ['x', '-y', `-o${destPath}`, sourcePath], { stdio: 'inherit' })
-      : spawn('unzip', ['-o', sourcePath, '-d', destPath], { stdio: 'inherit' })
-
-    extract.on('close', (code) => {
-      if (code === 0) {
-        resolve({ success: true })
-      } else {
-        resolve({ success: false, error: `Failed to extract mod (exit code ${code})` })
-      }
-    })
-
-    extract.on('error', (err) => {
-      resolve({ success: false, error: `Extraction failed: ${err.message}` })
-    })
-  })
+  try {
+    await extractArchiveContents({ src: sourcePath, dest: destPath })
+    return { success: true }
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : String(err) }
+  }
 }
 
 export function deleteMod(modPath: string): boolean {

@@ -25,15 +25,28 @@ export const loadAppConfig = (): AppConfig => {
   }
 
   const content = fs.readFileSync(configPath, 'utf-8')
-  const parsed = yaml.parse(content)
+  const parsed = yaml.parse(content) ?? {}
+  const runnerConfig = { ...parsed.runner }
+  let shouldResave = false
+
+  if ('scanPaths' in runnerConfig) {
+    delete runnerConfig.scanPaths
+    shouldResave = true
+  }
 
   // Merge with defaults (in case new fields were added)
-  return {
+  const config: AppConfig = {
     paths: paths,
     ui: { ...DEFAULT_CONFIG.ui, ...parsed.ui },
-    runner: { ...DEFAULT_CONFIG.runner, ...parsed.runner },
+    runner: { ...DEFAULT_CONFIG.runner, ...runnerConfig },
     download: { ...DEFAULT_CONFIG.download, ...parsed.download },
   }
+
+  if (shouldResave) {
+    saveAppConfig(config)
+  }
+
+  return config
 }
 
 export const saveAppConfig = (config: AppConfig): void => {

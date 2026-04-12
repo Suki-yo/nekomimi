@@ -34,7 +34,7 @@ import {
 } from '@/lib/app-shell'
 import { INITIAL_SECTIONS, INITIAL_SELECTION, type SectionState, type Selection } from '@/types/app-shell'
 import { getXXMIImporter } from './utils/mods'
-import { APP_NAME, APP_VERSION } from '../../shared/constants'
+import { APP_NAME } from '../../shared/constants'
 import type { Game } from '../../shared/types/game'
 
 function getGameImporter(game: Game): string | null { return game.mods.importer ?? getXXMIImporter(game.executable) }
@@ -50,6 +50,7 @@ function App(): JSX.Element {
   const { reportStatus, setStatusLine, statusLine } = useStatusBar()
   const clock = useClock()
   const [manualGameForm, setManualGameForm] = useState<ManualGameForm>(createManualGameForm())
+  const [appVersion, setAppVersion] = useState('?')
 
   const gamesById = useMemo(
     () => Object.fromEntries(games.map((game) => [game.id, game])) as Record<string, Game>,
@@ -227,6 +228,15 @@ function App(): JSX.Element {
   useEffect(() => { void loadInitialState() }, [])
 
   useEffect(() => {
+    void window.api.getVersion().then(setAppVersion).catch(() => setAppVersion('?'))
+
+    return window.api.on('runner:updates-available', (updates) => {
+      const names = updates.map((update) => update.kind).join(', ')
+      reportStatus(`runner updates available: ${names}`, { type: 'settings' })
+    })
+  }, [reportStatus])
+
+  useEffect(() => {
     if (!isSelectionValid(selectedNode, games)) {
       setSelectedNode({ type: 'home' })
     }
@@ -324,6 +334,10 @@ function App(): JSX.Element {
       reportStatus('missing executable, name, or directory')
       return
     }
+    if (!manualGameForm.runnerPath) {
+      reportStatus('install a proton runner from settings before adding a game', { type: 'settings' })
+      return
+    }
 
     const selectedRunner = runners.find((runner) => runner.path === manualGameForm.runnerPath)
     const game = await window.api.invoke('game:add', {
@@ -344,7 +358,7 @@ function App(): JSX.Element {
     setGames((current) => upsertGameList(current, game))
     setSelectedNode({ type: 'game', gameId: game.id })
     setExpandedGames((current) => ({ ...current, [game.id]: true }))
-    setManualGameForm(createManualGameForm(runners[0]?.path ?? ''))
+    setManualGameForm(createManualGameForm(runners[0]?.path))
     reportStatus(`added ${game.name.toLowerCase()} to library`, { type: 'game', gameId: game.id })
   }
 
@@ -387,7 +401,7 @@ function App(): JSX.Element {
     steamrtProgress,
   })
 
-  const displayVersion = window.api.version === '0.0.0' ? APP_VERSION : window.api.version
+  const displayVersion = appVersion
 
   return (
     <div className="tui-shell">
@@ -458,6 +472,7 @@ function App(): JSX.Element {
             isGenshinGame={isGenshinGame}
             launchPreparation={launchPreparation}
             loadGames={loadGames}
+            loadSystemState={loadSystemState}
             manualGameForm={manualGameForm}
             modsByGame={modsByGame}
             onOpenSystemPath={openSystemPath}
