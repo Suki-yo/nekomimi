@@ -673,6 +673,7 @@ interface ProtonLaunchSpec {
   args: string[]
   env: NodeJS.ProcessEnv
   cwd: string
+  protonVerb: 'run' | 'waitforexitandrun'
 }
 
 interface DetachedSpawnOptions {
@@ -689,7 +690,8 @@ function buildProtonLaunchSpec(
   steamAppId: string,
   windowsOverrides?: string,
   disableProtonFixes = true,
-  cwd = gameDirectory
+  cwd = gameDirectory,
+  protonVerb: 'run' | 'waitforexitandrun' = 'waitforexitandrun'
 ): ProtonLaunchSpec {
   const { winePrefix: normalizedWinePrefix, compatDataPath } = resolveProtonCompatPaths(winePrefix)
   const steamrt = findSteamrt()
@@ -722,9 +724,9 @@ function buildProtonLaunchSpec(
     return {
       command: path.join(steamrt, '_v2-entry-point'),
       args: [
-        '--verb=waitforexitandrun', '--',
+        `--verb=${protonVerb}`, '--',
         path.join(runnerPath, 'proton'),
-        'waitforexitandrun',
+        protonVerb,
         linuxToWinePath(targetPath),
         ...targetArgs,
       ],
@@ -738,6 +740,7 @@ function buildProtonLaunchSpec(
         STEAM_ZENITY: '/usr/bin/zenity',
       },
       cwd,
+      protonVerb,
     }
   }
 
@@ -749,6 +752,7 @@ function buildProtonLaunchSpec(
       GAMEID: `umu-${steamAppId}`,
     },
     cwd,
+    protonVerb,
   }
 }
 
@@ -805,6 +809,7 @@ function writeWuwaLaunchDebugLog(
   const payload = {
     timestamp: new Date().toISOString(),
     mode,
+    protonVerb: spec.protonVerb,
     directory: game.directory,
     runtimeLogPath: getWuwaRuntimeLogPath(),
     command: spec.command,
@@ -951,7 +956,10 @@ export async function launchGameWithXXMI(
             gameDirectory,
             gameEnv,
             steamAppId,
-            mergeWindowsOverrides(WWMI_KURO_DLL_OVERRIDES, gameEnv.WINEDLLOVERRIDES)
+            mergeWindowsOverrides(WWMI_KURO_DLL_OVERRIDES, gameEnv.WINEDLLOVERRIDES),
+            true,
+            gameDirectory,
+            'run'
           )
 
           writeWuwaLaunchDebugLog(game, 'direct', gameLaunch)
