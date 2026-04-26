@@ -182,6 +182,40 @@ function resolveManifestEntries(
   return []
 }
 
+function getBackupDir(destDir: string): string {
+  const base = `${destDir}.previous`
+  if (!fs.existsSync(base)) {
+    return base
+  }
+
+  return `${base}-${Date.now()}`
+}
+
+function replaceDestWithStaging(stagingDir: string, destDir: string): void {
+  const backupDir = fs.existsSync(destDir) ? getBackupDir(destDir) : null
+
+  try {
+    if (backupDir) {
+      fs.renameSync(destDir, backupDir)
+    }
+
+    fs.renameSync(stagingDir, destDir)
+  } catch (err) {
+    if (backupDir && fs.existsSync(backupDir) && !fs.existsSync(destDir)) {
+      fs.renameSync(backupDir, destDir)
+    }
+    throw err
+  }
+
+  if (backupDir && fs.existsSync(backupDir)) {
+    try {
+      fs.rmSync(backupDir, { recursive: true, force: true })
+    } catch (err) {
+      console.warn(`[sophon] Download installed, but failed to remove backup ${backupDir}:`, err)
+    }
+  }
+}
+
 // Download all files from a single manifest into stagingDir
 async function downloadManifestFiles(
   manifestUrl: string,
@@ -298,10 +332,7 @@ export async function downloadSophonGame(
     onProgress?.({ status: 'extracting', percent: 99 })
     console.log('[sophon] Moving files from staging...')
 
-    if (fs.existsSync(destDir)) {
-      fs.rmSync(destDir, { recursive: true, force: true })
-    }
-    fs.renameSync(stagingDir, destDir)
+    replaceDestWithStaging(stagingDir, destDir)
 
     onProgress?.({ status: 'installed', percent: 100 })
     console.log('[sophon] Download complete!')
@@ -311,10 +342,7 @@ export async function downloadSophonGame(
     console.error('[sophon] Download failed:', err)
     onProgress?.({ status: 'error', error: String(err) })
 
-    // Clean up staging directory
-    if (fs.existsSync(stagingDir)) {
-      fs.rmSync(stagingDir, { recursive: true, force: true })
-    }
+    console.warn(`[sophon] Preserving staging directory for resume: ${stagingDir}`)
 
     return { success: false, error: String(err) }
   } finally {
