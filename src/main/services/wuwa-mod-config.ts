@@ -6,11 +6,12 @@ import type { Game, WuwaWwmiLaunchMode } from '../../shared/types/game'
 const WWMI_PROCESS_EXE_NAMES = ['Client-Win64-Shipping.exe'] as const
 const WWMI_DLL_INIT_DELAY_MS = 500
 const WUWA_REQUIRED_STEAM_COMPAT_FLAGS = ['noopwr', 'noxalia'] as const
-// Prefer the standalone direct-Proton path by default. It removes the extra
-// WWMI launcher hop and matches the last known-good no-disconnect flow.
+// Prefer the hidden standalone direct-Proton path by default. It avoids showing
+// the XXMI launcher while still passing WuWa's Engine.ini LOD override file.
 export const DEFAULT_WUWA_WWMI_LAUNCH_MODE: WuwaWwmiLaunchMode = 'direct'
 
-export const WWMI_DIRECT_LAUNCH_ARGS = ['-dx11']
+export const WWMI_ENGINE_INI_OVERRIDE = 'Kuro_Please_Add_Force_LOD0_For_Characters_To_Settings_Engine.ini'
+export const WWMI_DIRECT_LAUNCH_ARGS = ['-dx11', `-ENGINEINI=${WWMI_ENGINE_INI_OVERRIDE}`]
 // Disable lsteamclient to avoid Steam client dependency. KRSDKExternal.exe and
 // jsproxy are left at their Wine defaults — blocking them may interfere with
 // session validation or proxy-dependent HTTP calls during gameplay.
@@ -32,7 +33,11 @@ export function resolveWuwaWwmiLaunchMode(game: Pick<Game, 'slug' | 'mods'>): Wu
     return DEFAULT_WUWA_WWMI_LAUNCH_MODE
   }
 
-  return game.mods.wwmiLaunchMode === 'direct' ? 'direct' : DEFAULT_WUWA_WWMI_LAUNCH_MODE
+  if (game.mods.wwmiLaunchMode === 'direct' || game.mods.wwmiLaunchMode === 'launcher') {
+    return game.mods.wwmiLaunchMode
+  }
+
+  return DEFAULT_WUWA_WWMI_LAUNCH_MODE
 }
 
 export function applyWwmiLaunchSettings(importerConfig: Record<string, unknown>): void {
