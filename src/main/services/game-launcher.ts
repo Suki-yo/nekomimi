@@ -17,7 +17,12 @@ import { ProcessMonitor, type ProcessMonitorEntry } from './process-monitor'
 import { assertPreflightForLaunch } from './preflight'
 import { findSteamrt, downloadSteamrt } from './steamrt'
 import { expandHome } from './paths'
-import { cleanupStandaloneWwmiRuntime, ensureWuwaPrefixNetworkOverrides } from './wuwa-mod-config'
+import {
+  cleanupStandaloneWwmiRuntime,
+  ensureWuwaEngineConfig,
+  ensureWuwaPrefixNetworkOverrides,
+  WUWA_ENGINE_INI_LAUNCH_ARG,
+} from './wuwa-mod-config'
 import { rebuildTrayMenu } from './tray'
 import type { Game } from '../../shared/types/game'
 
@@ -61,6 +66,10 @@ function shellSplit(input: string): string[] {
   }
   if (current) args.push(current)
   return args
+}
+
+function hasEngineIniArg(args: string[]): boolean {
+  return args.some((arg) => /^-engineini=/i.test(arg))
 }
 
 interface RunningGameMetadata {
@@ -195,6 +204,10 @@ function buildLaunchCommand(game: Game, useXXMI: boolean): { command: string; ar
     args = args.concat(shellSplit(game.launch.args))
   }
 
+  if (game.slug === 'wuwa' && !hasEngineIniArg(args)) {
+    args.push(WUWA_ENGINE_INI_LAUNCH_ARG)
+  }
+
   return { command, args, env }
 }
 
@@ -252,8 +265,11 @@ export async function launchGame(
   const resolvedPrefix = resolveRunnerPrefix(game)
   const resolvedRunnerPath = expandHome(game.runner.path)
 
-  if (game.slug === 'wuwa' && game.runner.type === 'proton') {
-    ensureWuwaPrefixNetworkOverrides(resolvedPrefix)
+  if (game.slug === 'wuwa') {
+    if (game.runner.type === 'proton') {
+      ensureWuwaPrefixNetworkOverrides(resolvedPrefix)
+    }
+    ensureWuwaEngineConfig(game)
   }
 
   const gameSupportsXXMI = shouldUseXXMI(game.executable)

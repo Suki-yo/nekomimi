@@ -11,13 +11,150 @@ const WUWA_REQUIRED_STEAM_COMPAT_FLAGS = ['noopwr', 'noxalia'] as const
 export const DEFAULT_WUWA_WWMI_LAUNCH_MODE: WuwaWwmiLaunchMode = 'direct'
 
 export const WWMI_ENGINE_INI_OVERRIDE = 'Kuro_Please_Add_Force_LOD0_For_Characters_To_Settings_Engine.ini'
-export const WWMI_DIRECT_LAUNCH_ARGS = ['-dx11', `-ENGINEINI=${WWMI_ENGINE_INI_OVERRIDE}`]
+export const WUWA_ENGINE_INI_NAME = 'Nekomimi_Engine.ini'
+export const WWMI_DIRECT_LAUNCH_ARGS = ['-dx11', `-ENGINEINI=${WUWA_ENGINE_INI_NAME}`]
+export const WUWA_ENGINE_INI_LAUNCH_ARG = `-EngineIni=${WUWA_ENGINE_INI_NAME}`
 // Disable lsteamclient to avoid Steam client dependency. KRSDKExternal.exe and
 // jsproxy are left at their Wine defaults — blocking them may interfere with
 // session validation or proxy-dependent HTTP calls during gameplay.
 export const WWMI_KURO_DLL_OVERRIDES = 'lsteamclient=d'
 const WUWA_HOSTS_BLOCK_START = '# nekomimi-wuwa-ipv4-start'
 const WUWA_HOSTS_BLOCK_END = '# nekomimi-wuwa-ipv4-end'
+const WUWA_ENGINE_CONFIG_SOURCE_START = '; nekomimi-wuwa-engine-config-start'
+const WUWA_ENGINE_CONFIG_SOURCE_END = '; nekomimi-wuwa-engine-config-end'
+const ALTERIAX_WUWA_CONFIG_1 = `; Lower FPS compared to default due to view distance increase
+
+; If motion blur is turning back on even with in-game settings off add the command below
+; r.MotionBlur.Max=0
+
+[SystemSettings]
+r.ParallelFrustumCull=1
+r.ParallelOcclusionCull=1
+r.StaticMeshLODDistanceScale=0.5
+r.ScreenSizeCullRatioFactor=1
+r.Kuro.KuroEnableFFTBloom=1
+r.Kuro.KuroEnableToonFFTBloom=1
+r.Kuro.KuroBloomStreak=1
+r.EnableLensflareSceneSample=1
+r.DepthOfFieldQuality=2
+r.SceneColorFringeQuality=0
+; Remove r.Tonemapper.Quality=1 if you use bloom and find some scenes bright
+r.Tonemapper.Quality=1
+r.AODownsampleFactor=1
+r.AmbientOcclusion.Intensity=-1
+r.AmbientOcclusionMaxQuality=100
+r.Shadow.RadiusThreshold=0.01
+r.Shadow.PerObjectResolutionMax=2048
+r.Shadow.PerObjectResolutionMin=2048
+r.DetailMode=2
+r.MaterialQualityLevel=1
+r.KuroMaterialQualityLevel=1
+r.ViewDistanceScale=3.0
+foliage.LODDistanceScale=3.0
+foliage.DensityScaleLOD.DrawCallOptimize=1
+r.SSR.MaxRoughness=1.0
+r.SSR.HalfResSceneColor=0
+r.KuroVolumetricLight.ColorMaskDownSampleFactor=1
+r.KuroVolumetricLight.DownSampleFactor=1
+r.LightShaftDownSampleFactor=1
+r.Upscale.Quality=3
+a.URO.ForceAnimRate=1
+r.VRS.EnableMaterial=false
+r.VRS.EnableMesh=false
+; If textures still load late or blurry, increase r.Streaming.MinBoost and r.Streaming.PoolSize values but uses more VRAM
+r.Streaming.MinBoost=3.0
+r.Streaming.PoolSize=2560
+r.streaming.MeshMaxKeepMips=15
+r.streaming.TextureMaxKeepMips=15
+r.Streaming.UsingKuroStreamingPriority=0
+r.Kuro.Foliage.GrassCullDistanceMax=17500
+r.Kuro.Foliage.Grass3_0CullDistanceMax=20000
+wp.Runtime.SoraGridBlackListHeight=20000
+wp.Runtime.PlannedLoadingRangeScale=1.0
+r.Streamline.DLSSG.RetainResourcesWhenOff=1
+
+; RT is enabled, set r.RayTracing.LoadConfig to 0 if you don't use it before launching game
+[/Script/Engine.RendererSettings]
+r.RayTracing.LoadConfig=1
+`
+const ALTERIAX_WUWA_CONFIG_2 = `; Lower FPS compared to default due to view distance increase
+
+; If motion blur is turning back on even with in-game settings off add the command below
+; r.MotionBlur.Max=0
+
+; Add the command below to fix stuttering with menus when using DLSS Frame Gen (Increases VRAM usage)
+; r.Streamline.DLSSG.RetainResourcesWhenOff=1
+
+[SystemSettings]
+r.ParallelFrustumCull=1
+r.ParallelOcclusionCull=1
+r.StaticMeshLODDistanceScale=0.5
+r.ScreenSizeCullRatioFactor=3
+r.Kuro.KuroEnableFFTBloom=1
+r.Kuro.KuroEnableToonFFTBloom=1
+r.Kuro.KuroBloomStreak=1
+r.EnableLensflareSceneSample=1
+r.DepthOfFieldQuality=2
+r.SceneColorFringeQuality=0
+; Remove r.Tonemapper.Quality=1 if you use bloom and find some scenes bright
+r.Tonemapper.Quality=1
+r.AODownsampleFactor=2
+r.AmbientOcclusion.Intensity=-1
+r.AmbientOcclusionMaxQuality=100
+r.Shadow.RadiusThreshold=0.01
+r.Shadow.PerObjectResolutionMax=1024
+r.Shadow.PerObjectResolutionMin=1024
+r.DetailMode=2
+r.MaterialQualityLevel=1
+r.KuroMaterialQualityLevel=1
+r.ViewDistanceScale=2.0
+foliage.LODDistanceScale=2.0
+foliage.DensityScaleLOD.DrawCallOptimize=1
+r.SSR.MaxRoughness=1.0
+r.SSR.HalfResSceneColor=0
+r.KuroVolumetricLight.ColorMaskDownSampleFactor=1
+r.KuroVolumetricLight.DownSampleFactor=1
+r.LightShaftDownSampleFactor=1
+r.Upscale.Quality=3
+a.URO.ForceAnimRate=1
+r.VRS.EnableMaterial=false
+r.VRS.EnableMesh=false
+; If textures still load late or blurry, increase r.Streaming.MinBoost and r.Streaming.PoolSize values but uses more VRAM
+r.Streaming.MinBoost=2.0
+; Can increase r.Streaming.PoolSize to 2560 if using GPU with 16GB VRAM
+r.Streaming.PoolSize=1536
+r.streaming.MeshMaxKeepMips=15
+r.streaming.TextureMaxKeepMips=15
+r.Streaming.UsingKuroStreamingPriority=0
+r.Kuro.Foliage.GrassCullDistanceMax=17500
+r.Kuro.Foliage.Grass3_0CullDistanceMax=20000
+wp.Runtime.SoraGridBlackListHeight=15000
+wp.Runtime.PlannedLoadingRangeScale=1.0
+
+; RT is disabled, set r.RayTracing.LoadConfig to 1 if you use it before launching game
+[/Script/Engine.RendererSettings]
+r.RayTracing.LoadConfig=0
+`
+const ALTERIAX_WUWA_CONFIGS: Record<'1' | '2', string> = {
+  '1': ALTERIAX_WUWA_CONFIG_1,
+  '2': ALTERIAX_WUWA_CONFIG_2,
+}
+const WWMI_LOD_FIX_CONFIG = `[SystemSettings]
+r.Kuro.SkeletalMesh.LODDistanceScaleDeviceOffset=-10
+r.Streaming.Boost=20
+r.Streaming.MinBoost=0
+r.Streaming.UseAllMips=1
+r.Streaming.PoolSize=0
+r.Streaming.LimitPoolSizeToVRAM=1
+r.Streaming.UseFixedPoolSize=1
+`
+const WWMI_LOD_FIX_KEYS = [
+  'r.Kuro.SkeletalMesh.LODDistanceScaleDeviceOffset',
+  'r.Streaming.Boost',
+  'r.Streaming.UseAllMips',
+  'r.Streaming.LimitPoolSizeToVRAM',
+  'r.Streaming.UseFixedPoolSize',
+] as const
 const WUWA_IPV4_HOST_OVERRIDES = [
   // These IPv4 addresses were observed as the successful WuWa login/gateway
   // endpoints on 2026-04-07 and again on 2026-04-10. The client also tried
@@ -125,6 +262,93 @@ function resolveWinePrefix(prefixPath: string): string {
   }
 
   return prefixPath
+}
+
+function resolveAlteriaxWuwaConfig(): { variant: '1' | '2'; content: string } {
+  const requestedVariant = process.env.NEKOMIMI_WUWA_ENGINE_CONFIG
+  const variant = requestedVariant === '1' || requestedVariant === '2' ? requestedVariant : '2'
+
+  return {
+    variant,
+    content: ALTERIAX_WUWA_CONFIGS[variant],
+  }
+}
+
+function writeFileIfChanged(filePath: string, content: string): boolean {
+  if (fs.existsSync(filePath) && fs.readFileSync(filePath, 'utf-8') === content) {
+    return false
+  }
+
+  fs.mkdirSync(path.dirname(filePath), { recursive: true })
+  fs.writeFileSync(filePath, content, 'utf-8')
+  return true
+}
+
+function stripManagedEngineConfig(content: string): string {
+  const blockPattern = new RegExp(
+    `${WUWA_ENGINE_CONFIG_SOURCE_START}[\\s\\S]*?${WUWA_ENGINE_CONFIG_SOURCE_END}\\n?`,
+    'g'
+  )
+
+  return content.replace(blockPattern, '').trim()
+}
+
+function readExistingWwmiModfixConfig(binariesDir: string): string {
+  const wwmiOverridePath = path.join(binariesDir, WWMI_ENGINE_INI_OVERRIDE)
+  if (!fs.existsSync(wwmiOverridePath)) {
+    return ''
+  }
+
+  const content = stripManagedEngineConfig(fs.readFileSync(wwmiOverridePath, 'utf-8'))
+  const hasWwmiLodFixes = WWMI_LOD_FIX_KEYS.some((key) => content.includes(`${key}=`))
+
+  return hasWwmiLodFixes ? content : ''
+}
+
+function resolveWuwaClientBinariesDir(game: Pick<Game, 'directory' | 'executable'>): string {
+  const executableDir = path.dirname(game.executable)
+  if (path.isAbsolute(executableDir)) {
+    return executableDir
+  }
+
+  return path.join(game.directory, executableDir)
+}
+
+export function ensureWuwaEngineConfig(game: Pick<Game, 'slug' | 'directory' | 'executable'>): boolean {
+  if (game.slug !== 'wuwa') {
+    return false
+  }
+
+  const { variant, content } = resolveAlteriaxWuwaConfig()
+  const binariesDir = resolveWuwaClientBinariesDir(game)
+  const existingModfixConfig = readExistingWwmiModfixConfig(binariesDir)
+  const managedContent = [
+    WUWA_ENGINE_CONFIG_SOURCE_START,
+    '; Managed by nekomimi for nekomimi launches only.',
+    `; AlteriaX/WuWa-Configs variant: Config ${variant}. Set NEKOMIMI_WUWA_ENGINE_CONFIG=1 or 2 before launch to switch.`,
+    '',
+    content.trim(),
+    '',
+    '; WWMI LOD/modfix overrides. Keep this after performance settings so these values win.',
+    WWMI_LOD_FIX_CONFIG.trim(),
+    existingModfixConfig
+      ? [
+          '',
+          '; Existing WWMI/modfix Engine.ini content follows.',
+          existingModfixConfig,
+        ].join('\n')
+      : '',
+    WUWA_ENGINE_CONFIG_SOURCE_END,
+    '',
+  ].filter((part) => part !== '').join('\n')
+
+  const wroteEngineIni = writeFileIfChanged(path.join(binariesDir, WUWA_ENGINE_INI_NAME), managedContent)
+
+  if (wroteEngineIni) {
+    console.log(`[wuwa] Updated combined nekomimi Engine.ini Config ${variant}: ${binariesDir}`)
+  }
+
+  return wroteEngineIni
 }
 
 function stripManagedHostsBlock(content: string): string {
