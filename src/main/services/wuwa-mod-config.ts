@@ -135,10 +135,179 @@ wp.Runtime.PlannedLoadingRangeScale=1.0
 [/Script/Engine.RendererSettings]
 r.RayTracing.LoadConfig=0
 `
-const ALTERIAX_WUWA_CONFIGS: Record<'1' | '2', string> = {
+const ALTERIAX_WUWA_CONFIG_3 = `; Slightly lower FPS compared to default due to view distance increase
+
+; If motion blur is turning back on even with in-game settings off add the command below
+; r.MotionBlur.Max=0
+
+[SystemSettings]
+r.ParallelFrustumCull=1
+r.ParallelOcclusionCull=1
+r.StaticMeshLODDistanceScale=0.7
+r.ScreenSizeCullRatioFactor=3
+r.Kuro.KuroEnableFFTBloom=1
+r.Kuro.KuroEnableToonFFTBloom=1
+r.Kuro.KuroBloomStreak=1
+r.EnableLensflareSceneSample=1
+r.DepthOfFieldQuality=2
+r.SceneColorFringeQuality=0
+; Remove r.Tonemapper.Quality=1 if you use bloom and find some scenes bright
+r.Tonemapper.Quality=1
+r.AODownsampleFactor=2
+r.AmbientOcclusion.Intensity=-1
+r.AmbientOcclusionMaxQuality=100
+r.Shadow.RadiusThreshold=0.02
+r.Shadow.PerObjectResolutionMax=1024
+r.Shadow.PerObjectResolutionMin=1024
+r.DetailMode=2
+r.MaterialQualityLevel=1
+r.KuroMaterialQualityLevel=1
+r.ViewDistanceScale=1.5
+foliage.DensityScaleLOD.DrawCallOptimize=1
+r.SSR.MaxRoughness=1.0
+r.SSR.HalfResSceneColor=0
+r.Kuro.KuroTyndallScatteringsDownSampleFactor=1
+r.KuroVolumetricLight.ColorMaskDownSampleFactor=1
+r.KuroVolumetricLight.DownSampleFactor=1
+r.LightShaftDownSampleFactor=1
+r.Upscale.Quality=3
+a.URO.ForceAnimRate=1
+r.VRS.EnableMaterial=false
+r.VRS.EnableMesh=false
+; If textures still load late or blurry, increase r.Streaming.MinBoost and r.Streaming.PoolSize values but uses more VRAM
+r.Streaming.MinBoost=2.0
+; Lower r.Streaming.PoolSize to 1024 if using GPU with 6GB VRAM
+r.Streaming.PoolSize=1536
+r.streaming.MeshMaxKeepMips=15
+r.streaming.TextureMaxKeepMips=15
+r.Streaming.UsingKuroStreamingPriority=0
+r.Kuro.Foliage.GrassCullDistanceMax=15000
+r.Kuro.Foliage.Grass3_0CullDistanceMax=17500
+wp.Runtime.SoraGridBlackListHeight=10000
+wp.Runtime.PlannedLoadingRangeScale=0.9
+Kuro.Script.EnableCSharpEnv=true
+
+; RT is disabled, set r.RayTracing.LoadConfig to 1 if you use it before launching game
+[/Script/Engine.RendererSettings]
+r.MaxAnisotropy=16
+r.RayTracing.LoadConfig=0
+`
+const ALTERIAX_WUWA_CONFIG_4 = `; If motion blur is turning back on even with in-game settings off add the command below
+; r.MotionBlur.Max=0
+
+; For GPUs with 6GB VRAM or higher (1080p) - To fix blurry textures for certain stuff you can add the command below
+; r.Streaming.MinBoost=2.0
+; r.Streaming.PoolSize=1024
+
+[SystemSettings]
+r.StaticMeshLODDistanceScale=0.7
+r.ScreenSizeCullRatioFactor=3
+r.Kuro.KuroEnableFFTBloom=1
+r.Kuro.KuroEnableToonFFTBloom=1
+r.Kuro.KuroBloomStreak=1
+r.EnableLensflareSceneSample=1
+r.DepthOfFieldQuality=2
+r.SceneColorFringeQuality=0
+; Remove r.Tonemapper.Quality=1 if you use bloom and find some scenes bright
+r.Tonemapper.Quality=1
+r.AODownsampleFactor=2
+r.AmbientOcclusion.Intensity=-1
+r.AmbientOcclusionMaxQuality=100
+r.Shadow.RadiusThreshold=0.03
+r.Shadow.MaxCSMResolution=512
+r.Shadow.MaxResolution=512
+r.Shadow.MinResolution=512
+r.Shadow.PerObjectShadowMapResolution=512
+r.Shadow.PerObjectResolutionMax=512
+r.Shadow.PerObjectResolutionMin=512
+r.DetailMode=1
+r.MaterialQualityLevel=2
+r.KuroMaterialQualityLevel=2
+foliage.DensityScaleLOD.DrawCallOptimize=1
+r.SSR.MaxRoughness=1.0
+r.SSR.HalfResSceneColor=0
+r.Kuro.KuroTyndallScatteringsDownSampleFactor=2
+r.KuroVolumetricLight.ColorMaskDownSampleFactor=2
+r.KuroVolumetricLight.DownSampleFactor=2
+r.LightShaftDownSampleFactor=1
+r.Upscale.Quality=3
+a.URO.ForceAnimRate=1
+r.VRS.EnableMaterial=false
+r.VRS.EnableMesh=false
+r.streaming.MeshMaxKeepMips=15
+r.streaming.TextureMaxKeepMips=15
+r.Streaming.UsingKuroStreamingPriority=0
+wp.Runtime.SoraGridBlackListHeight=7500
+wp.Runtime.PlannedLoadingRangeScale=0.6
+Kuro.Script.EnableCSharpEnv=true
+
+[/Script/Engine.RendererSettings]
+r.MaxAnisotropy=16
+r.RayTracing.LoadConfig=0
+`
+const ALTERIAX_WUWA_CONFIG_5 = `; If motion blur is turning back on even with in-game settings off add the command below
+; r.MotionBlur.Max=0
+
+[SystemSettings]
+; Reduce r.SecondaryScreenPercentage.GameViewport to 83 or lower if you need more FPS
+r.SecondaryScreenPercentage.GameViewport=100
+r.Kuro.MaterialDesktopQualityShoulderRender=0
+r.StaticMeshLODDistanceScale=0.7
+r.ScreenSizeCullRatioFactor=10
+r.Kuro.KuroEnableFFTBloom=0
+r.Kuro.KuroEnableToonFFTBloom=0
+r.Kuro.KuroBloomStreak=1
+r.EnableLensflareSceneSample=1
+r.DepthOfFieldQuality=2
+r.SceneColorFringeQuality=0
+; Remove r.Tonemapper.Quality=1 if you use bloom and find some scenes bright
+r.Tonemapper.Quality=1
+r.AmbientOcclusionMaxQuality=0
+r.Shadow.DistanceScale=0.6
+r.Shadow.RadiusThreshold=0.06
+r.Shadow.MaxCSMResolution=256
+r.Shadow.MaxResolution=256
+r.Shadow.MinResolution=256
+r.Shadow.PerObjectShadowMapResolution=256
+r.Shadow.PerObjectResolutionMax=256
+r.Shadow.PerObjectResolutionMin=256
+r.Shadow.ForbidHISMShadowStartIndex=0
+r.DetailMode=0
+r.MaterialQualityLevel=2
+r.KuroMaterialQualityLevel=2
+; If you want grass back remove foliage.CullAll=1
+foliage.CullAll=1
+foliage.DensityScaleLOD.DrawCallOptimize=1
+r.ViewDistanceScale=0.8
+r.SSR.Quality=0
+r.Upscale.Quality=3
+r.Kuro.InteractionEffect.EnableFoliageEffect=0
+r.Kuro.InteractionEffect.UseCppWaterEffect=0
+r.KuroVolumeCloudEnable=0
+a.URO.ForceAnimRate=1
+r.SSFS=0
+r.VRS.EnableMaterial=false
+r.VRS.EnableMesh=false
+r.streaming.MeshMaxKeepMips=15
+r.streaming.TextureMaxKeepMips=15
+wp.Runtime.PlannedLoadingRangeScale=0.4
+Kuro.Script.EnableCSharpEnv=true
+
+[/Script/Engine.RendererSettings]
+r.MaxAnisotropy=4
+r.RayTracing.LoadConfig=0
+`
+const ALTERIAX_WUWA_CONFIGS: Record<'1' | '2' | '3' | '4' | '5', string> = {
   '1': ALTERIAX_WUWA_CONFIG_1,
   '2': ALTERIAX_WUWA_CONFIG_2,
+  '3': ALTERIAX_WUWA_CONFIG_3,
+  '4': ALTERIAX_WUWA_CONFIG_4,
+  '5': ALTERIAX_WUWA_CONFIG_5,
 }
+const WUWA_INPUT_INI_OVERRIDES = `[/Script/Engine.InputSettings]
+bEnableMouseSmoothing=False
+bEnableFOVScaling=False
+`
 const WWMI_LOD_FIX_CONFIG = `[SystemSettings]
 r.Kuro.SkeletalMesh.LODDistanceScaleDeviceOffset=-10
 r.Streaming.Boost=20
@@ -264,9 +433,11 @@ function resolveWinePrefix(prefixPath: string): string {
   return prefixPath
 }
 
-function resolveAlteriaxWuwaConfig(): { variant: '1' | '2'; content: string } {
+function resolveAlteriaxWuwaConfig(): { variant: '1' | '2' | '3' | '4' | '5'; content: string } {
   const requestedVariant = process.env.NEKOMIMI_WUWA_ENGINE_CONFIG
-  const variant = requestedVariant === '1' || requestedVariant === '2' ? requestedVariant : '2'
+  const variant = requestedVariant === '1' || requestedVariant === '2' || requestedVariant === '3' || requestedVariant === '4' || requestedVariant === '5'
+    ? requestedVariant
+    : '4'
 
   return {
     variant,
@@ -314,6 +485,38 @@ function resolveWuwaClientBinariesDir(game: Pick<Game, 'directory' | 'executable
   return path.join(game.directory, executableDir)
 }
 
+function resolveWuwaSavedConfigDir(game: Pick<Game, 'directory'>): string {
+  return path.join(game.directory, 'Client', 'Saved', 'Config', 'WindowsNoEditor')
+}
+
+function ensureWuwaInputConfig(game: Pick<Game, 'directory'>): boolean {
+  const inputPath = path.join(resolveWuwaSavedConfigDir(game), 'Input.ini')
+  const existingContent = fs.existsSync(inputPath) ? fs.readFileSync(inputPath, 'utf-8') : ''
+
+  let nextContent = existingContent
+  if (nextContent.includes('bEnableMouseSmoothing=') || nextContent.includes('bEnableFOVScaling=')) {
+    nextContent = nextContent
+      .replace(/^bEnableMouseSmoothing=.*$/m, 'bEnableMouseSmoothing=False')
+      .replace(/^bEnableFOVScaling=.*$/m, 'bEnableFOVScaling=False')
+  } else if (nextContent.includes('[/Script/Engine.InputSettings]')) {
+    nextContent = nextContent.replace(
+      '[/Script/Engine.InputSettings]',
+      WUWA_INPUT_INI_OVERRIDES.trimEnd()
+    )
+  } else {
+    nextContent = existingContent ? `${WUWA_INPUT_INI_OVERRIDES.trimEnd()}\n\n${existingContent}` : `${WUWA_INPUT_INI_OVERRIDES}`
+  }
+
+  if (nextContent === existingContent) {
+    return false
+  }
+
+  fs.mkdirSync(path.dirname(inputPath), { recursive: true })
+  fs.writeFileSync(inputPath, nextContent, 'utf-8')
+  console.log(`[wuwa] Updated Input.ini mouse/FOV overrides: ${inputPath}`)
+  return true
+}
+
 export function ensureWuwaEngineConfig(game: Pick<Game, 'slug' | 'directory' | 'executable'>): boolean {
   if (game.slug !== 'wuwa') {
     return false
@@ -325,7 +528,7 @@ export function ensureWuwaEngineConfig(game: Pick<Game, 'slug' | 'directory' | '
   const managedContent = [
     WUWA_ENGINE_CONFIG_SOURCE_START,
     '; Managed by nekomimi for nekomimi launches only.',
-    `; AlteriaX/WuWa-Configs variant: Config ${variant}. Set NEKOMIMI_WUWA_ENGINE_CONFIG=1 or 2 before launch to switch.`,
+    `; AlteriaX/WuWa-Configs variant: Config ${variant}. Set NEKOMIMI_WUWA_ENGINE_CONFIG=1-5 before launch to switch.`,
     '',
     content.trim(),
     '',
@@ -348,7 +551,9 @@ export function ensureWuwaEngineConfig(game: Pick<Game, 'slug' | 'directory' | '
     console.log(`[wuwa] Updated combined nekomimi Engine.ini Config ${variant}: ${binariesDir}`)
   }
 
-  return wroteEngineIni
+  const wroteInputIni = ensureWuwaInputConfig(game)
+
+  return wroteEngineIni || wroteInputIni
 }
 
 function stripManagedHostsBlock(content: string): string {
