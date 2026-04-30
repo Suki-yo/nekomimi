@@ -7,6 +7,7 @@ import * as https from 'https'
 import { extractArchive as extractArchiveContents } from './archive'
 import { downloadToFile } from './download/utils'
 import { getGameModConfig, getImporterConfig, getImporterReleaseApi } from './game-registry'
+import { wrapLaunchWithGamescope } from './gamescope'
 import { getPathsInstance } from './paths'
 import { findSteamrt } from './steamrt'
 import {
@@ -962,6 +963,10 @@ export async function launchGameWithXXMI(
             'run'
           )
 
+          const wrappedLaunch = wrapLaunchWithGamescope(game, gameLaunch.command, gameLaunch.args)
+          gameLaunch.command = wrappedLaunch.command
+          gameLaunch.args = wrappedLaunch.args
+
           writeWuwaLaunchDebugLog(game, 'direct', gameLaunch)
           console.log(
             `[wwmi] Launching WuWa via direct Proton client path cwd=${gameLaunch.cwd} ` +
@@ -986,6 +991,10 @@ export async function launchGameWithXXMI(
             true,
             path.dirname(launcherExe)
           )
+
+          const wrappedLaunch = wrapLaunchWithGamescope(game, launcherLaunch.command, launcherLaunch.args)
+          launcherLaunch.command = wrappedLaunch.command
+          launcherLaunch.args = wrappedLaunch.args
 
           writeWuwaLaunchDebugLog(game, 'launcher', launcherLaunch)
           console.log(

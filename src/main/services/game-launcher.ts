@@ -17,6 +17,7 @@ import { ProcessMonitor, type ProcessMonitorEntry } from './process-monitor'
 import { assertPreflightForLaunch } from './preflight'
 import { findSteamrt, downloadSteamrt } from './steamrt'
 import { expandHome } from './paths'
+import { wrapLaunchWithGamescope } from './gamescope'
 import {
   cleanupStandaloneWwmiRuntime,
   ensureWuwaEngineConfig,
@@ -338,10 +339,11 @@ export async function launchGame(
   }
 
   const { command, args, env } = buildLaunchCommand(game, false)
+  const wrappedLaunch = wrapLaunchWithGamescope(game, command, args)
 
-  console.log(`[launch] Launching ${game.name}: ${command} ${args.join(' ')}`)
+  console.log(`[launch] Launching ${game.name}: ${wrappedLaunch.command} ${wrappedLaunch.args.join(' ')}`)
 
-  const proc = spawn(command, args, {
+  const proc = spawn(wrappedLaunch.command, wrappedLaunch.args, {
     env: { ...process.env, ...env },
     cwd: game.directory,
     detached: true,
