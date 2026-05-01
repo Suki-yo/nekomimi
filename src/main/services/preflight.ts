@@ -191,7 +191,7 @@ export async function assertPreflightForDownload(names: string[]): Promise<Prefl
   return assertPreflightForBinaryNames(names)
 }
 
-export async function assertPreflightForLaunch(game: Pick<Game, 'runner'>): Promise<PreflightGateResult> {
+export async function assertPreflightForLaunch(game: Pick<Game, 'runner' | 'slug' | 'launch'>): Promise<PreflightGateResult> {
   const required = new Set<string>()
 
   if (game.runner.type === 'wine') {

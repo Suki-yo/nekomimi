@@ -14,10 +14,10 @@ export const WWMI_ENGINE_INI_OVERRIDE = 'Kuro_Please_Add_Force_LOD0_For_Characte
 export const WUWA_ENGINE_INI_NAME = 'Nekomimi_Engine.ini'
 export const WWMI_DIRECT_LAUNCH_ARGS = ['-dx11', `-ENGINEINI=${WUWA_ENGINE_INI_NAME}`]
 export const WUWA_ENGINE_INI_LAUNCH_ARG = `-EngineIni=${WUWA_ENGINE_INI_NAME}`
-// Disable lsteamclient to avoid Steam client dependency. KRSDKExternal.exe and
-// jsproxy are left at their Wine defaults — blocking them may interfere with
-// session validation or proxy-dependent HTTP calls during gameplay.
-export const WWMI_KURO_DLL_OVERRIDES = 'lsteamclient=d'
+// Disable lsteamclient to avoid Steam client dependency. Disable KRSDKExternal.exe
+// (Kuro telemetry SDK) which burns ~1 full CPU core at runtime with no gameplay impact.
+// jsproxy is left at Wine defaults — blocking it may interfere with proxy-dependent HTTP.
+export const WWMI_KURO_DLL_OVERRIDES = 'lsteamclient=d;KRSDKExternal.exe=d'
 const WUWA_HOSTS_BLOCK_START = '# nekomimi-wuwa-ipv4-start'
 const WUWA_HOSTS_BLOCK_END = '# nekomimi-wuwa-ipv4-end'
 const WUWA_ENGINE_CONFIG_SOURCE_START = '; nekomimi-wuwa-engine-config-start'
@@ -317,6 +317,13 @@ r.Streaming.PoolSize=0
 r.Streaming.LimitPoolSizeToVRAM=1
 r.Streaming.UseFixedPoolSize=1
 `
+const WUWA_GPU_PERF_CONFIG = `[SystemSettings]
+FX.AllowGPUParticles=1
+r.HZBOcclusion=1
+r.ParallelFrustumCull=1
+r.ParallelOcclusionCull=1
+Kuro.Blueprint.EnableGameBudget=false
+`
 const WWMI_LOD_FIX_KEYS = [
   'r.Kuro.SkeletalMesh.LODDistanceScaleDeviceOffset',
   'r.Streaming.Boost',
@@ -541,6 +548,9 @@ export function ensureWuwaEngineConfig(game: Pick<Game, 'slug' | 'directory' | '
           existingModfixConfig,
         ].join('\n')
       : '',
+    '',
+    '; nekomimi GPU performance overrides. Last wins in UE4 — these take priority over any WWMI content above.',
+    WUWA_GPU_PERF_CONFIG.trim(),
     WUWA_ENGINE_CONFIG_SOURCE_END,
     '',
   ].filter((part) => part !== '').join('\n')
@@ -705,11 +715,18 @@ export function normalizeWuwaLaunchEnv(
   }
 
   nextEnv.PROTONFIXES_DISABLE = '1'
+  nextEnv.PROTON_USE_NTSYNC = '1'
+
+  if (!nextEnv.NEKOMIMI_FRAMEGEN) {
+    nextEnv.NEKOMIMI_FRAMEGEN = 'lsfg-vk'
+  }
 
   const changed =
     nextEnv.STEAM_COMPAT_CONFIG !== (env?.STEAM_COMPAT_CONFIG || '') ||
     nextEnv.WINEDLLOVERRIDES !== (env?.WINEDLLOVERRIDES || '') ||
-    nextEnv.PROTONFIXES_DISABLE !== (env?.PROTONFIXES_DISABLE || '')
+    nextEnv.PROTONFIXES_DISABLE !== (env?.PROTONFIXES_DISABLE || '') ||
+    nextEnv.PROTON_USE_NTSYNC !== (env?.PROTON_USE_NTSYNC || '') ||
+    nextEnv.NEKOMIMI_FRAMEGEN !== (env?.NEKOMIMI_FRAMEGEN || '')
 
   return { env: nextEnv, changed }
 }

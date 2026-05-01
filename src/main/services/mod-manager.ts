@@ -7,7 +7,7 @@ import * as https from 'https'
 import { extractArchive as extractArchiveContents } from './archive'
 import { downloadToFile } from './download/utils'
 import { getGameModConfig, getImporterConfig, getImporterReleaseApi } from './game-registry'
-import { wrapLaunchWithGamescope } from './gamescope'
+import { ensureLsfgConfig, injectLsfgEnvironment } from './gamescope'
 import { getPathsInstance } from './paths'
 import { findSteamrt } from './steamrt'
 import {
@@ -828,6 +828,12 @@ function writeWuwaLaunchDebugLog(
       STEAM_COMPAT_LIBRARY_PATHS: spec.env.STEAM_COMPAT_LIBRARY_PATHS || '',
       STEAM_COMPAT_SHADER_PATH: spec.env.STEAM_COMPAT_SHADER_PATH || '',
       STEAM_COMPAT_TOOL_PATHS: spec.env.STEAM_COMPAT_TOOL_PATHS || '',
+      ENABLE_LSFG: spec.env.ENABLE_LSFG || '',
+      LSFG_DLL_PATH: spec.env.LSFG_DLL_PATH || '',
+      LSFG_MULTIPLIER: spec.env.LSFG_MULTIPLIER || '',
+      LSFG_PERFORMANCE_MODE: spec.env.LSFG_PERFORMANCE_MODE || '',
+      PRESSURE_VESSEL_IMPORT_VULKAN_LAYERS: spec.env.PRESSURE_VESSEL_IMPORT_VULKAN_LAYERS || '',
+      VK_ADD_IMPLICIT_LAYER_PATH: spec.env.VK_ADD_IMPLICIT_LAYER_PATH || '',
       WINEDLLOVERRIDES: spec.env.WINEDLLOVERRIDES || '',
       WINEPREFIX: spec.env.WINEPREFIX || '',
     },
@@ -868,10 +874,12 @@ export async function launchGameWithXXMI(
   const { winePrefix: normalizedWinePrefix, compatDataPath } = resolveProtonCompatPaths(winePrefix)
   const requestedGameEnv = game.launch.env || {}
   const wuwaLaunchMode = importer === 'WWMI' && game.slug === 'wuwa' ? resolveWuwaWwmiLaunchMode(game) : null
-  const gameEnv =
+  const normalizedGameEnv =
     game.slug === 'wuwa'
       ? normalizeWuwaLaunchEnv(requestedGameEnv, wuwaLaunchMode || undefined).env
       : requestedGameEnv
+  ensureLsfgConfig(game)
+  const gameEnv = injectLsfgEnvironment(game, normalizedGameEnv)
   const useUmu = !!gameModConfig?.umuGameId && !(importer === 'WWMI' && isProtonRunner)
 
   const exeName = path.basename(executablePath).toLowerCase()
@@ -924,7 +932,6 @@ export async function launchGameWithXXMI(
         STEAM_COMPAT_DATA_PATH: compatDataPath,
         WINEDLLOVERRIDES: mergedOverrides,
       }
-      console.log(`[xxmi] umu-run env: WINEDLLOVERRIDES=${env.WINEDLLOVERRIDES} STUB_WINTRUST=${gameEnv.STUB_WINTRUST} BLOCK_FIRST_REQ=${gameEnv.BLOCK_FIRST_REQ} STEAM_COMPAT_CONFIG=${gameEnv.STEAM_COMPAT_CONFIG}`)
       proc = spawn('umu-run', [launcherExe, '--nogui', '--xxmi', importer], {
         env,
         detached: true,
@@ -963,10 +970,6 @@ export async function launchGameWithXXMI(
             'run'
           )
 
-          const wrappedLaunch = wrapLaunchWithGamescope(game, gameLaunch.command, gameLaunch.args)
-          gameLaunch.command = wrappedLaunch.command
-          gameLaunch.args = wrappedLaunch.args
-
           writeWuwaLaunchDebugLog(game, 'direct', gameLaunch)
           console.log(
             `[wwmi] Launching WuWa via direct Proton client path cwd=${gameLaunch.cwd} ` +
@@ -991,10 +994,6 @@ export async function launchGameWithXXMI(
             true,
             path.dirname(launcherExe)
           )
-
-          const wrappedLaunch = wrapLaunchWithGamescope(game, launcherLaunch.command, launcherLaunch.args)
-          launcherLaunch.command = wrappedLaunch.command
-          launcherLaunch.args = wrappedLaunch.args
 
           writeWuwaLaunchDebugLog(game, 'launcher', launcherLaunch)
           console.log(

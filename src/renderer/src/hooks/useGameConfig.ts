@@ -10,6 +10,8 @@ export interface GameConfigDraft {
   coverImage?: string
   modsEnabled: boolean
   genshinFpsUnlock: string
+  frameGeneration: 'off' | 'lsfg-vk'
+  gamescopeArgs: string
 }
 
 interface UseGameConfigOptions {
@@ -70,6 +72,13 @@ export function useGameConfig({
       coverImage: selectedGame.coverImage,
       modsEnabled: selectedGame.mods.enabled,
       genshinFpsUnlock: getGenshinFpsUnlockDraftValue(selectedGame),
+      frameGeneration:
+        selectedGame.slug === 'wuwa' && selectedGame.launch.env.NEKOMIMI_FRAMEGEN !== 'off'
+          ? 'lsfg-vk'
+          : selectedGame.launch.env.NEKOMIMI_FRAMEGEN === 'lsfg-vk'
+            ? 'lsfg-vk'
+            : 'off',
+      gamescopeArgs: selectedGame.launch.env.NEKOMIMI_GAMESCOPE_ARGS ?? '',
     })
   }, [getGenshinFpsUnlockDraftValue, selectedGame])
 
@@ -95,6 +104,18 @@ export function useGameConfig({
     setSavingConfig(true)
     try {
       const runner = runners.find((item) => item.path === configDraft.runnerPath)
+      const launchEnv = { ...selectedGame.launch.env }
+      if (configDraft.frameGeneration === 'lsfg-vk') {
+        launchEnv.NEKOMIMI_FRAMEGEN = 'lsfg-vk'
+        if (configDraft.gamescopeArgs.trim()) {
+          launchEnv.NEKOMIMI_GAMESCOPE_ARGS = configDraft.gamescopeArgs.trim()
+        } else {
+          delete launchEnv.NEKOMIMI_GAMESCOPE_ARGS
+        }
+      } else {
+        launchEnv.NEKOMIMI_FRAMEGEN = 'off'
+        delete launchEnv.NEKOMIMI_GAMESCOPE_ARGS
+      }
       const fpsUnlock =
         isGenshinGame(selectedGame)
           ? {
@@ -114,6 +135,10 @@ export function useGameConfig({
           path: configDraft.runnerPath,
           prefix: configDraft.prefix,
         },
+        launch: {
+          ...selectedGame.launch,
+          env: launchEnv,
+        },
         mods: {
           ...selectedGame.mods,
           enabled: configDraft.modsEnabled,
@@ -128,6 +153,13 @@ export function useGameConfig({
         coverImage: updated.coverImage,
         modsEnabled: updated.mods.enabled,
         genshinFpsUnlock: getGenshinFpsUnlockDraftValue(updated),
+        frameGeneration:
+          updated.slug === 'wuwa' && updated.launch.env.NEKOMIMI_FRAMEGEN !== 'off'
+            ? 'lsfg-vk'
+            : updated.launch.env.NEKOMIMI_FRAMEGEN === 'lsfg-vk'
+              ? 'lsfg-vk'
+              : 'off',
+        gamescopeArgs: updated.launch.env.NEKOMIMI_GAMESCOPE_ARGS ?? '',
       })
       reportStatus(`saved config for ${updated.name.toLowerCase()}`, { type: 'config', gameId: updated.id })
     } finally {

@@ -17,7 +17,7 @@ import { ProcessMonitor, type ProcessMonitorEntry } from './process-monitor'
 import { assertPreflightForLaunch } from './preflight'
 import { findSteamrt, downloadSteamrt } from './steamrt'
 import { expandHome } from './paths'
-import { wrapLaunchWithGamescope } from './gamescope'
+import { ensureLsfgConfig, injectLsfgEnvironment, validateLsfgRuntime } from './gamescope'
 import {
   cleanupStandaloneWwmiRuntime,
   ensureWuwaEngineConfig,
@@ -209,7 +209,7 @@ function buildLaunchCommand(game: Game, useXXMI: boolean): { command: string; ar
     args.push(WUWA_ENGINE_INI_LAUNCH_ARG)
   }
 
-  return { command, args, env }
+  return { command, args, env: injectLsfgEnvironment(game, env) }
 }
 
 export async function launchGame(
@@ -229,9 +229,16 @@ export async function launchGame(
   }
   const game = loadedGame
 
+  ensureLsfgConfig(game)
+
   const standaloneConfigError = validateGameLaunchConfig(game)
   if (standaloneConfigError) {
     return { success: false, error: standaloneConfigError }
+  }
+
+  const lsfgRuntimeError = validateLsfgRuntime(game)
+  if (lsfgRuntimeError) {
+    return { success: false, error: lsfgRuntimeError }
   }
 
   const preflight = await assertPreflightForLaunch(game)
@@ -339,11 +346,10 @@ export async function launchGame(
   }
 
   const { command, args, env } = buildLaunchCommand(game, false)
-  const wrappedLaunch = wrapLaunchWithGamescope(game, command, args)
 
-  console.log(`[launch] Launching ${game.name}: ${wrappedLaunch.command} ${wrappedLaunch.args.join(' ')}`)
+  console.log(`[launch] Launching ${game.name}: ${command} ${args.join(' ')}`)
 
-  const proc = spawn(wrappedLaunch.command, wrappedLaunch.args, {
+  const proc = spawn(command, args, {
     env: { ...process.env, ...env },
     cwd: game.directory,
     detached: true,

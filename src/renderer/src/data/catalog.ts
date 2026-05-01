@@ -167,6 +167,7 @@ export const CATALOG_ENTRIES: CatalogEntry[] = [
     launch: {
       env: {
         STEAM_COMPAT_CONFIG: 'noopwr,noxalia',
+        NEKOMIMI_FRAMEGEN: 'lsfg-vk',
       },
       preLaunch: [],
       postLaunch: [],

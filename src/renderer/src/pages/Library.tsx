@@ -133,7 +133,10 @@ const WUWA_INSTALL_BASE = {
   defaultPrefix: '~/Games/prefixes/wuwa/pfx',
   executable: 'Client/Binaries/Win64/Client-Win64-Shipping.exe',
   launch: {
-    env: { STEAM_COMPAT_CONFIG: 'noopwr,noxalia' },
+    env: {
+      STEAM_COMPAT_CONFIG: 'noopwr,noxalia',
+      NEKOMIMI_FRAMEGEN: 'lsfg-vk',
+    },
     preLaunch: [],
     postLaunch: [],
     args: '',
