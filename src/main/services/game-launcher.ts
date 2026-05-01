@@ -17,7 +17,7 @@ import { ProcessMonitor, type ProcessMonitorEntry } from './process-monitor'
 import { assertPreflightForLaunch } from './preflight'
 import { findSteamrt, downloadSteamrt } from './steamrt'
 import { expandHome } from './paths'
-import { ensureLsfgConfig, injectLsfgEnvironment, validateLsfgRuntime } from './gamescope'
+import { ensureLsfgConfig, injectLsfgEnvironment, validateLsfgRuntime } from './frame-generation'
 import {
   cleanupStandaloneWwmiRuntime,
   ensureWuwaEngineConfig,

@@ -4,13 +4,14 @@ import { join } from 'path'
 import type { Game } from '../../shared/types/game'
 
 const LEGACY_WUWA_GAMESCOPE_ENABLED_ENV = 'NEKOMIMI_WUWA_GAMESCOPE'
-const LEGACY_WUWA_GAMESCOPE_ARGS_ENV = 'NEKOMIMI_WUWA_GAMESCOPE_ARGS'
 const FRAMEGEN_MODE_ENV = 'NEKOMIMI_FRAMEGEN'
 const ENABLE_LSFG_ENV = 'ENABLE_LSFG'
 const LSFG_MULTIPLIER_ENV = 'LSFG_MULTIPLIER'
 const LSFG_PERFORMANCE_MODE_ENV = 'LSFG_PERFORMANCE_MODE'
 const VK_ADD_IMPLICIT_LAYER_PATH_ENV = 'VK_ADD_IMPLICIT_LAYER_PATH'
 const PRESSURE_VESSEL_IMPORT_VULKAN_LAYERS_ENV = 'PRESSURE_VESSEL_IMPORT_VULKAN_LAYERS'
+const DEFAULT_LSFG_MULTIPLIER = '3'
+const DEFAULT_LSFG_PERFORMANCE_MODE = '1'
 
 function hasAnyFile(candidates: string[]): boolean {
   return candidates.some((candidate) => existsSync(candidate))
@@ -106,8 +107,8 @@ export function injectLsfgEnvironment(
   return {
     ...env,
     [ENABLE_LSFG_ENV]: env[ENABLE_LSFG_ENV] || '1',
-    [LSFG_MULTIPLIER_ENV]: env[LSFG_MULTIPLIER_ENV] || '2',
-    [LSFG_PERFORMANCE_MODE_ENV]: env[LSFG_PERFORMANCE_MODE_ENV] || '1',
+    [LSFG_MULTIPLIER_ENV]: env[LSFG_MULTIPLIER_ENV] || DEFAULT_LSFG_MULTIPLIER,
+    [LSFG_PERFORMANCE_MODE_ENV]: env[LSFG_PERFORMANCE_MODE_ENV] || DEFAULT_LSFG_PERFORMANCE_MODE,
     ...(detectedDllPath ? { LSFG_DLL_PATH: env.LSFG_DLL_PATH || detectedDllPath } : {}),
     ...(detectedLayerDir
       ? {
@@ -182,8 +183,8 @@ export function ensureLsfgConfig(game: Pick<Game, 'slug' | 'launch' | 'executabl
       '',
       '[[game]]',
       `exe = "${game.executable.split(/[/\\\\]/).pop() || game.executable}"`,
-      'multiplier = 2',
-      'performance_mode = true',
+      `multiplier = ${DEFAULT_LSFG_MULTIPLIER}`,
+      `performance_mode = ${DEFAULT_LSFG_PERFORMANCE_MODE === '1' ? 'true' : 'false'}`,
       'experimental_present_mode = "fifo"',
       '',
     ].join('\n'),

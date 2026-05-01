@@ -7,7 +7,7 @@ import * as https from 'https'
 import { extractArchive as extractArchiveContents } from './archive'
 import { downloadToFile } from './download/utils'
 import { getGameModConfig, getImporterConfig, getImporterReleaseApi } from './game-registry'
-import { ensureLsfgConfig, injectLsfgEnvironment } from './gamescope'
+import { ensureLsfgConfig, injectLsfgEnvironment } from './frame-generation'
 import { getPathsInstance } from './paths'
 import { findSteamrt } from './steamrt'
 import {

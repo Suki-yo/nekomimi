@@ -109,17 +109,6 @@ export function GameConfigPanel({
             </select>
           </label>
         )}
-        {game.slug === 'wuwa' && configDraft.frameGeneration === 'lsfg-vk' && (
-          <label className="tui-field">
-            <span>gamescope args</span>
-            <input
-              className="tui-input"
-              value={configDraft.gamescopeArgs}
-              onChange={(event) => setConfigDraft((current) => current ? { ...current, gamescopeArgs: event.target.value } : current)}
-              placeholder="-f -S fit"
-            />
-          </label>
-        )}
       </div>
 
       <div className="tui-config-section">
